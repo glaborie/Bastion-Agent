@@ -210,11 +210,11 @@ CAROL_SUB=$(curl -s -H "Authorization: Bearer $CAROL_TOKEN" \
 `ALICE_SUB` is the OIDC `sub`, **not** the username. Four-eyes compares
 subjects; using a username here would compare two different namespaces.
 
-> **Access tokens live for five minutes** (`accessTokenLifespan: 300` in the
+> **Access tokens live for fifteen minutes** (`accessTokenLifespan: 900` in the
 > realm export), and nothing renews a Bearer token for you — unlike the
-> dashboard session, which refreshes itself. Acts 3 and 4 take longer than
-> that, so expect to re-issue a token mid-walkthrough. The `sub` never changes,
-> so only the token variables need refreshing:
+> dashboard session, which refreshes itself. Three acts usually fit inside one
+> token, but a long pause does not, so re-issue whenever a call 401s. The `sub`
+> never changes, so only the token variables need refreshing:
 >
 > ```bash
 > BOB_TOKEN=$(token_for bob)          # re-run before the approval in 5.4
@@ -235,6 +235,21 @@ subjects; using a username here would compare two different namespaces.
 > ```bash
 > docker compose logs gateway --since 10m | grep 'Bearer token rejected'
 > # {"message": "Bearer token rejected", "reason": "expired_token"}
+> ```
+>
+> Keycloak imports the realm once (`IGNORE_EXISTING`), so an existing stack keeps
+> its old lifetime. Check the live realm and change it without wiping data (the
+> `kcadm.sh` path is absolute because the UBI-micro image does not put it on
+> `PATH` for `exec`):
+>
+> ```bash
+> docker compose exec -T keycloak sh -c '
+>   K=/opt/keycloak/bin/kcadm.sh
+>   $K config credentials --server http://localhost:8080 --realm master \
+>     --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD"
+>   $K get realms/bastion --fields accessTokenLifespan
+>   $K update realms/bastion -s accessTokenLifespan=900
+> '
 > ```
 
 ### 5.2 Alice requests a mutating tool
@@ -309,7 +324,7 @@ curl -s -X POST -H "Authorization: Bearer $BOB_TOKEN" \
   -d action=approve "http://localhost:8000/api/approvals/$TICKET/action" | jq
 ```
 
-A `401` here means `BOB_TOKEN` passed its five-minute lifetime: re-issue it
+A `401` here means `BOB_TOKEN` passed its fifteen-minute lifetime: re-issue it
 (§5.1) and retry. The failed attempt does not touch the ticket.
 
 ```
@@ -455,7 +470,7 @@ docker compose down -v
 | Dashboard login fails with `user_not_found` | You are on `:8080/admin` (master realm). Use `http://localhost:8000` |
 | Login page returns `Invalid parameter: redirect_uri` | You used `127.0.0.1` or a LAN IP. Use `localhost` |
 | `403 CSRF token missing` from curl | Use a `Bearer` token (exempt) instead of cookie auth, or send `X-CSRF-Token` |
-| `{"detail": "authentication required"}` from curl | The Bearer token aged out — they last 5 minutes. Confirm with `docker compose logs gateway \| grep 'Bearer token rejected'` (`"reason": "expired_token"`), then `BOB_TOKEN=$(token_for bob)` |
+| `{"detail": "authentication required"}` from curl | The Bearer token aged out — they last 15 minutes. Confirm with `docker compose logs gateway \| grep 'Bearer token rejected'` (`"reason": "expired_token"`), then `BOB_TOKEN=$(token_for bob)` |
 | Tool job stays `approval_pending` forever | No worker, or queue mismatch. `docker compose ps worker`; compare `ARQ_QUEUE_NAME` |
 | `demo_tool_request.py` times out | Worker not running, or the host `.env` points at a different Redis |
 | Host port `8001` stops answering after a restart | `docker compose restart omniroute` |

@@ -106,7 +106,7 @@ Open **`http://localhost:8000/dashboard`** in a browser (use `localhost`, not
 are scoped to that host). The gateway redirects to Keycloak, then creates a
 server-side session in Redis. The browser only holds an opaque, `HttpOnly`,
 `SameSite=Lax` cookie — access and refresh tokens never leave the server. The
-access token is refreshed back-channel, so a 5-minute Keycloak token does not
+access token is refreshed back-channel, so a 15-minute Keycloak token does not
 log an operator out mid-incident.
 
 Signing out deletes the session and redirects to a **one-time same-origin

@@ -18,7 +18,7 @@
   "maxDeltaTimeSeconds": 43200,
   "failureFactor": 10,
   "passwordPolicy": "length(12) and notUsername",
-  "accessTokenLifespan": 300,
+  "accessTokenLifespan": 900,
   "accessCodeLifespan": 60,
   "ssoSessionIdleTimeout": 28800,
   "ssoSessionMaxLifespan": 36000,
