@@ -1,0 +1,74 @@
+# =============================================================================
+# OmniRoute model aliases — Bastion-Agent routing contract
+# -----------------------------------------------------------------------------
+# Bastion-Agent's sensitivity classifier emits exactly one of two model aliases
+# (see `agent/routing/client.py`):
+#
+#   local-llama    CONFIDENTIAL prompts -> llama.cpp on the host GPU. No egress.
+#   cloud-primary  PUBLIC prompts       -> OpenRouter cloud models.
+#
+# OmniRoute persists providers and combos in its own SQLite store, so this file
+# is the declarative source of truth that is applied through OmniRoute's admin
+# API (`/api/v1/providers`, `/api/v1/combos`) — it is not read directly by the
+# router. Keep it in version control so routing changes are reviewable.
+# =============================================================================
+
+version: 1
+
+aliases:
+  local-llama:
+    description: >-
+      Confidential / MNPI / PII-adjacent traffic. Served on-prem only; egress
+      from this alias would be a policy violation.
+    privacy: on-prem
+    combo:
+      strategy: single
+      targets:
+        - provider: openai-compatible
+          name: llama-cpp-local
+          base_url: http://llama-cpp:8080/v1
+          model: qwen2.5-7b-instruct-q4_k_m
+          api_key_env: LLAMA_API_KEY
+          timeout_seconds: 120
+          max_tokens: 2048
+          temperature: 0.1
+
+  cloud-primary:
+    description: >-
+      Public / non-sensitive traffic. DLP-redacted before it reaches this alias;
+      the reversible token vault keeps real PII inside the gateway boundary.
+    privacy: third-party
+    combo:
+      strategy: failover
+      targets:
+        - provider: openrouter
+          name: openrouter-primary
+          base_url: https://openrouter.ai/api/v1
+          model: openai/gpt-4o-mini
+          api_key_env: OPENROUTER_API_KEY
+          timeout_seconds: 60
+          max_tokens: 2048
+          temperature: 0.2
+        - provider: openrouter
+          name: openrouter-secondary
+          base_url: https://openrouter.ai/api/v1
+          model: anthropic/claude-3.5-haiku
+          api_key_env: OPENROUTER_API_KEY
+          timeout_seconds: 60
+          max_tokens: 2048
+          temperature: 0.2
+
+routing:
+  # Applied only when the caller does not pin an alias (Bastion-Agent always pins).
+  default_alias: cloud-primary
+  # A confidential prompt must never silently degrade to a cloud provider.
+  # `local-llama` therefore has no cloud fallback.
+  fallback_chain:
+    - local-llama
+    - cloud-primary
+
+guardrails:
+  # Defence in depth: even if a caller mislabels a prompt, refuse to send
+  # canary-tagged content to a third-party provider.
+  block_canary_tokens_on: [cloud-primary]
+  request_timeout_seconds: 120

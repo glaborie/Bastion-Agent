@@ -1,0 +1,288 @@
+# =============================================================================
+# Bastion-Agent — full local stack (8 services)
+# -----------------------------------------------------------------------------
+#   1. gateway        FastAPI control plane + HTMX dashboard      :8000
+#   2. worker         ARQ agent worker (tool execution / HITL)
+#   3. db             PostgreSQL 16 (audit chain, approvals)
+#   4. redis          Redis 7 (ARQ queue + AES token vault)
+#   5. keycloak       OIDC identity provider                      :8080
+#   6. omniroute      OpenAI-compatible inference router          :8001
+#   7. llama-cpp      CUDA local inference (confidential traffic) :8002
+#   8. otel-collector OTLP fan-out to Langfuse / Arize
+#
+# Prerequisites: `cp .env.example .env`, and a GGUF model in ./models/.
+# =============================================================================
+
+name: bastion-agent
+
+x-app-environment: &app-environment
+  APP_NAME: ${APP_NAME:-bastion-agent}
+  ENVIRONMENT: ${ENVIRONMENT:-local}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # Container-internal topology (overrides the host-side values in .env).
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bastion}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-bastion}
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-5}
+  DATABASE_ECHO: ${DATABASE_ECHO:-false}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+  REDIS_MAX_CONNECTIONS: ${REDIS_MAX_CONNECTIONS:-50}
+  KEYCLOAK_ISSUER: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080}/realms/${KEYCLOAK_REALM:-bastion}
+  KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-bastion-gateway}
+  KEYCLOAK_JWKS_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-bastion}/protocol/openid-connect/certs
+  KEYCLOAK_JWKS_CACHE_TTL_SECONDS: ${KEYCLOAK_JWKS_CACHE_TTL_SECONDS:-300}
+  KEYCLOAK_LEEWAY_SECONDS: ${KEYCLOAK_LEEWAY_SECONDS:-30}
+  VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:?set VAULT_MASTER_KEY in .env}
+  VAULT_TTL_SECONDS: ${VAULT_TTL_SECONDS:-1800}
+  APPROVAL_HMAC_SECRET: ${APPROVAL_HMAC_SECRET:?set APPROVAL_HMAC_SECRET in .env}
+  APPROVAL_TTL_SECONDS: ${APPROVAL_TTL_SECONDS:-900}
+  CLASSIFIER_MODEL_PATH: ${CLASSIFIER_MODEL_PATH:-}
+  CLASSIFIER_CONFIDENCE_THRESHOLD: ${CLASSIFIER_CONFIDENCE_THRESHOLD:-0.55}
+  OMNIROUTE_BASE_URL: http://omniroute:20128
+  OMNIROUTE_API_KEY: ${OMNIROUTE_API_KEY:-sk-local-dev}
+  OMNIROUTE_TIMEOUT_SECONDS: ${OMNIROUTE_TIMEOUT_SECONDS:-120}
+  MODEL_LOCAL_ALIAS: ${MODEL_LOCAL_ALIAS:-local-llama}
+  MODEL_CLOUD_ALIAS: ${MODEL_CLOUD_ALIAS:-cloud-primary}
+  OTEL_ENABLED: ${OTEL_ENABLED:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_TRACES_SAMPLER_RATIO: ${OTEL_TRACES_SAMPLER_RATIO:-1.0}
+  CANARY_PREFIX: CANARY-
+
+x-app-build: &app-build
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: bastion-agent:${BASTION_IMAGE_TAG:-local}
+  env_file:
+    - path: .env
+      required: false
+  init: true
+  restart: unless-stopped
+  networks:
+    - bastion-net
+
+services:
+  # ---------------------------------------------------------------------------
+  # Gateway: OIDC + RBAC, DLP pipeline, dashboard, health probes
+  # ---------------------------------------------------------------------------
+  gateway:
+    <<: *app-build
+    container_name: bastion-gateway
+    command: >-
+      uvicorn gateway.main:app
+      --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*"
+    environment:
+      <<: *app-environment
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-bastion-gateway}
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # ARQ worker: guarded tool execution, HITL suspension and resumption
+  # ---------------------------------------------------------------------------
+  worker:
+    <<: *app-build
+    container_name: bastion-worker
+    command: ["arq", "agent.runtime.WorkerSettings"]
+    environment:
+      <<: *app-environment
+      OTEL_SERVICE_NAME: bastion-worker
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    stop_grace_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16: append-only audit chain + suspended approvals
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: bastion-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bastion}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-bastion}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - bastion-net
+
+  # ---------------------------------------------------------------------------
+  # Redis 7: ARQ queue + AES-256-GCM encrypted token vault (30 min TTL)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: bastion-redis
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${REDIS_PASSWORD}"
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - bastion-net
+
+  # ---------------------------------------------------------------------------
+  # Keycloak: OIDC identity provider, realm imported from config/keycloak
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: bastion-keycloak
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_LOG_LEVEL: INFO
+    volumes:
+      - ./config/keycloak:/opt/keycloak/data/import:ro
+      - keycloak_data:/opt/keycloak/data
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    restart: unless-stopped
+    networks:
+      - bastion-net
+
+  # ---------------------------------------------------------------------------
+  # OmniRoute: OpenAI-compatible router (`local-llama` -> llama.cpp,
+  #            `cloud-primary` -> OpenRouter)
+  # ---------------------------------------------------------------------------
+  omniroute:
+    image: ${OMNIROUTE_IMAGE:-rigging/omniroute:3.8.52}
+    container_name: bastion-omniroute
+    environment:
+      PORT: "20128"
+      OMNIROUTE_SERVER_HOST: 0.0.0.0
+      # Never expose an unauthenticated inference plane to the compose network.
+      REQUIRE_API_KEY: "true"
+      # Only consumed on first initialisation of the data volume.
+      INITIAL_PASSWORD: ${OMNIROUTE_ADMIN_PASSWORD:?set OMNIROUTE_ADMIN_PASSWORD in .env}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Bearer token OmniRoute uses for the `local-llama` upstream.
+      LLAMA_API_KEY: ${LLAMA_API_KEY:-dev-only-llama-api-key}
+    volumes:
+      - omniroute_data:/root/.omniroute
+      - ./config/omniroute:/config:ro
+    ports:
+      - "127.0.0.1:${OMNIROUTE_PORT:-8001}:20128"
+    restart: unless-stopped
+    networks:
+      - bastion-net
+
+  # ---------------------------------------------------------------------------
+  # llama.cpp: confidential prompts never leave the host
+  # ---------------------------------------------------------------------------
+  llama-cpp:
+    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: bastion-llama-cpp
+    command:
+      - --model
+      - /models/${LLAMA_MODEL_FILE:-qwen2.5-7b-instruct-q4_k_m.gguf}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --api-key
+      - ${LLAMA_API_KEY:-dev-only-llama-api-key}
+      - --alias
+      - ${LLAMA_MODEL_ALIAS:-qwen2.5-7b-instruct-q4_k_m}
+      - --ctx-size
+      - "${LLAMA_CTX_SIZE:-8192}"
+      - --n-gpu-layers
+      - "${LLAMA_N_GPU_LAYERS:-99}"
+      - --parallel
+      - "1"
+      - --metrics
+    volumes:
+      - ./models:/models:ro
+    ports:
+      - "127.0.0.1:${LLAMA_PORT:-8002}:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - bastion-net
+
+  # ---------------------------------------------------------------------------
+  # OpenTelemetry Collector: OTLP in, Langfuse/Arize out
+  # ---------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    container_name: bastion-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-local}
+      LANGFUSE_OTLP_ENDPOINT: ${LANGFUSE_OTLP_ENDPOINT:-http://langfuse:3000/api/public/otel}
+      LANGFUSE_OTLP_AUTH: ${LANGFUSE_OTLP_AUTH:-}
+      ARIZE_OTLP_ENDPOINT: ${ARIZE_OTLP_ENDPOINT:-https://otlp.arize.com:443}
+      ARIZE_API_KEY: ${ARIZE_API_KEY:-}
+    volumes:
+      - ./config/otel/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    restart: unless-stopped
+    networks:
+      - bastion-net
+
+volumes:
+  pgdata:
+  redisdata:
+  keycloak_data:
+  omniroute_data:
+
+networks:
+  bastion-net:
+    driver: bridge

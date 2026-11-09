@@ -1,0 +1,31 @@
+# --- Secrets: never commit ---------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# --- Tooling caches ----------------------------------------------------------
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.deepeval/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Local runtime artefacts -------------------------------------------------
+*.log
+models/*.gguf
+models/*.bin
+docker-compose.override.yml
+
+# --- Evaluations -------------------------------------------------------------
+.eval_reports/
