@@ -223,7 +223,7 @@ Only change it in both places.
 |--------|----------------|
 | `agent/dlp/vault.py` | AES-256-GCM, session-scoped reversible token vault in Redis |
 | `agent/dlp/presidio.py` | Presidio analysis, custom `API_KEY` recognizers, span-level tokenisation |
-| `agent/routing/classifier.py` | ONNX classifier or deterministic semantic-rule fallback |
+| `agent/routing/classifier.py` | ADR-011 injection+safety ensemble, single-graph ONNX, or local-only rule fallback |
 | `agent/routing/client.py` | OpenAI-compatible OmniRoute client + `ModelRouter` alias selection |
 
 ### Token vault
@@ -261,18 +261,41 @@ initialise, `DLPUnavailableError` is raised rather than passing text through.
 
 ### Sensitivity classifier
 
-With `CLASSIFIER_MODEL_PATH` unset, a deterministic weighted-marker classifier
-covers explicit markings, internal-only notes, codenames, board/HR/finance
-material, technical IP, customer data and sensitive personal topics. The
-confidence is `weight / (weight + 2)` and `CLASSIFIER_CONFIDENCE_THRESHOLD`
-(default `0.55`) decides the label; borderline prompts are `PUBLIC` by policy.
+The production gate is the ADR-011 two-model ensemble. Set
+`CLASSIFIER_INJECTION_MODEL_PATH` and `CLASSIFIER_SAFETY_MODEL_PATH` (and their
+tokenizers) to render text as `CONFIDENTIAL` or `PUBLIC`:
 
-For ONNX, set `CLASSIFIER_MODEL_PATH` and (optionally)
-`CLASSIFIER_TOKENIZER_PATH` (defaults to `tokenizer.json` next to the model).
-The graph must take `input_ids` (plus `attention_mask` and optional
-`token_type_ids`) and return two logits ordered `[PUBLIC, CONFIDENTIAL]`. A
-missing model/tokenizer fails closed when the classifier is constructed rather
-than silently falling back.
+| Guard | Model | What it answers |
+|-------|-------|-----------------|
+| Injection | `Horizon-Labs/prompt-injection-guard-small` | Is this text manipulating the model? |
+| Safety | `onnx-community/content-safety-guard-small-ONNX` | Is this content unsafe, and in which category? |
+
+The injection guard is evaluated first and cannot be overridden
+(`CLASSIFIER_INJECTION_PROFILE=production` → `0.662`; `recall-first` → `0.5`).
+Then the safety guard's aggregate `unsafe >= 0.5` routes `unsafe_content`, and
+`privacy`, `fraud_manipulation`, `criminal_planning` or
+`unauthorized_advice >= 0.3` route their own reason code. Everything else is
+`public_content`. Long documents are scanned as overlapping windows and the
+maximum score wins. Both guards fail closed: any inference error or malformed
+output yields `CONFIDENTIAL`.
+
+The models are mounted at `/app/models:ro` on `gateway` and `worker`; download
+them with the commands in `.env.example`. Their SHA-256 digests are pinned there
+and verified before a session opens.
+
+With both paths unset, a deterministic weighted-marker classifier covers
+explicit markings, internal-only notes, codenames, board/HR/finance material,
+technical IP, customer data and sensitive personal topics. The confidence is
+`weight / (weight + 2)` and `CLASSIFIER_CONFIDENCE_THRESHOLD` (default `0.55`)
+decides the label; borderline prompts are `PUBLIC` by policy. This fallback is
+only allowed with `ENVIRONMENT=local`; every other environment refuses to
+start without a model, because the rules cannot detect injection.
+
+The legacy single-graph contract remains available via `CLASSIFIER_MODEL_PATH`:
+the graph takes `input_ids` (plus `attention_mask` and optional
+`token_type_ids`) and returns two logits ordered `[PUBLIC, CONFIDENTIAL]`.
+`get_classifier()` is cached per process; a missing graph, tokenizer or digest
+mismatch raises `ClassifierConfigurationError` rather than degrading the gate.
 
 ### Routing
 

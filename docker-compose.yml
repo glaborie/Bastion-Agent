@@ -65,6 +65,18 @@ x-app-environment: &app-environment
   CLASSIFIER_TOKENIZER_PATH: ${CLASSIFIER_TOKENIZER_PATH:-}
   CLASSIFIER_MAX_TOKENS: ${CLASSIFIER_MAX_TOKENS:-512}
   CLASSIFIER_CONFIDENCE_THRESHOLD: ${CLASSIFIER_CONFIDENCE_THRESHOLD:-0.55}
+  CLASSIFIER_INJECTION_MODEL_PATH: ${CLASSIFIER_INJECTION_MODEL_PATH:-}
+  CLASSIFIER_INJECTION_TOKENIZER_PATH: ${CLASSIFIER_INJECTION_TOKENIZER_PATH:-}
+  CLASSIFIER_SAFETY_MODEL_PATH: ${CLASSIFIER_SAFETY_MODEL_PATH:-}
+  CLASSIFIER_SAFETY_TOKENIZER_PATH: ${CLASSIFIER_SAFETY_TOKENIZER_PATH:-}
+  CLASSIFIER_INJECTION_MAX_TOKENS: ${CLASSIFIER_INJECTION_MAX_TOKENS:-2048}
+  CLASSIFIER_SAFETY_MAX_TOKENS: ${CLASSIFIER_SAFETY_MAX_TOKENS:-512}
+  CLASSIFIER_INJECTION_PROFILE: ${CLASSIFIER_INJECTION_PROFILE:-production}
+  CLASSIFIER_INJECTION_THRESHOLD: ${CLASSIFIER_INJECTION_THRESHOLD:-}
+  CLASSIFIER_SAFETY_UNSAFE_THRESHOLD: ${CLASSIFIER_SAFETY_UNSAFE_THRESHOLD:-0.5}
+  CLASSIFIER_SAFETY_CATEGORY_THRESHOLD: ${CLASSIFIER_SAFETY_CATEGORY_THRESHOLD:-0.3}
+  CLASSIFIER_INJECTION_MODEL_SHA256: ${CLASSIFIER_INJECTION_MODEL_SHA256:-}
+  CLASSIFIER_SAFETY_MODEL_SHA256: ${CLASSIFIER_SAFETY_MODEL_SHA256:-}
   OMNIROUTE_BASE_URL: http://omniroute:20128
   OMNIROUTE_API_KEY: ${OMNIROUTE_API_KEY:-sk-local-dev}
   OMNIROUTE_TIMEOUT_SECONDS: ${OMNIROUTE_TIMEOUT_SECONDS:-120}
@@ -115,6 +127,11 @@ services:
     volumes:
       # DeepEval run summaries written by the test harness (read-only here).
       - ./artifacts:/app/artifacts:ro
+      # ONNX classifier repositories (ADR-011). Mounted read-only, never baked;
+      # the image stays small and a model swap does not require a rebuild. It is
+      # mounted inside the app tree so the repo-relative paths in .env work
+      # identically on the host and in the container.
+      - ./models:/app/models:ro
     depends_on:
       db:
         condition: service_healthy
@@ -151,6 +168,9 @@ services:
     environment:
       <<: *app-environment
       OTEL_SERVICE_NAME: bastion-worker
+    volumes:
+      # Same read-only classifier mount as the gateway (ADR-011).
+      - ./models:/app/models:ro
     depends_on:
       db:
         condition: service_healthy

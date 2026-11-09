@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     dlp_score_threshold: float = 0.35
 
     # -- Two-stage classifier ---------------------------------------------
+    #: Legacy single-graph contract: one ONNX file returning two logits ordered
+    #: ``[PUBLIC, CONFIDENTIAL]``. It remains supported for a custom model, but
+    #: it cannot detect prompt injection. Set the two ensemble paths below to
+    #: use the ADR-011 gate instead.
     classifier_model_path: str | None = None
     #: Path to the Hugging Face ``tokenizer.json`` for the ONNX model. When
     #: unset, it is derived from the model directory. Ignored by the semantic
@@ -118,6 +122,36 @@ class Settings(BaseSettings):
     #: PUBLIC (cloud-primary) to reserve scarce GPU capacity — the threshold is
     #: the control point for that cost trade-off.
     classifier_confidence_threshold: float = 0.55
+
+    # -- Two-model ensemble (ADR-011) -------------------------------------
+    #: Both paths must be set to enable the ensemble. Each points at the int8
+    #: ONNX graph; its tokenizer is derived from the model directory when the
+    #: matching ``*_tokenizer_path`` is empty.
+    classifier_injection_model_path: str | None = None
+    classifier_injection_tokenizer_path: str | None = None
+    classifier_safety_model_path: str | None = None
+    classifier_safety_tokenizer_path: str | None = None
+    #: Token window per inference. The injection guard is trained for long
+    #: documents and is windowed (max over windows) at 2048 tokens; the safety
+    #: guard is prompt-sized at 512.
+    classifier_injection_max_tokens: int = 2048
+    classifier_safety_max_tokens: int = 512
+    #: ``recall-first`` lowers the injection threshold from 0.662 to 0.5. It
+    #: trades false alarms on benign text for recall and is intended for
+    #: high-risk tenants and offline scanning, not as the default gate.
+    classifier_injection_profile: Literal["production", "recall-first"] = "production"
+    #: Explicit override for the injection threshold. Leave empty to take the
+    #: value implied by ``classifier_injection_profile``.
+    classifier_injection_threshold: float | None = None
+    #: ``unsafe >= 0.5`` flags the prompt for review (ADR-011).
+    classifier_safety_unsafe_threshold: float = 0.5
+    #: ``privacy``, ``fraud_manipulation``, ``criminal_planning`` and
+    #: ``unauthorized_advice`` at or above this route CONFIDENTIAL.
+    classifier_safety_category_threshold: float = 0.3
+    #: Optional SHA-256 digests. When set, startup verifies the graph bytes so an
+    #: operator cannot silently run a different quantisation.
+    classifier_injection_model_sha256: str | None = None
+    classifier_safety_model_sha256: str | None = None
 
     # -- HITL approvals ----------------------------------------------------
     approval_hmac_secret: SecretStr = SecretStr(DEV_APPROVAL_HMAC_SECRET)
@@ -167,6 +201,13 @@ class Settings(BaseSettings):
         "keycloak_end_session_uri",
         "classifier_model_path",
         "classifier_tokenizer_path",
+        "classifier_injection_model_path",
+        "classifier_injection_tokenizer_path",
+        "classifier_safety_model_path",
+        "classifier_safety_tokenizer_path",
+        "classifier_injection_model_sha256",
+        "classifier_safety_model_sha256",
+        "classifier_injection_threshold",
         mode="before",
     )
     @classmethod
@@ -191,11 +232,14 @@ class Settings(BaseSettings):
     @field_validator(
         "otel_traces_sampler_ratio",
         "classifier_confidence_threshold",
+        "classifier_injection_threshold",
+        "classifier_safety_unsafe_threshold",
+        "classifier_safety_category_threshold",
         "dlp_score_threshold",
     )
     @classmethod
-    def _validate_ratio(cls, value: float) -> float:
-        if not 0.0 <= value <= 1.0:
+    def _validate_ratio(cls, value: float | None) -> float | None:
+        if value is not None and not 0.0 <= value <= 1.0:
             raise ValueError("value must be within [0.0, 1.0]")
         return value
 
@@ -207,6 +251,8 @@ class Settings(BaseSettings):
         "audit_page_size",
         "approval_page_size",
         "classifier_max_tokens",
+        "classifier_injection_max_tokens",
+        "classifier_safety_max_tokens",
         "tool_max_read_bytes",
         "tool_max_write_bytes",
         "tool_max_argument_bytes",
@@ -250,6 +296,16 @@ class Settings(BaseSettings):
         if level not in allowed:
             raise ValueError(f"LOG_LEVEL must be one of {sorted(allowed)}")
         return level
+
+    @field_validator("classifier_injection_model_sha256", "classifier_safety_model_sha256")
+    @classmethod
+    def _validate_sha256(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalised = value.strip().lower()
+        if len(normalised) != 64 or any(char not in "0123456789abcdef" for char in normalised):
+            raise ValueError("model digest must be 64 hexadecimal characters")
+        return normalised
 
     @model_validator(mode="after")
     def _reject_dev_secrets(self) -> Settings:
@@ -301,6 +357,21 @@ class Settings(BaseSettings):
     def dlp_entity_list(self) -> tuple[str, ...]:
         """Presidio entity types as an immutable tuple."""
         return tuple(self.dlp_entities.split(","))
+
+    @property
+    def classifier_ensemble_enabled(self) -> bool:
+        """Both ensemble graphs are configured."""
+        return (
+            self.classifier_injection_model_path is not None
+            and self.classifier_safety_model_path is not None
+        )
+
+    @property
+    def injection_threshold(self) -> float:
+        """Injection threshold: explicit override, else the profile default."""
+        if self.classifier_injection_threshold is not None:
+            return self.classifier_injection_threshold
+        return 0.5 if self.classifier_injection_profile == "recall-first" else 0.662
 
     @property
     def vault_key_bytes(self) -> bytes:

@@ -1,25 +1,35 @@
-"""Two-stage confidentiality classifier (ADR-004).
+"""Two-stage confidentiality classifier (ADR-002, ADR-004, ADR-011).
 
-A distilled sequence classifier can run locally through ONNX Runtime. When no
-model is configured, a deterministic semantic-rule classifier provides the same
-interface. Both return a confidence for the ``CONFIDENTIAL`` label; the caller
-compares it with ``CLASSIFIER_CONFIDENCE_THRESHOLD``. Borderline prompts are
-treated as PUBLIC by policy (cost trade-off), not as confidential.
+The classifier answers one question for the router: may this prompt leave the
+perimeter? Three implementations share the ``classify(text) -> Classification``
+contract:
 
-ONNX contract: the graph takes ``input_ids`` (plus ``attention_mask`` and
-optionally ``token_type_ids``) and returns two logits ordered
-``[PUBLIC, CONFIDENTIAL]``. The tokenizer is a Hugging Face ``tokenizer.json``.
+* **Ensemble** (ADR-011): an injection guard evaluated first, then a
+  multi-label safety guard. This is the production gate. It can express two
+  different risks — disclosure and manipulation — that a single sensitivity
+  bit cannot.
+* **Single graph** (legacy): one ONNX file returning two logits ordered
+  ``[PUBLIC, CONFIDENTIAL]``.
+* **Semantic rules**: a deterministic fallback for ``ENVIRONMENT=local`` only.
+  It can never detect prompt injection, so a non-local deployment without a
+  model fails at startup instead of silently degrading the gate.
+
+Both ONNX models fail closed: a session error, a missing graph, a malformed
+output or a digest mismatch resolves to ``CONFIDENTIAL`` rather than allowing
+egress.
 """
 
 from __future__ import annotations
 
 import functools
+import hashlib
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 import numpy as np
 from anyio import to_thread
@@ -27,6 +37,47 @@ from anyio import to_thread
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+#: Labels the safety graph emits, in ``config.json`` ``id2label`` order.
+#: The head is multi-label (``problem_type: multi_label_classification``), so
+#: each score is an independent sigmoid, not a softmax over the 16 classes.
+SAFETY_LABELS: Final[tuple[str, ...]] = (
+    "unsafe",
+    "hate",
+    "harassment",
+    "violence",
+    "weapons",
+    "sexual",
+    "sexual_minors",
+    "self_harm",
+    "criminal_planning",
+    "drugs",
+    "privacy",
+    "profanity",
+    "fraud_manipulation",
+    "misinformation",
+    "unauthorized_advice",
+    "other",
+)
+
+#: ``id2label`` for the injection graph is ``{0: SAFE, 1: INJECTION}``.
+_INJECTION_INDEX: Final[int] = 1
+
+#: Categories with a confidentiality consequence, in decision-table priority
+#: order. The remaining categories are logged for triage, not routed on.
+CATEGORY_REASONS: Final[Mapping[str, str]] = {
+    "privacy": "privacy_risk",
+    "fraud_manipulation": "fraud_manipulation",
+    "criminal_planning": "criminal_planning",
+    "unauthorized_advice": "unauthorized_advice",
+}
+
+#: Cap the tokens considered per prompt/document. The graphs accept up to 8192
+#: positions; anything longer is windowed rather than silently truncated.
+_MAX_DOCUMENT_TOKENS: Final[int] = 8192
+
+#: One token of padding when the tokenizer yields nothing (empty prompt).
+_EMPTY_ID: Final[int] = 0
 
 
 class ClassifierConfigurationError(RuntimeError):
@@ -54,6 +105,77 @@ class Classification:
 
     def __bool__(self) -> bool:
         return self.is_confidential
+
+
+@dataclass(frozen=True, slots=True)
+class EnsembleThresholds:
+    """The three ADR-011 operating points, all tunable without a code change."""
+
+    injection: float
+    unsafe: float
+    category: float
+
+
+class _InjectionPredictor(Protocol):
+    """Returns the probability that the text attempts prompt injection."""
+
+    def predict(self, text: str) -> float: ...
+
+
+class _SafetyPredictor(Protocol):
+    """Returns one score per :data:`SAFETY_LABELS` entry."""
+
+    def predict(self, text: str) -> Mapping[str, float]: ...
+
+
+def decide_ensemble(
+    injection_probability: float,
+    safety_scores: Mapping[str, float],
+    thresholds: EnsembleThresholds,
+) -> Classification:
+    """Apply the ADR-011 decision table to raw model scores.
+
+    This is a pure function so the routing policy can be tested without an
+    ONNX session: injection is evaluated first and cannot be overridden, then
+    the aggregate ``unsafe`` gate, then the four confidentiality categories.
+    """
+    if injection_probability >= thresholds.injection:
+        return Classification(
+            label=Sensitivity.CONFIDENTIAL,
+            confidence=round(injection_probability, 4),
+            model="injection-guard",
+            reason="prompt_injection_detected",
+        )
+
+    unsafe = safety_scores.get("unsafe", 0.0)
+    matched = tuple(
+        name for name in CATEGORY_REASONS if safety_scores.get(name, 0.0) >= thresholds.category
+    )
+    if unsafe >= thresholds.unsafe:
+        return Classification(
+            label=Sensitivity.CONFIDENTIAL,
+            confidence=round(unsafe, 4),
+            model="safety-guard",
+            matched=("unsafe",),
+            reason="unsafe_content",
+        )
+    for name, reason in CATEGORY_REASONS.items():
+        if name in matched:
+            return Classification(
+                label=Sensitivity.CONFIDENTIAL,
+                confidence=round(safety_scores.get(name, 0.0), 4),
+                model="safety-guard",
+                matched=matched,
+                reason=reason,
+            )
+
+    highest = max([unsafe, *(safety_scores.get(name, 0.0) for name in CATEGORY_REASONS)])
+    return Classification(
+        label=Sensitivity.PUBLIC,
+        confidence=round(1.0 - highest, 4),
+        model="safety-guard",
+        reason="public_content",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,8 +270,133 @@ _RULES: Final[tuple[_Rule, ...]] = (
 _RULE_MODEL: Final[str] = "semantic-rules"
 
 
+class _OnnxGraph:
+    """One ONNX graph plus its tokenizer, opened once per process.
+
+    ``logits_windows`` returns per-window logits: long documents are sliced
+    into overlapping windows (the model card's recommendation for indirect
+    injection in tool output) and the caller reduces across them.
+    """
+
+    def __init__(
+        self,
+        *,
+        graph: str,
+        model_path: Path,
+        tokenizer_path: Path,
+        max_tokens: int,
+        expected_sha256: str | None,
+    ) -> None:
+        if not model_path.is_file():
+            raise ClassifierConfigurationError(f"{graph} model not found: {model_path}")
+        if not tokenizer_path.is_file():
+            raise ClassifierConfigurationError(f"{graph} tokenizer not found: {tokenizer_path}")
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")
+        self._verify_digest(graph, model_path, expected_sha256)
+
+        try:
+            import onnxruntime
+            from tokenizers import Tokenizer
+        except ImportError as exc:  # pragma: no cover - dependencies are pinned
+            raise ClassifierConfigurationError(
+                "onnxruntime and tokenizers are required for the ONNX classifier"
+            ) from exc
+
+        try:
+            tokenizer = Tokenizer.from_file(str(tokenizer_path))
+            tokenizer.no_truncation()
+            session = onnxruntime.InferenceSession(
+                str(model_path),
+                providers=_execution_providers(onnxruntime),
+            )
+        except Exception as exc:
+            raise ClassifierConfigurationError(
+                f"could not load {graph} artefacts from {model_path}"
+            ) from exc
+
+        input_names = {item.name for item in session.get_inputs()}
+        if "input_ids" not in input_names:
+            raise ClassifierConfigurationError(f"{graph} model has no input_ids input")
+
+        self._graph = graph
+        self._tokenizer = tokenizer
+        self._session = session
+        self._input_names = input_names
+        self._max_tokens = max_tokens
+        logger.info(
+            "ONNX classifier graph ready",
+            extra={
+                "graph": graph,
+                "model": str(model_path),
+                "max_tokens": max_tokens,
+                "providers": session.get_providers(),
+            },
+        )
+
+    def logits_windows(self, text: str) -> list[np.ndarray]:
+        """Return one flattened logit array per sliding window."""
+        encoding = self._tokenizer.encode(text or "")
+        ids = list(encoding.ids)[:_MAX_DOCUMENT_TOKENS]
+        if not ids:
+            ids = [_EMPTY_ID]
+        return [self._run(window) for window in _windows(ids, self._max_tokens)]
+
+    def _run(self, ids: list[int]) -> np.ndarray:
+        feeds: dict[str, Any] = {"input_ids": np.array([ids], dtype=np.int64)}
+        if "attention_mask" in self._input_names:
+            feeds["attention_mask"] = np.ones((1, len(ids)), dtype=np.int64)
+        if "token_type_ids" in self._input_names:
+            feeds["token_type_ids"] = np.zeros((1, len(ids)), dtype=np.int64)
+        outputs = self._session.run(None, feeds)
+        return np.asarray(outputs[0], dtype=np.float64).reshape(-1)
+
+    @staticmethod
+    def _verify_digest(graph: str, model_path: Path, expected: str | None) -> None:
+        if expected is None:
+            return
+        digest = hashlib.sha256()
+        with model_path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        actual = digest.hexdigest()
+        if actual != expected:
+            raise ClassifierConfigurationError(
+                f"{graph} digest mismatch: expected {expected}, got {actual}"
+            )
+
+
+class _OnnxInjectionModel:
+    """Prompt-injection guard: two logits, softmax, index 1 is INJECTION."""
+
+    def __init__(self, graph: _OnnxGraph) -> None:
+        self._graph = graph
+
+    def predict(self, text: str) -> float:
+        probabilities = [
+            _softmax(window)[_INJECTION_INDEX] for window in self._graph.logits_windows(text)
+        ]
+        return float(max(probabilities))
+
+
+class _OnnxSafetyModel:
+    """Multi-label safety guard: one sigmoid per category, max over windows."""
+
+    def __init__(self, graph: _OnnxGraph) -> None:
+        self._graph = graph
+
+    def predict(self, text: str) -> Mapping[str, float]:
+        scores = [_sigmoid(window) for window in self._graph.logits_windows(text)]
+        stacked = np.vstack(scores).max(axis=0)
+        if stacked.size != len(SAFETY_LABELS):
+            raise ClassifierConfigurationError(
+                f"expected {len(SAFETY_LABELS)} safety labels, got {stacked.size}"
+            )
+        return {label: float(value) for label, value in zip(SAFETY_LABELS, stacked, strict=True)}
+
+
 class SensitivityClassifier:
-    """ONNX sequence classifier with a deterministic semantic-rule fallback."""
+    """Confidentiality classifier: ensemble, single graph, or rule fallback."""
 
     def __init__(
         self,
@@ -158,6 +405,20 @@ class SensitivityClassifier:
         tokenizer_path: str | None = None,
         max_tokens: int | None = None,
         threshold: float | None = None,
+        injection_model_path: str | None = None,
+        injection_tokenizer_path: str | None = None,
+        safety_model_path: str | None = None,
+        safety_tokenizer_path: str | None = None,
+        injection_max_tokens: int | None = None,
+        safety_max_tokens: int | None = None,
+        injection_threshold: float | None = None,
+        safety_unsafe_threshold: float | None = None,
+        safety_category_threshold: float | None = None,
+        injection_model_sha256: str | None = None,
+        safety_model_sha256: str | None = None,
+        injection_predictor: _InjectionPredictor | None = None,
+        safety_predictor: _SafetyPredictor | None = None,
+        require_models: bool = False,
     ) -> None:
         settings = get_settings()
         self._model_path = Path(model_path).expanduser() if model_path else None
@@ -166,19 +427,74 @@ class SensitivityClassifier:
         self._threshold = (
             settings.classifier_confidence_threshold if threshold is None else threshold
         )
-        if not 0.0 <= self._threshold <= 1.0:
-            raise ValueError("threshold must be within [0.0, 1.0]")
+        self._thresholds = EnsembleThresholds(
+            injection=settings.injection_threshold
+            if injection_threshold is None
+            else injection_threshold,
+            unsafe=settings.classifier_safety_unsafe_threshold
+            if safety_unsafe_threshold is None
+            else safety_unsafe_threshold,
+            category=settings.classifier_safety_category_threshold
+            if safety_category_threshold is None
+            else safety_category_threshold,
+        )
+        _validate_operating_points(self._threshold, self._thresholds)
         if self._max_tokens <= 0:
             raise ValueError("max_tokens must be positive")
 
+        self._injection = injection_predictor
+        self._safety = safety_predictor
+        if self._injection is None and injection_model_path is not None:
+            self._injection = _OnnxInjectionModel(
+                self._build_graph(
+                    graph="injection-guard",
+                    model_path=injection_model_path,
+                    tokenizer_path=injection_tokenizer_path,
+                    max_tokens=settings.classifier_injection_max_tokens
+                    if injection_max_tokens is None
+                    else injection_max_tokens,
+                    expected_sha256=injection_model_sha256,
+                )
+            )
+        if self._safety is None and safety_model_path is not None:
+            self._safety = _OnnxSafetyModel(
+                self._build_graph(
+                    graph="safety-guard",
+                    model_path=safety_model_path,
+                    tokenizer_path=safety_tokenizer_path,
+                    max_tokens=settings.classifier_safety_max_tokens
+                    if safety_max_tokens is None
+                    else safety_max_tokens,
+                    expected_sha256=safety_model_sha256,
+                )
+            )
+        if (self._injection is None) != (self._safety is None):
+            raise ClassifierConfigurationError(
+                "the injection guard and the safety guard must be configured together"
+            )
+
         self._session: Any | None = None
         self._tokenizer: Any | None = None
-        if self._model_path is not None:
+        if self._injection is None and self._model_path is not None:
             self._load_onnx()
 
+        if require_models and not self.uses_model:
+            raise ClassifierConfigurationError(
+                "no classifier model configured outside ENVIRONMENT=local; set "
+                "CLASSIFIER_INJECTION_MODEL_PATH and CLASSIFIER_SAFETY_MODEL_PATH "
+                "(or CLASSIFIER_MODEL_PATH)"
+            )
+
     # -- public API -------------------------------------------------------
+    @property
+    def uses_model(self) -> bool:
+        """True when a model (ensemble or single graph) backs the decision."""
+        return self._injection is not None or self._session is not None
+
     def classify(self, text: str) -> Classification:
         """Classify a prompt (synchronous; use :meth:`aclassify` in async code)."""
+        if self._injection is not None and self._safety is not None:
+            return self._classify_ensemble(text)
         if self._session is not None:
             return self._classify_onnx(text)
         return self._classify_rules(text)
@@ -188,7 +504,49 @@ class SensitivityClassifier:
 
     @property
     def model_name(self) -> str:
+        if self._injection is not None:
+            return "ensemble"
         return self._model_path.name if self._model_path is not None else _RULE_MODEL
+
+    # -- ensemble ---------------------------------------------------------
+    def _classify_ensemble(self, text: str) -> Classification:
+        if self._injection is None or self._safety is None:  # pragma: no cover - guarded above
+            raise ClassifierConfigurationError("ensemble is not fully configured")
+        try:
+            injection_probability = self._injection.predict(text)
+            safety_scores = self._safety.predict(text)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Fail closed: a broken gate must never allow egress. The exception
+            # type is logged, never the prompt text.
+            logger.error(
+                "classifier inference failed; failing closed",
+                extra={"error": type(exc).__name__},
+            )
+            return Classification(
+                label=Sensitivity.CONFIDENTIAL,
+                confidence=1.0,
+                model="ensemble",
+                reason="classifier_error",
+            )
+        return decide_ensemble(injection_probability, safety_scores, self._thresholds)
+
+    @staticmethod
+    def _build_graph(
+        *,
+        graph: str,
+        model_path: str,
+        tokenizer_path: str | None,
+        max_tokens: int,
+        expected_sha256: str | None,
+    ) -> _OnnxGraph:
+        path = Path(model_path).expanduser()
+        return _OnnxGraph(
+            graph=graph,
+            model_path=path,
+            tokenizer_path=_resolve_tokenizer(path, tokenizer_path),
+            max_tokens=max_tokens,
+            expected_sha256=expected_sha256,
+        )
 
     # -- rule fallback ----------------------------------------------------
     def _classify_rules(self, text: str) -> Classification:
@@ -219,7 +577,7 @@ class SensitivityClassifier:
             reason="matched: " + ", ".join(sorted(matched)) if matched else "no markers",
         )
 
-    # -- ONNX -------------------------------------------------------------
+    # -- legacy single graph ---------------------------------------------
     def _load_onnx(self) -> None:
         if self._model_path is None:
             raise ClassifierConfigurationError("model path is not configured")
@@ -289,13 +647,66 @@ class SensitivityClassifier:
         )
 
     def __repr__(self) -> str:
-        return f"SensitivityClassifier(model={self.model_name!r}, threshold={self._threshold})"
+        return f"SensitivityClassifier(mode={self.model_name!r}, thresholds={self._thresholds!r})"
+
+
+def _validate_operating_points(threshold: float, ensemble: EnsembleThresholds) -> None:
+    for name, value in (
+        ("threshold", threshold),
+        ("injection_threshold", ensemble.injection),
+        ("safety_unsafe_threshold", ensemble.unsafe),
+        ("safety_category_threshold", ensemble.category),
+    ):
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{name} must be within [0.0, 1.0]")
+
+
+def _resolve_tokenizer(model_path: Path, explicit: str | None) -> Path:
+    """Find the tokenizer beside the graph or at the repository root."""
+    if explicit:
+        return Path(explicit).expanduser()
+    for candidate in (
+        model_path.with_name("tokenizer.json"),
+        model_path.parent.parent / "tokenizer.json",
+    ):
+        if candidate.is_file():
+            return candidate
+    raise ClassifierConfigurationError(
+        f"tokenizer not found next to {model_path}; set the tokenizer path explicitly"
+    )
+
+
+def _windows(ids: list[int], window: int) -> list[list[int]]:
+    """Overlapping token windows with a quarter-window stride."""
+    if len(ids) <= window:
+        return [ids]
+    stride = max(1, window // 4)
+    return [ids[start : start + window] for start in range(0, len(ids), stride)]
+
+
+def _execution_providers(onnxruntime: Any) -> list[str]:
+    """CUDA first, CPU fallback — the order ADR-011 specifies."""
+    available = set(onnxruntime.get_available_providers())
+    ordered = [
+        name for name in ("CUDAExecutionProvider", "CPUExecutionProvider") if name in available
+    ]
+    return ordered or ["CPUExecutionProvider"]
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:
     shifted = logits - np.max(logits)
     exponentials = np.exp(shifted)
     return np.asarray(exponentials / np.sum(exponentials), dtype=np.float64)
+
+
+def _sigmoid(logits: np.ndarray) -> np.ndarray:
+    # Numerically stable form: 1 / (1 + exp(-x)), split by sign.
+    output = np.empty_like(logits, dtype=np.float64)
+    positive = logits >= 0
+    output[positive] = 1.0 / (1.0 + np.exp(-logits[positive]))
+    negative_exp = np.exp(logits[~positive])
+    output[~positive] = negative_exp / (1.0 + negative_exp)
+    return output
 
 
 @functools.lru_cache(maxsize=1)
@@ -307,4 +718,16 @@ def get_classifier() -> SensitivityClassifier:
         tokenizer_path=settings.classifier_tokenizer_path,
         max_tokens=settings.classifier_max_tokens,
         threshold=settings.classifier_confidence_threshold,
+        injection_model_path=settings.classifier_injection_model_path,
+        injection_tokenizer_path=settings.classifier_injection_tokenizer_path,
+        safety_model_path=settings.classifier_safety_model_path,
+        safety_tokenizer_path=settings.classifier_safety_tokenizer_path,
+        injection_max_tokens=settings.classifier_injection_max_tokens,
+        safety_max_tokens=settings.classifier_safety_max_tokens,
+        injection_threshold=settings.injection_threshold,
+        safety_unsafe_threshold=settings.classifier_safety_unsafe_threshold,
+        safety_category_threshold=settings.classifier_safety_category_threshold,
+        injection_model_sha256=settings.classifier_injection_model_sha256,
+        safety_model_sha256=settings.classifier_safety_model_sha256,
+        require_models=settings.environment != "local",
     )
