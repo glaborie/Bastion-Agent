@@ -129,12 +129,12 @@
   ],
   "users": [
     {
-      "username": "admin",
+      "username": "breakglass",
       "enabled": true,
       "emailVerified": true,
       "firstName": "Break-glass",
       "lastName": "Admin",
-      "email": "admin@bastion.local",
+      "email": "breakglass@bastion.local",
       "requiredActions": [],
       "realmRoles": ["admin"],
       "credentials": [

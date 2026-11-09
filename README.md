@@ -86,14 +86,14 @@ dev-only credential. Rotate or delete these users before exposing the stack.
 
 > **Note:** `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` in `.env` are the
 > **master-realm bootstrap administrator** (`http://localhost:8080/admin`), not
-> a `bastion`-realm dashboard login. The dashboard `admin` user below is a
+> a `bastion`-realm dashboard login. The dashboard `breakglass` user below is a
 > normal realm user seeded by `realm-export.json` and uses
 > `Bastion-dev-2026!`. Using the bootstrap password on the dashboard login page
 > returns `invalid_user_credentials`.
 
 | User | Realm roles | Purpose |
 |------|-------------|---------|
-| `admin` | `admin` | Break-glass superset (satisfies every requirement) |
+| `breakglass` | `admin` | Break-glass superset (satisfies every requirement) |
 | `alice` | `operator` | Initiator of the demo write requests |
 | `bob` | `operator`, `analyst` | The second operator who decides tickets |
 | `carol` | `analyst` | Read/analysis only; dashboard is forbidden |
@@ -181,8 +181,11 @@ dashboard never invents a green result.
 ### Realm changes
 
 Keycloak imports with the `IGNORE_EXISTING` strategy, so editing
-`realm-export.json` does not update a realm that already exists. For a clean
-re-import (this deletes Keycloak's state, not the audit ledger):
+`realm-export.json` does not update a realm that already exists. In particular,
+the break-glass user is now `breakglass` (it was `admin` in an earlier
+revision); an existing realm volume keeps the old username until it is renamed
+in the admin console or re-imported. For a clean re-import (this deletes
+Keycloak's state, not the audit ledger):
 
 ```bash
 docker compose down keycloak
@@ -325,22 +328,24 @@ is accounted for. If you see CUDA out-of-memory errors, lower
   CPU-only host use the `server` image, set `LLAMA_N_GPU_LAYERS=0`, and remove
   that reservation block.
 
-### Keycloak reports `invalid_user_credentials` for `admin`
+### Keycloak reports `invalid_user_credentials` or "user not found" for `admin`
 
-There are two different `admin` identities:
+There are two different identities:
 
 - `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` (`.env`) is the **master-realm**
   bootstrap administrator used at `http://localhost:8080/admin`.
-- `admin` on the dashboard login page is a **`bastion`-realm** user seeded from
-  `config/keycloak/realm-export.json`, with password `Bastion-dev-2026!`.
+- The dashboard break-glass user is **`breakglass`** in the **`bastion`-realm**,
+  seeded from `config/keycloak/realm-export.json`, with password
+  `Bastion-dev-2026!`.
 
-Using the bootstrap password for the dashboard therefore fails. Verify the
-realm credentials directly:
+`admin` is not a `bastion`-realm user, so using that name on the dashboard
+login page fails (or falls back to the bootstrap password and logs
+`invalid_user_credentials`). Verify the realm credential directly:
 
 ```bash
 curl -s -X POST http://localhost:8080/realms/bastion/protocol/openid-connect/token \
   -d grant_type=password -d client_id=bastion-cli \
-  -d username=admin -d password='Bastion-dev-2026!'
+  -d username=breakglass -d password='Bastion-dev-2026!'
 ```
 
 ### `redis` is unhealthy with `MISCONF Redis is configured to save RDB snapshots` or `Permission denied`
