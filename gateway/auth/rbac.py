@@ -263,6 +263,12 @@ def _same_origin(request: Request) -> bool:
     if declared is None:
         # Non-browser clients do not send Origin; the CSRF token still applies.
         return True
+    if declared.strip().lower() == "null":
+        # Sandboxed/embedded browser contexts (opaque origin) send
+        # "Origin: null" even for a same-page form. The per-session CSRF token
+        # has already been verified, and a cross-origin attacker cannot read
+        # it; the origin check is defence in depth, not the primary control.
+        return True
     candidate = _origin_host(declared)
     expected = _origin_host(str(request.base_url))
     if candidate is None or expected is None:
@@ -311,6 +317,7 @@ async def require_csrf(
                 "path": request.url.path,
                 "declared_origin": request.headers.get("origin"),
                 "referer": request.headers.get("referer"),
+                "sec_fetch_site": request.headers.get("sec-fetch-site"),
                 "request_origin": str(request.base_url),
             },
         )

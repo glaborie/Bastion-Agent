@@ -147,6 +147,19 @@ def test_loopback_host_aliases_are_treated_as_same_origin() -> None:
     assert response.status_code == 200
 
 
+def test_opaque_origin_null_is_allowed_only_with_a_valid_csrf_token() -> None:
+    # An embedded/sandboxed browser view sends "Origin: null". The CSRF token
+    # remains the control; without it the request is still rejected.
+    context = AuthContext(principal=BOB, method="session", session=_session(BOB))
+    client = TestClient(_app_with_context(context))
+
+    assert client.post("/mutate", headers={"Origin": "null"}).status_code == 403
+    assert (
+        client.post("/mutate", headers={"Origin": "null", "X-CSRF-Token": "csrf-token"}).status_code
+        == 200
+    )
+
+
 def test_bearer_mutations_are_exempt_from_csrf() -> None:
     client = TestClient(_app_with_context(AuthContext(principal=BOB, method="bearer")))
     response = client.post("/mutate", headers={"Origin": "http://evil.example"})
