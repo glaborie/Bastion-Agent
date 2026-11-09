@@ -270,6 +270,11 @@ still fails.
 Browser: sign in as `bob`, open `/dashboard`, click **Approve** on Alice’s
 ticket (Alice’s row has no action buttons).
 
+The queue refreshes every 3 s, and immediately when the tab regains focus, so a
+new ticket appears without a manual reload. A typed reason survives the refresh
+(`hx-preserve`), and once decided the ticket moves to **Recent decisions** with
+its full id for 15 minutes — the ledger remains the permanent record.
+
 CLI equivalent:
 
 ```bash
@@ -375,7 +380,7 @@ Signed in as `breakglass`:
 
 | Page | What to show |
 |---|---|
-| `/dashboard` | Pending approvals, the four-eyes rule, evaluation card (“not run yet”) |
+| `/dashboard` | Pending approvals, recent decisions with full ticket ids, the four-eyes rule, evaluation card (“not run yet”) |
 | `/dashboard/audit` | Filter by event type, actor, session; verify the chain in place |
 | `/dashboard/sessions/<SESSION>` | The whole request lifecycle for the demo session |
 

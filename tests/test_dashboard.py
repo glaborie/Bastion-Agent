@@ -136,6 +136,10 @@ async def test_dashboard_renders_the_approval_queue(api: tuple[httpx.AsyncClient
     assert response.headers["content-security-policy"].startswith("default-src 'self'")
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "no-store"
+    # The page owns the metric; the polling partial supplies it out of band. A
+    # duplicate id here would mean the OOB element leaked into the full page.
+    assert response.text.count('id="pending-count"') == 1
+    assert "hx-swap-oob" not in response.text
 
 
 async def test_json_approvals_respect_four_eyes(
@@ -370,3 +374,66 @@ async def test_unauthenticated_dashboard_redirects_to_login() -> None:
         htmx = await client.get("/api/approvals", headers={"HX-Request": "true"})
         assert htmx.status_code == 401
         assert htmx.headers["hx-redirect"] == "/auth/login?next=%2Fdashboard"
+
+
+async def test_htmx_poll_refreshes_the_metric_out_of_band(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    """The counter lives outside #approvals, so it must be swapped out of band."""
+    client, _state = api
+    await seed_ticket(db_engine, build_ticket())
+
+    response = await client.get("/api/approvals", headers={"HX-Request": "true"})
+    assert response.status_code == 200
+    assert 'id="pending-count"' in response.text
+    assert 'hx-swap-oob="true"' in response.text
+    # The queue text is present exactly once, in the fragment itself.
+    assert response.text.count(">1<") >= 1
+
+
+async def test_decision_form_survives_the_poll(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    """hx-preserve is what stops the 3s swap from wiping a typed reason."""
+    client, _state = api
+    ticket_id = await seed_ticket(db_engine, build_ticket())
+
+    response = await client.get("/api/approvals", headers={"HX-Request": "true"})
+    assert f'id="decision-{ticket_id}"' in response.text
+    assert 'hx-preserve="true"' in response.text
+
+
+async def test_decided_ticket_stays_visible_with_its_full_id(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    """The queue empties, but the decision and the full UUID remain readable."""
+    client, state = api
+    ticket_id = await seed_ticket(db_engine, build_ticket())
+    state["context"] = AuthContext(principal=BOB, method="bearer")
+
+    decided = await client.post(f"/api/approvals/{ticket_id}/action", data={"action": "approve"})
+    assert decided.status_code == 200
+
+    # A later poll is what previously erased the record within 3 seconds.
+    polled = await client.get("/api/approvals", headers={"HX-Request": "true"})
+    assert polled.status_code == 200
+    assert "No tickets are waiting for approval." in polled.text
+    assert "Recent decisions" in polled.text
+    assert str(ticket_id) in polled.text
+    assert ">approved<" in polled.text
+
+    # The out-of-band counter reflects the now-empty queue.
+    assert 'hx-swap-oob="true">0<' in polled.text
+
+    # The worker flips the ticket to executed within seconds; that is a success,
+    # not a failure, and the row must not turn red.
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as session:
+        ticket = await session.get(PendingApproval, ticket_id)
+        assert ticket is not None
+        ticket.status = ApprovalStatus.EXECUTED
+        await session.commit()
+
+    executed = await client.get("/api/approvals", headers={"HX-Request": "true"})
+    assert ">executed<" in executed.text
+    assert "badge-bad" not in executed.text

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from sqlalchemy import select
@@ -123,6 +123,79 @@ async def list_pending(
     moment = now or utcnow()
     return [
         to_view(ticket, viewer_id=viewer_id, viewer_roles=viewer_roles, now=moment)
+        for ticket in tickets
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionView:
+    """A ticket that has been decided, kept on screen briefly for the record."""
+
+    ticket_id: str
+    tool_name: str
+    status: str
+    initiator_id: str
+    approver_id: str
+    decided_at: datetime
+    decided_ago: str
+
+
+#: How long a decided ticket stays visible under "Recent decisions".
+RECENT_DECISION_MINUTES = 15
+RECENT_DECISION_LIMIT = 10
+
+
+def humanize_elapsed(moment: datetime, *, now: datetime | None = None) -> str:
+    elapsed = max(int(((now or utcnow()) - moment).total_seconds()), 0)
+    if elapsed < 60:
+        return f"{elapsed}s ago"
+    minutes, _ = divmod(elapsed, 60)
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m ago"
+
+
+async def list_recently_decided(
+    session: AsyncSession,
+    *,
+    minutes: int = RECENT_DECISION_MINUTES,
+    limit: int = RECENT_DECISION_LIMIT,
+    now: datetime | None = None,
+) -> list[DecisionView]:
+    """Tickets decided within the last ``minutes``, newest first.
+
+    The queue only shows open tickets, so a decision would otherwise erase the
+    row before the operator can read (or copy) the ticket id. Keeping decided
+    tickets on screen for a short window is the durable fix; the ledger remains
+    the authoritative record.
+    """
+    if minutes <= 0:
+        raise ValueError("minutes must be positive")
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be within [1, 100]")
+    moment = now or utcnow()
+    statement = (
+        select(PendingApproval)
+        .where(
+            PendingApproval.status != ApprovalStatus.PENDING,
+            PendingApproval.decided_at.is_not(None),
+            PendingApproval.decided_at >= moment - timedelta(minutes=minutes),
+        )
+        .order_by(PendingApproval.decided_at.desc())
+        .limit(limit)
+    )
+    tickets = (await session.execute(statement)).scalars()
+    return [
+        DecisionView(
+            ticket_id=str(ticket.ticket_id),
+            tool_name=ticket.tool_name,
+            status=ticket.status.value,
+            initiator_id=ticket.initiator_id,
+            approver_id=ticket.approver_id or "—",
+            decided_at=ticket.decided_at or moment,
+            decided_ago=humanize_elapsed(ticket.decided_at or moment, now=moment),
+        )
         for ticket in tickets
     ]
 

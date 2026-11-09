@@ -15,8 +15,10 @@ from db.session import get_db_session
 from gateway.approvals import (
     ApprovalDecisionError,
     ApprovalView,
+    DecisionView,
     decide_ticket,
     list_pending,
+    list_recently_decided,
     parse_action,
     utc_isoformat,
 )
@@ -63,6 +65,7 @@ def _render_approvals(
     request: Request,
     context: AuthContext,
     approvals: list[ApprovalView],
+    recent: list[DecisionView],
     *,
     error: str | None = None,
     notice: str | None = None,
@@ -72,12 +75,29 @@ def _render_approvals(
         "partials/approval_table.html",
         context={
             "approvals": approvals,
+            "recent": recent,
+            "pending_count": len(approvals),
+            "pending_oob": True,
             "principal": context.principal,
             "csrf_token": context.csrf_token,
             "approval_error": error,
             "approval_notice": notice,
         },
     )
+
+
+async def _queue_view(
+    session: AsyncSession, context: AuthContext
+) -> tuple[list[ApprovalView], list[DecisionView]]:
+    """Both halves of the queue fragment."""
+    approvals = await list_pending(
+        session,
+        viewer_id=context.actor_id,
+        viewer_roles=context.principal.roles,
+        limit=get_settings().approval_page_size,
+    )
+    recent = await list_recently_decided(session)
+    return approvals, recent
 
 
 @router.get("/api/approvals", summary="Pending approvals")
@@ -87,14 +107,9 @@ async def list_approvals(
     session: AsyncSession = Depends(get_db_session),
 ) -> Any:
     """List open tickets. htmx receives the polling partial instead of JSON."""
-    approvals = await list_pending(
-        session,
-        viewer_id=context.actor_id,
-        viewer_roles=context.principal.roles,
-        limit=get_settings().approval_page_size,
-    )
+    approvals, recent = await _queue_view(session, context)
     if is_htmx(request):
-        return _render_approvals(request, context, approvals)
+        return _render_approvals(request, context, approvals, recent)
     return {
         "approvals": [ApprovalOut.from_view(view) for view in approvals],
         "count": len(approvals),
@@ -129,27 +144,21 @@ async def decide_approval(
             await enqueue_tool_resume(str(ticket.ticket_id))
     except ApprovalDecisionError as exc:
         if is_htmx(request):
-            approvals = await list_pending(
-                session,
-                viewer_id=context.actor_id,
-                viewer_roles=context.principal.roles,
-                limit=get_settings().approval_page_size,
-            )
-            return _render_approvals(request, context, approvals, error=str(exc))
+            approvals, recent = await _queue_view(session, context)
+            return _render_approvals(request, context, approvals, recent, error=str(exc))
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     if is_htmx(request):
-        approvals = await list_pending(
-            session,
-            viewer_id=context.actor_id,
-            viewer_roles=context.principal.roles,
-            limit=get_settings().approval_page_size,
-        )
+        approvals, recent = await _queue_view(session, context)
         return _render_approvals(
             request,
             context,
             approvals,
-            notice=f"Ticket {str(ticket.ticket_id)[:8]} {ticket.status.value}.",
+            recent,
+            notice=(
+                f"Ticket {ticket.ticket_id} {ticket.status.value}. "
+                "It stays under recent decisions for 15 minutes."
+            ),
         )
 
     return {

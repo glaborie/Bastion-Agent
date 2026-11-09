@@ -76,6 +76,12 @@ main.container {
   overflow-x: auto;
 }
 
+/* Full UUIDs in the decision log must not blow out the table width. */
+.ticket-id {
+  word-break: break-all;
+  font-size: 0.78rem;
+}
+
 table {
   font-size: 0.9rem;
 }

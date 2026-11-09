@@ -1,13 +1,12 @@
 <div id="approvals"
      hx-get="/api/approvals"
-     hx-trigger="every 3s"
-     hx-swap="outerHTML"
-     aria-live="polite">
+     hx-trigger="every 3s, visibilitychange from:document, focus from:window"
+     hx-swap="outerHTML">
   {% if approval_error %}
     <article class="alert" role="alert">{{ approval_error }}</article>
   {% endif %}
   {% if approval_notice %}
-    <article class="notice" role="status">{{ approval_notice }}</article>
+    <article class="notice" role="status" aria-live="polite">{{ approval_notice }}</article>
   {% endif %}
 
   {% if approvals %}
@@ -55,7 +54,10 @@
                 {% elif not approval.decidable %}
                   <small class="muted">{{ approval.status }}</small>
                 {% else %}
-                  <form hx-post="/api/approvals/{{ approval.ticket_id }}/action"
+                  {# hx-preserve keeps the typed reason and focus across the 3s poll. #}
+                  <form id="decision-{{ approval.ticket_id }}"
+                        hx-preserve="true"
+                        hx-post="/api/approvals/{{ approval.ticket_id }}/action"
                         hx-target="#approvals"
                         hx-swap="outerHTML"
                         method="post"
@@ -80,4 +82,52 @@
       <p>No tickets are waiting for approval.</p>
     </article>
   {% endif %}
+
+  {% if recent %}
+    <h3>Recent decisions</h3>
+    <p>
+      <small class="muted">
+        Decided tickets stay here for 15 minutes so the id can be read or copied.
+        The audit ledger is the permanent record.
+      </small>
+    </p>
+    <div class="table-scroll">
+      <table role="grid">
+        <thead>
+          <tr>
+            <th scope="col">Ticket</th>
+            <th scope="col">Tool</th>
+            <th scope="col">Decision</th>
+            <th scope="col">Approver</th>
+            <th scope="col">Decided</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for decision in recent %}
+            <tr>
+              <td><code class="ticket-id" title="{{ decision.ticket_id }}">{{ decision.ticket_id }}</code></td>
+              <td>{{ decision.tool_name }}</td>
+              <td>
+                {% if decision.status in ("approved", "executed") %}
+                  <span class="badge badge-ok">{{ decision.status }}</span>
+                {% else %}
+                  <span class="badge badge-bad">{{ decision.status }}</span>
+                {% endif %}
+              </td>
+              <td><code title="{{ decision.approver_id }}">{{ decision.approver_id | short_hash(8) }}</code></td>
+              <td><small title="{{ decision.decided_at | utc_ts }}">{{ decision.decided_ago }}</small></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
 </div>
+
+{# Out-of-band update: the metric card lives outside #approvals, so the poll
+   would otherwise leave it stale until a full page load. Only rendered when the
+   partial is served standalone (never inside dashboard.html, where the metric
+   already exists). #}
+{% if pending_oob %}
+  <p id="pending-count" class="metric" hx-swap-oob="true">{{ pending_count }}</p>
+{% endif %}
