@@ -185,9 +185,11 @@ def ensure_key(admin: Admin, env: dict[str, str]) -> str:
     configured = env.get("OMNIROUTE_API_KEY", "")
     # OmniRoute exposes no key preview, so reconcile by count + functional check.
     status, body = admin.call("GET", "/api/keys")
-    managed = [
-        key for key in json.loads(body).get("keys", []) if key.get("name") == "bastion-gateway"
-    ] if status == 200 else []
+    managed = (
+        [key for key in json.loads(body).get("keys", []) if key.get("name") == "bastion-gateway"]
+        if status == 200
+        else []
+    )
     if configured and len(managed) == 1 and key_is_functional(configured):
         print("gateway key: registered and functional")
         return configured

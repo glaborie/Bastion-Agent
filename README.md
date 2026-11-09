@@ -24,6 +24,14 @@ Bastion-Agent is an enterprise-grade agent runtime designed for high-security an
 See [`HANDOVER_SPEC.md`](HANDOVER_SPEC.md) for full architectural blueprints and sequence diagrams.
 See [`AGENTS.md`](AGENTS.md) for OpenCode implementation directives and milestone execution.
 
+Architectural decisions live in [`docs/adr/`](docs/adr/ADR-Index.md) (ADR-001 …
+ADR-008). They describe what the system actually does; when behaviour changes,
+update the ADR in the same commit. Validate the set with:
+
+```bash
+uv run python scripts/check_adrs.py
+```
+
 ---
 
 ## Quick Start (Local Docker Compose)
