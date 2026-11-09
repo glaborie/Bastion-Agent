@@ -210,6 +210,33 @@ CAROL_SUB=$(curl -s -H "Authorization: Bearer $CAROL_TOKEN" \
 `ALICE_SUB` is the OIDC `sub`, **not** the username. Four-eyes compares
 subjects; using a username here would compare two different namespaces.
 
+> **Access tokens live for five minutes** (`accessTokenLifespan: 300` in the
+> realm export), and nothing renews a Bearer token for you — unlike the
+> dashboard session, which refreshes itself. Acts 3 and 4 take longer than
+> that, so expect to re-issue a token mid-walkthrough. The `sub` never changes,
+> so only the token variables need refreshing:
+>
+> ```bash
+> BOB_TOKEN=$(token_for bob)          # re-run before the approval in 5.4
+> ```
+>
+> A cheap pre-flight before any act tells you whether a token is still fresh:
+>
+> ```bash
+> curl -s -o /dev/null -w '%{http_code}\n' \
+>   -H "Authorization: Bearer $BOB_TOKEN" http://localhost:8000/auth/me
+> # 200 = fresh, 401 = re-issue with token_for
+> ```
+>
+> A stale token surfaces as `{"detail": "authentication required"}` with
+> `WWW-Authenticate: Bearer realm="bastion"` — deliberately generic, so the
+> gateway log is where the reason lives:
+>
+> ```bash
+> docker compose logs gateway --since 10m | grep 'Bearer token rejected'
+> # {"message": "Bearer token rejected", "reason": "expired_token"}
+> ```
+
 ### 5.2 Alice requests a mutating tool
 
 ```bash
@@ -281,6 +308,9 @@ CLI equivalent:
 curl -s -X POST -H "Authorization: Bearer $BOB_TOKEN" \
   -d action=approve "http://localhost:8000/api/approvals/$TICKET/action" | jq
 ```
+
+A `401` here means `BOB_TOKEN` passed its five-minute lifetime: re-issue it
+(§5.1) and retry. The failed attempt does not touch the ticket.
 
 ```
 { "ticket_id": "<uuid>", "status": "approved", "approver_id": "...", ... }
@@ -425,6 +455,7 @@ docker compose down -v
 | Dashboard login fails with `user_not_found` | You are on `:8080/admin` (master realm). Use `http://localhost:8000` |
 | Login page returns `Invalid parameter: redirect_uri` | You used `127.0.0.1` or a LAN IP. Use `localhost` |
 | `403 CSRF token missing` from curl | Use a `Bearer` token (exempt) instead of cookie auth, or send `X-CSRF-Token` |
+| `{"detail": "authentication required"}` from curl | The Bearer token aged out — they last 5 minutes. Confirm with `docker compose logs gateway \| grep 'Bearer token rejected'` (`"reason": "expired_token"`), then `BOB_TOKEN=$(token_for bob)` |
 | Tool job stays `approval_pending` forever | No worker, or queue mismatch. `docker compose ps worker`; compare `ARQ_QUEUE_NAME` |
 | `demo_tool_request.py` times out | Worker not running, or the host `.env` points at a different Redis |
 | Host port `8001` stops answering after a restart | `docker compose restart omniroute` |

@@ -9,8 +9,15 @@ import pytest
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from gateway.auth.oidc import Principal
-from gateway.auth.rbac import AuthContext, get_auth_context, require_csrf, require_roles
+from gateway.auth.oidc import Principal, TokenValidationError
+from gateway.auth.rbac import (
+    AuthContext,
+    get_auth_context,
+    get_session_manager,
+    get_token_validator,
+    require_csrf,
+    require_roles,
+)
 from gateway.auth.roles import any_satisfied, is_satisfied, normalise_roles
 from gateway.auth.session import SessionRecord
 
@@ -164,3 +171,30 @@ def test_bearer_mutations_are_exempt_from_csrf() -> None:
     client = TestClient(_app_with_context(AuthContext(principal=BOB, method="bearer")))
     response = client.post("/mutate", headers={"Origin": "http://evil.example"})
     assert response.status_code == 200
+
+
+def test_an_expired_bearer_token_is_a_generic_401() -> None:
+    """The 401 must not say *why* a token failed (see gateway/auth/oidc.py)."""
+
+    class ExpiredValidator:
+        async def validate_access_token(self, token: str) -> Principal:
+            raise TokenValidationError("expired_token")
+
+    app = FastAPI()
+
+    @app.get("/protected")
+    async def protected(active: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+        return {"subject": active.principal.subject}
+
+    def _no_sessions() -> object:
+        # The Bearer path returns before touching Redis.
+        return object()
+
+    app.dependency_overrides[get_token_validator] = ExpiredValidator
+    app.dependency_overrides[get_session_manager] = _no_sessions
+
+    response = TestClient(app).get("/protected", headers={"Authorization": "Bearer stale"})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "authentication required"
+    # A caller holding a stale token learns nothing more than "not valid".
+    assert response.headers["www-authenticate"] == 'Bearer realm="bastion"'
