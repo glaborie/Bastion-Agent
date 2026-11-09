@@ -264,10 +264,14 @@ services:
     command: ["--config=/etc/otelcol/config.yaml"]
     environment:
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-local}
-      LANGFUSE_OTLP_ENDPOINT: ${LANGFUSE_OTLP_ENDPOINT:-http://langfuse:3000/api/public/otel}
+      # Langfuse Cloud (EU). Use us./jp./hipaa. subdomains for other regions.
+      LANGFUSE_OTLP_ENDPOINT: ${LANGFUSE_OTLP_ENDPOINT:-https://cloud.langfuse.com/api/public/otel}
       LANGFUSE_OTLP_AUTH: ${LANGFUSE_OTLP_AUTH:-}
-      ARIZE_OTLP_ENDPOINT: ${ARIZE_OTLP_ENDPOINT:-https://otlp.arize.com:443}
+      # Arize AX OTLP/HTTP endpoint (Arize's documented form includes /v1).
+      ARIZE_OTLP_ENDPOINT: ${ARIZE_OTLP_ENDPOINT:-https://otlp.arize.com/v1}
       ARIZE_API_KEY: ${ARIZE_API_KEY:-}
+      ARIZE_SPACE_ID: ${ARIZE_SPACE_ID:-}
+      ARIZE_PROJECT_NAME: ${ARIZE_PROJECT_NAME:-bastion-agent}
     volumes:
       - ./config/otel/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
     ports:

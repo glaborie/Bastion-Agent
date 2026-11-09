@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Application layer. The venv stays root-owned but world-readable; the source
 # tree is owned by the runtime user so editable installs resolve normally.
-COPY --chown=bastion:bastion pyproject.toml README.md settings.py logging_setup.py ./
+COPY --chown=bastion:bastion pyproject.toml README.md settings.py logging_setup.py telemetry.py ./
 COPY --chown=bastion:bastion db ./db
 COPY --chown=bastion:bastion gateway ./gateway
 COPY --chown=bastion:bastion agent ./agent

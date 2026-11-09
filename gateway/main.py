@@ -16,6 +16,7 @@ from db.session import dispose_engine, init_models
 from gateway.routers import health
 from logging_setup import configure_logging
 from settings import get_settings
+from telemetry import configure_tracing, instrument_app, shutdown_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        shutdown_tracing()
         await dispose_engine()
         logger.info("Bastion-Agent gateway stopped")
 
@@ -55,6 +57,9 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(health.router)
+
+    configure_tracing(settings)
+    instrument_app(app)
     return app
 
 

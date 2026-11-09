@@ -1,14 +1,14 @@
 # =============================================================================
 # OpenTelemetry Collector (contrib) — Bastion-Agent fan-out
 # -----------------------------------------------------------------------------
-# Receives OTLP from the gateway/worker and exports spans.
+# Receives OTLP from the gateway/worker and fans traces out to:
+#   • Langfuse Cloud (EU: cloud.langfuse.com; US: us.cloud.langfuse.com)
+#   • Arize AX (OTLP/HTTP)
+#   • local debug logs
 #
-# By default traces go to the local `debug` exporter so `docker compose logs`
-# shows them. Enable a backend by adding its exporter to the `traces` pipeline
-# below (Langfuse and Arize exporters are pre-configured).
-#
-# Every referenced variable is supplied by docker-compose.yml with a non-empty
-# default; the collector's env provider does not support shell-style `:-`.
+# Every ${env:...} variable below is supplied by docker-compose.yml with a
+# non-empty default, because the collector's env provider does not implement
+# shell-style `${VAR:-default}` fallbacks.
 # =============================================================================
 
 receivers:
@@ -37,26 +37,45 @@ processors:
     timeout: 5s
 
 exporters:
-  # Local visibility: one line per span batch in the collector logs.
+  # Local visibility only (span-batch counters, not span bodies).
   debug:
-    verbosity: normal
+    verbosity: basic
 
-  # Langfuse v3+/OTLP ingestion.
-  # Requires LANGFUSE_OTLP_AUTH = base64("<public_key>:<secret_key>").
+  # Langfuse Cloud / self-hosted. Auth is base64("<public_key>:<secret_key>").
   otlphttp/langfuse:
     endpoint: ${env:LANGFUSE_OTLP_ENDPOINT}
     encoding: json
     headers:
       Authorization: "Basic ${env:LANGFUSE_OTLP_AUTH}"
       x-langfuse-ingestion-version: "4"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
 
-  # Arize Phoenix / Arize AX OTLP.
-  otlp/arize:
+  # Arize AX over OTLP/HTTP. Arize documents the endpoint as
+  # https://otlp.arize.com/v1 (verified: without `/v1` their ingest returns 400).
+  # `x-project-name` routes the traces into a specific Arize project.
+  otlphttp/arize:
     endpoint: ${env:ARIZE_OTLP_ENDPOINT}
+    # Arize's OTLP/HTTP ingest expects JSON, not the exporter's default protobuf.
+    encoding: json
     headers:
-      api_key: "${env:ARIZE_API_KEY}"
-    tls:
-      insecure: false
+      space_id: ${env:ARIZE_SPACE_ID}
+      api_key: ${env:ARIZE_API_KEY}
+      x-project-name: ${env:ARIZE_PROJECT_NAME}
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
 
 extensions:
   health_check:
@@ -71,5 +90,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      # Add `otlphttp/langfuse` and/or `otlp/arize` here to ship spans externally.
-      exporters: [debug]
+      exporters: [debug, otlphttp/langfuse, otlphttp/arize]  

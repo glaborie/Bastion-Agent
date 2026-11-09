@@ -102,6 +102,39 @@ TEST_DATABASE_URL=postgresql+asyncpg://bastion:bastion@localhost:55433/bastion_t
 
 ---
 
+## Observability (Langfuse Cloud + Arize AX)
+
+The gateway and worker export OTLP/HTTP spans to `otel-collector`, which fans
+them out to Langfuse Cloud and Arize AX (and mirrors batch counters to the
+collector log). Health probes are excluded from tracing.
+
+Configure in `.env`:
+
+```dotenv
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel  # EU; us./jp./hipaa. for other regions
+LANGFUSE_OTLP_AUTH=<base64 of "public_key:secret_key">
+
+ARIZE_OTLP_ENDPOINT=https://otlp.arize.com/v1
+ARIZE_SPACE_ID=<space id>
+ARIZE_API_KEY=<arize api key>
+ARIZE_PROJECT_NAME=bastion-agent        # x-project-name routing header
+```
+
+Build the Langfuse Basic credential (must be regenerated whenever a key is
+rotated — a stale value makes the collector log `401 Unauthorized`):
+
+```bash
+python -c "import base64;print(base64.b64encode(b'pk-lf-...:sk-lf-...').decode())"
+```
+
+Verify end to end: make a request (`curl -s http://localhost:8000/docs >/dev/null`),
+then confirm the collector shows no `Exporting failed` lines and the trace
+appears in Langfuse under `service.name=bastion-gateway`.
+
+---
+
 ## Troubleshooting
 
 ### `llama-cpp` restarts with `failed to open GGUF file ... (No such file or directory)`

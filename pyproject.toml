@@ -54,7 +54,7 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["settings", "logging_setup"]
+py-modules = ["settings", "logging_setup", "telemetry"]
 
 [tool.setuptools.packages.find]
 include = ["gateway*", "agent*", "db*"]

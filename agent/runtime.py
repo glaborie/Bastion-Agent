@@ -15,6 +15,7 @@ from arq.connections import RedisSettings
 from db.session import dispose_engine, init_models
 from logging_setup import configure_logging
 from settings import get_settings
+from telemetry import configure_tracing, shutdown_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ async def startup(ctx: dict[str, Any]) -> None:
     """Prepare the worker before it starts consuming jobs."""
     settings = get_settings()
     configure_logging(settings.log_level)
+    configure_tracing(settings)
     await init_models()
     logger.info(
         "Bastion-Agent worker ready",
@@ -40,6 +42,7 @@ async def worker_healthcheck(ctx: dict[str, Any]) -> dict[str, str]:
 
 async def shutdown(ctx: dict[str, Any]) -> None:
     """Release resources when the worker receives a shutdown signal."""
+    shutdown_tracing()
     await dispose_engine()
     logger.info("Bastion-Agent worker stopped")
 
