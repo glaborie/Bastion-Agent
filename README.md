@@ -51,7 +51,11 @@ ls -lh models/qwen2.5-7b-instruct-q4_k_m.gguf   # must be ~4.7 GB, not 0 bytes
 # 4. Start full stack
 docker compose up -d
 
-# 5. Access Command Control Center
+# 5. Register the routing aliases (idempotent; writes OMNIROUTE_API_KEY to .env)
+uv run python scripts/omniroute_bootstrap.py --write-env
+docker compose up -d --no-deps gateway worker   # only needed if a key was written
+
+# 6. Access Command Control Center
 # Gateway & Dashboard: http://localhost:8000/dashboard
 # Health / readiness:  http://localhost:8000/health, /health/ready
 # Keycloak SSO:        http://localhost:8080
@@ -99,6 +103,24 @@ docker run --rm -d --name bastion-test-db -p 55433:5432 \
 TEST_DATABASE_URL=postgresql+asyncpg://bastion:bastion@localhost:55433/bastion_test \
   uv run pytest -m integration
 ```
+
+---
+
+## Routing bootstrap (OmniRoute)
+
+`scripts/omniroute_bootstrap.py` reconciles the routing contract in
+`config/omniroute/config.yaml`: the llama.cpp provider node, the llama.cpp and
+OpenRouter connections, the `local-llama` / `cloud-primary` combos, and the
+gateway's `/v1` API key. It is idempotent and ends with a smoke test of both
+aliases:
+
+```bash
+uv run python scripts/omniroute_bootstrap.py --write-env
+```
+
+Re-run it after `docker compose down -v` (which wipes OmniRoute's volume), after
+rotating `LLAMA_API_KEY` or `OPENROUTER_API_KEY`, or when adding models to a
+combo. It requires `OPENROUTER_API_KEY` in `.env`.
 
 ---
 

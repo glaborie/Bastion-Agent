@@ -99,6 +99,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106", "S311"]
+# Operator CLI scripts print to the terminal and call fixed loopback URLs.
+"scripts/*" = ["T201", "S310"]
 "settings.py" = ["S105"]
 
 [tool.ruff.lint.isort]
