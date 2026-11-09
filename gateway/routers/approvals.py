@@ -22,6 +22,7 @@ from gateway.approvals import (
 )
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 from gateway.dashboard.templating import render
+from gateway.queue import enqueue_tool_resume
 from gateway.web import is_htmx
 from settings import get_settings
 
@@ -121,6 +122,11 @@ async def decide_approval(
             action=decision,
             reason=reason,
         )
+        if decision == "approve":
+            # Commit before enqueueing: the worker must never observe an
+            # APPROVED ticket that the database has not durably stored yet.
+            await session.commit()
+            await enqueue_tool_resume(str(ticket.ticket_id))
     except ApprovalDecisionError as exc:
         if is_htmx(request):
             approvals = await list_pending(

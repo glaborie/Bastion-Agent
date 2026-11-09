@@ -1,0 +1,370 @@
+"""Guarded tool execution state machine: suspend, approve, resume (ADR-010)."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import timedelta
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from agent.tools.decorator import (
+    AgentContext,
+    ToolAuthorizationError,
+    ToolStatus,
+    get_tool,
+    tool,
+    unregister_tool,
+)
+from agent.tools.execution import (
+    ApprovalExecutionError,
+    approved_ticket_ids,
+    expire_stale_approvals,
+    request_tool_execution,
+    resume_approved_tool,
+    verify_ticket_token,
+)
+from db.audit import verify_audit_chain
+from db.models import (
+    ApprovalStatus,
+    AuditEventType,
+    AuditLog,
+    PendingApproval,
+    fingerprint_request,
+    hash_approval_token,
+    utcnow,
+)
+from gateway.approvals import ApprovalDecisionError, decide_ticket
+from settings import reset_settings_cache
+from tests.conftest import requires_database
+
+pytestmark = requires_database
+
+ARGUMENTS = {"path": "reports/q3.txt", "content": "revenue"}
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    root = tmp_path / "workspace"
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(root))
+    reset_settings_cache()
+    try:
+        yield root
+    finally:
+        reset_settings_cache()
+
+
+@pytest.fixture
+def failing_tool():
+    @tool(
+        name="test_failing_write",
+        description="Always fails (test fixture).",
+        read_only=False,
+        required_role="operator",
+    )
+    async def failing_write(path: str, context: AgentContext) -> dict[str, str]:
+        raise RuntimeError("tool exploded")
+
+    try:
+        yield get_tool("test_failing_write")
+    finally:
+        unregister_tool("test_failing_write")
+
+
+def context(actor: str = "alice", roles: tuple[str, ...] = ("operator",)) -> AgentContext:
+    return AgentContext(actor_id=actor, roles=frozenset(roles), session_id="sess-tool")
+
+
+async def events(session: AsyncSession) -> list[AuditLog]:
+    statement = select(AuditLog).order_by(AuditLog.id.asc())
+    return list((await session.execute(statement)).scalars())
+
+
+async def request_write(session: AsyncSession, *, now=None):
+    return await request_tool_execution(
+        session,
+        tool_name="execute_file_write",
+        arguments=dict(ARGUMENTS),
+        context=context(),
+        now=now,
+    )
+
+
+async def approve(session: AsyncSession, ticket_id: str, *, actor: str = "bob") -> None:
+    await decide_ticket(
+        session,
+        ticket_id=uuid.UUID(ticket_id),
+        actor_id=actor,
+        actor_roles={"operator"},
+        action="approve",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Read-only path
+# ---------------------------------------------------------------------------
+
+
+async def test_read_only_tool_executes_immediately(session: AsyncSession, workspace) -> None:
+    result = await request_tool_execution(
+        session,
+        tool_name="read_system_status",
+        arguments={},
+        context=context(),
+    )
+
+    assert result.status is ToolStatus.EXECUTED
+    assert result.executed
+    assert result.output["requested_by"] == "alice"
+
+    tickets = list((await session.execute(select(PendingApproval))).scalars())
+    assert not tickets
+    assert [event.event_type for event in await events(session)] == [
+        AuditEventType.TOOL_REQUESTED,
+        AuditEventType.TOOL_EXECUTED,
+    ]
+    assert (await verify_audit_chain(session)).ok
+
+
+# ---------------------------------------------------------------------------
+# Suspension
+# ---------------------------------------------------------------------------
+
+
+async def test_write_tool_suspends_and_binds_the_request(session: AsyncSession, workspace) -> None:
+    result = await request_write(session)
+
+    assert result.status is ToolStatus.APPROVAL_PENDING
+    assert not result.executed
+    assert result.ticket_id is not None
+    assert result.approval_token is not None
+    assert result.expires_at is not None
+    remaining = (result.expires_at - utcnow()).total_seconds()
+    assert 880 <= remaining <= 905
+
+    ticket = await session.get(PendingApproval, uuid.UUID(result.ticket_id))
+    assert ticket is not None
+    assert ticket.status is ApprovalStatus.PENDING
+    assert ticket.initiator_id == "alice"
+    assert ticket.required_role == "operator"
+    assert ticket.request_fingerprint == fingerprint_request("execute_file_write", ARGUMENTS)
+    assert ticket.approval_token_hash == hash_approval_token(result.approval_token)
+    assert verify_ticket_token(ticket, result.approval_token)
+    assert not verify_ticket_token(ticket, "v1.not-the-token")
+
+    assert not (workspace / "reports/q3.txt").exists()
+
+    records = await events(session)
+    assert [event.event_type for event in records] == [
+        AuditEventType.TOOL_REQUESTED,
+        AuditEventType.APPROVAL_REQUESTED,
+    ]
+    # Argument *values* must never reach the ledger.
+    rendered = json.dumps([record.metadata_json for record in records])
+    assert "revenue" not in rendered
+    assert "reports/q3.txt" not in rendered
+    assert (await verify_audit_chain(session)).ok
+
+
+async def test_role_without_the_required_grant_is_denied(session: AsyncSession, workspace) -> None:
+    with pytest.raises(ToolAuthorizationError):
+        await request_tool_execution(
+            session,
+            tool_name="execute_file_write",
+            arguments=dict(ARGUMENTS),
+            context=context("carol", ("analyst",)),
+        )
+
+    assert not list((await session.execute(select(PendingApproval))).scalars())
+    records = await events(session)
+    assert [record.event_type for record in records] == [AuditEventType.TOOL_REQUESTED]
+    assert records[0].metadata_json["outcome"] == "denied"
+    assert (await verify_audit_chain(session)).ok
+
+
+async def test_initiator_cannot_approve_their_own_ticket(session: AsyncSession, workspace) -> None:
+    pending = await request_write(session)
+    assert pending.ticket_id is not None
+
+    with pytest.raises(ApprovalDecisionError) as info:
+        await approve(session, pending.ticket_id, actor="alice")
+    assert info.value.code == "self_approval"
+
+    ticket = await session.get(PendingApproval, uuid.UUID(pending.ticket_id))
+    assert ticket is not None
+    assert ticket.status is ApprovalStatus.PENDING
+    assert ticket.approver_id is None
+    assert not (workspace / "reports/q3.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# Resume
+# ---------------------------------------------------------------------------
+
+
+async def test_resume_after_approval_executes_exactly_once(
+    session: AsyncSession, workspace
+) -> None:
+    pending = await request_write(session)
+    assert pending.ticket_id is not None
+    await approve(session, pending.ticket_id)
+
+    resumed = await resume_approved_tool(session, ticket_id=pending.ticket_id)
+    assert resumed.status is ToolStatus.EXECUTED
+    assert resumed.output["path"] == "reports/q3.txt"
+    assert (workspace / "reports/q3.txt").read_text() == "revenue"
+
+    ticket = await session.get(PendingApproval, uuid.UUID(pending.ticket_id))
+    assert ticket is not None
+    assert ticket.status is ApprovalStatus.EXECUTED
+    assert ticket.executed_at is not None
+
+    again = await resume_approved_tool(session, ticket_id=pending.ticket_id)
+    assert again.status is ToolStatus.EXECUTED
+    assert again.output is None
+
+    records = await events(session)
+    types = [record.event_type for record in records]
+    assert types.count(AuditEventType.TOOL_EXECUTED) == 1
+    assert AuditEventType.APPROVAL_GRANTED in types
+    assert (await verify_audit_chain(session)).ok
+
+
+async def test_resume_before_approval_is_refused(session: AsyncSession, workspace) -> None:
+    pending = await request_write(session)
+    assert pending.ticket_id is not None
+
+    with pytest.raises(ApprovalExecutionError) as info:
+        await resume_approved_tool(session, ticket_id=pending.ticket_id)
+    assert info.value.code == "not_approved"
+    assert not (workspace / "reports/q3.txt").exists()
+
+
+async def test_rejected_ticket_is_not_executed(session: AsyncSession, workspace) -> None:
+    pending = await request_write(session)
+    assert pending.ticket_id is not None
+    await decide_ticket(
+        session,
+        ticket_id=uuid.UUID(pending.ticket_id),
+        actor_id="bob",
+        actor_roles={"operator"},
+        action="reject",
+        reason="not in scope",
+    )
+
+    result = await resume_approved_tool(session, ticket_id=pending.ticket_id)
+    assert result.status is ToolStatus.REJECTED
+    assert not (workspace / "reports/q3.txt").exists()
+    assert AuditEventType.APPROVAL_REJECTED in [
+        record.event_type for record in await events(session)
+    ]
+
+
+async def test_expired_ticket_is_closed_without_executing(session: AsyncSession, workspace) -> None:
+    pending = await request_write(session, now=utcnow() - timedelta(hours=2))
+    assert pending.ticket_id is not None
+
+    result = await resume_approved_tool(session, ticket_id=pending.ticket_id)
+    assert result.status is ToolStatus.EXPIRED
+
+    ticket = await session.get(PendingApproval, uuid.UUID(pending.ticket_id))
+    assert ticket is not None
+    assert ticket.status is ApprovalStatus.EXPIRED
+    assert not (workspace / "reports/q3.txt").exists()
+
+
+async def test_tampered_arguments_fail_closed_and_flag_an_incident(
+    session: AsyncSession, workspace
+) -> None:
+    pending = await request_write(session)
+    assert pending.ticket_id is not None
+    await approve(session, pending.ticket_id)
+
+    ticket = await session.get(PendingApproval, uuid.UUID(pending.ticket_id))
+    assert ticket is not None
+    ticket.tool_arguments = {"path": "exfiltrate.txt", "content": "secret"}
+    await session.flush()
+
+    with pytest.raises(ApprovalExecutionError) as info:
+        await resume_approved_tool(session, ticket_id=pending.ticket_id)
+    assert info.value.code == "fingerprint_mismatch"
+
+    refreshed = await session.get(PendingApproval, uuid.UUID(pending.ticket_id))
+    assert refreshed is not None
+    assert refreshed.status is ApprovalStatus.FAILED
+    types = [record.event_type for record in await events(session)]
+    assert AuditEventType.SECURITY_INCIDENT in types
+    assert not (workspace / "exfiltrate.txt").exists()
+
+
+async def test_tool_failure_marks_the_ticket_failed(
+    session: AsyncSession, workspace, failing_tool
+) -> None:
+    pending = await request_tool_execution(
+        session,
+        tool_name="test_failing_write",
+        arguments={"path": "boom.txt"},
+        context=context(),
+    )
+    assert pending.status is ToolStatus.APPROVAL_PENDING
+    assert pending.ticket_id is not None
+    await approve(session, pending.ticket_id)
+
+    result = await resume_approved_tool(session, ticket_id=pending.ticket_id)
+    assert result.status is ToolStatus.FAILED
+    assert result.error == "ToolInvocationError"
+
+    ticket = await session.get(PendingApproval, uuid.UUID(pending.ticket_id))
+    assert ticket is not None
+    assert ticket.status is ApprovalStatus.FAILED
+
+    executed = [
+        record
+        for record in await events(session)
+        if record.event_type is AuditEventType.TOOL_EXECUTED
+    ]
+    assert len(executed) == 1
+    assert executed[0].metadata_json["outcome"] == "failed"
+    assert executed[0].metadata_json["error_type"] == "ToolInvocationError"
+    assert (await verify_audit_chain(session)).ok
+
+
+# ---------------------------------------------------------------------------
+# Sweeps
+# ---------------------------------------------------------------------------
+
+
+async def test_expire_sweep_closes_only_lapsed_tickets(session: AsyncSession, workspace) -> None:
+    old = await request_write(session, now=utcnow() - timedelta(hours=1))
+    fresh = await request_write(session)
+
+    assert await expire_stale_approvals(session) == 1
+
+    old_ticket = await session.get(PendingApproval, uuid.UUID(str(old.ticket_id)))
+    fresh_ticket = await session.get(PendingApproval, uuid.UUID(str(fresh.ticket_id)))
+    assert old_ticket is not None and old_ticket.status is ApprovalStatus.EXPIRED
+    assert fresh_ticket is not None and fresh_ticket.status is ApprovalStatus.PENDING
+
+
+async def test_approved_ticket_ids_drives_the_safety_net(session: AsyncSession, workspace) -> None:
+    pending = await request_write(session)
+    assert pending.ticket_id is not None
+    assert await approved_ticket_ids(session) == []
+
+    await approve(session, pending.ticket_id)
+    assert await approved_ticket_ids(session) == [uuid.UUID(pending.ticket_id)]
+
+    await resume_approved_tool(session, ticket_id=pending.ticket_id)
+    assert await approved_ticket_ids(session) == []
+
+
+async def test_unknown_and_malformed_tickets_are_rejected(session: AsyncSession) -> None:
+    with pytest.raises(ApprovalExecutionError) as missing:
+        await resume_approved_tool(session, ticket_id=uuid.uuid4())
+    assert missing.value.code == "not_found"
+
+    with pytest.raises(ApprovalExecutionError) as malformed:
+        await resume_approved_tool(session, ticket_id="not-a-uuid")
+    assert malformed.value.code == "invalid_ticket"

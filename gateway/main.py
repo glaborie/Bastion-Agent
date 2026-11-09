@@ -24,6 +24,7 @@ from gateway.auth.rbac import shutdown_auth
 from gateway.auth.session import safe_next_path
 from gateway.dashboard.routes import router as dashboard_router
 from gateway.dashboard.templating import render_error
+from gateway.queue import close_arq_pool
 from gateway.routers import approvals, audit, auth, evals, health
 from gateway.web import is_htmx
 from logging_setup import configure_logging
@@ -68,6 +69,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         shutdown_tracing()
+        await close_arq_pool()
         await close_model_router()
         await shutdown_auth()
         await dispose_engine()

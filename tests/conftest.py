@@ -15,7 +15,7 @@ The suite refuses to touch a database whose name does not contain ``test``.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 import pytest_asyncio
@@ -82,3 +82,20 @@ async def session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 async def session_factory(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     """Session factory for tests that need independent concurrent transactions."""
     return async_sessionmaker(db_engine, expire_on_commit=False)
+
+
+@pytest.fixture(autouse=True)
+def _disable_tool_resume_enqueue(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep the suite from enqueueing ARQ jobs onto a live worker queue.
+
+    Approval routes enqueue a resume job after committing. Tests exercise the
+    database state machine directly, so the enqueue bridge must stay inert.
+    """
+    from settings import reset_settings_cache
+
+    monkeypatch.setenv("TOOL_RESUME_AUTO_ENQUEUE", "false")
+    reset_settings_cache()
+    try:
+        yield
+    finally:
+        reset_settings_cache()

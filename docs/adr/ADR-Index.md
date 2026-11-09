@@ -14,6 +14,7 @@ a file in this directory; this page is the index and the process guide.
 | 007 | Command Control Dashboard & HTMX Integration | Accepted |
 | 008 | Evolution Roadmap & Version Policy | Accepted |
 | 009 | Four-Gate Tool Governance Model | Accepted |
+| 010 | Guarded Tool Execution & Resume State Machine | Accepted |
 
 ---
 

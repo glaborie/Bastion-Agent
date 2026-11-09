@@ -106,7 +106,11 @@ async def list_pending(
     limit: int = 100,
     now: datetime | None = None,
 ) -> list[ApprovalView]:
-    """Open tickets, most urgent first. Expired tickets stay visible but locked."""
+    """Open tickets, most urgent first.
+
+    A ticket past its window is shown as expired and locked until the worker's
+    expiry sweep closes it (at most 30 s); the ledger keeps the history.
+    """
     if not 1 <= limit <= 500:
         raise ValueError("limit must be within [1, 500]")
     statement = (

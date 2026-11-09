@@ -123,6 +123,22 @@ class Settings(BaseSettings):
     approval_hmac_secret: SecretStr = SecretStr(DEV_APPROVAL_HMAC_SECRET)
     approval_ttl_seconds: int = 900
 
+    # -- Guarded tools (four-eyes execution) ------------------------------
+    #: Root the built-in file tools are confined to. It is created on demand
+    #: with owner-only permissions; absolute and traversing paths are rejected.
+    tool_workspace_root: str = "/tmp/bastion-workspace"  # noqa: S108 - sandboxed, owner-only
+    tool_max_read_bytes: int = 262_144
+    tool_max_write_bytes: int = 1_048_576
+    #: Reject argument payloads larger than this before creating a ticket.
+    tool_max_argument_bytes: int = 1_048_576
+    #: Enqueue an approved ticket for immediate execution. The worker's
+    #: approved-ticket sweep is the safety net when this is off or Redis is down.
+    tool_resume_auto_enqueue: bool = True
+    #: ARQ connection timeout for the gateway's enqueue bridge.
+    arq_connection_timeout_seconds: float = 2.0
+    #: Single queue name shared by the worker and the gateway's enqueue bridge.
+    arq_queue_name: str = "bastion:jobs"
+
     # -- OmniRoute inference router ---------------------------------------
     omniroute_base_url: str = "http://localhost:8001"
     omniroute_api_key: SecretStr = SecretStr("sk-local-dev")
@@ -191,6 +207,9 @@ class Settings(BaseSettings):
         "audit_page_size",
         "approval_page_size",
         "classifier_max_tokens",
+        "tool_max_read_bytes",
+        "tool_max_write_bytes",
+        "tool_max_argument_bytes",
         "keycloak_jwks_cache_ttl_seconds",
     )
     @classmethod

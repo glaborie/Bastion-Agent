@@ -297,8 +297,111 @@ uv run pytest -q tests/test_vault.py tests/test_dlp_presidio.py \
   tests/test_classifier.py tests/test_routing_client.py
 ```
 
-No chat endpoint is wired yet; Milestone 4 connects these primitives to the
-tool guard and worker state machine.
+The chat endpoint lands with the agent loop; the DLP, vault, classifier and
+router are exercised directly by the tests and the live smoke below.
+
+## Guarded Tools & Four-Eyes HITL (Milestone 4)
+
+### Modules
+
+| Module | Responsibility |
+|--------|----------------|
+| `agent/tools/decorator.py` | `@tool` declaration, `AgentContext`, registry, JSON argument validation |
+| `agent/tools/builtin.py` | `read_system_status`, `read_file`, `execute_file_write` (workspace-confined) |
+| `agent/tools/execution.py` | Request/suspend/resume state machine and audit records |
+| `agent/runtime.py` | ARQ jobs plus expiry and approved-ticket cron sweeps |
+| `gateway/queue.py` | Gateway → worker resume handoff with a cron fallback |
+
+### Declaring a tool
+
+```python
+from agent.tools import AgentContext, tool
+
+
+@tool(
+    name="execute_file_write",
+    description="Writes data to storage",
+    read_only=False,
+    required_role="operator",
+)
+async def execute_file_write(path: str, content: str, context: AgentContext) -> dict: ...
+```
+
+The decorator enforces at import time that the handler is `async`, takes
+`context: AgentContext`, and annotates every JSON argument as `str`, `int`,
+`float` or `bool`. Mutating tools **must** declare `required_role`; read-only
+tools may omit it. Role-denied tools are filtered from
+`available_tools(roles)` instead of being offered and then rejected.
+
+### State machine
+
+```
+request ──read_only──▶ execute ──▶ EXECUTED
+    └────mutating───▶ PENDING ──approve──▶ APPROVED ──resume──▶ EXECUTED
+                         └────reject────▶ REJECTED
+                         └────timeout───▶ EXPIRED
+                                       (tool error) ──▶ FAILED
+```
+
+```python
+from agent.tools.execution import request_tool_execution, resume_approved_tool
+
+result = await request_tool_execution(
+    session,
+    tool_name="execute_file_write",
+    arguments={"path": "reports/q3.txt", "content": "revenue"},
+    context=agent_context,
+)
+# result.status == "approval_pending"
+# result.ticket_id, result.approval_token, result.expires_at
+```
+
+The ARQ worker exposes the same operations as jobs: `execute_tool_job`,
+`resume_tool_job`, `expire_stale_approvals_job` and
+`resume_approved_tickets_job`. Both sweeps run every 30 s: lapsed tickets are
+closed (their history stays in the ledger) and approved tickets left unexecuted
+by a lost job are recovered.
+
+### Guarantees
+
+- **Exact-request binding**: `request_fingerprint` is a canonical SHA-256 of
+  `(tool, arguments)`; the HMAC ticket covers ticket id, fingerprint and expiry
+  and only its hash is stored. A changed argument at resume time marks the
+  ticket `FAILED` and records `SECURITY_INCIDENT`.
+- **Four eyes**: the approver must differ from the initiator, enforced in the
+  service and by a database `CHECK`, and re-checked at resume. Both ids are the
+  OIDC **subject** (`sub`), never a username: enqueue tool jobs with the same
+  `sub` the dashboard session uses, or the comparison would span two identity
+  namespaces.
+- **Single execution**: the ticket row is locked `FOR UPDATE`; terminal states
+  return without re-running, so a retried job cannot write twice (execution is
+  at-least-once across a worker crash; tools must tolerate retries).
+- **No stranded approvals**: the gateway enqueues `resume:<ticket_id>` after
+  committing the decision; if Redis is down, the worker sweep executes approved
+  tickets later.
+- **Audit in the same transaction**: `TOOL_REQUESTED` (accepted/denied),
+  `APPROVAL_REQUESTED`, `TOOL_EXECUTED` (ok/failed) and `SECURITY_INCIDENT`.
+  Metadata stores argument *keys* and hashes, never values.
+- **Filesystem confinement**: built-in file tools resolve paths inside
+  `TOOL_WORKSPACE_ROOT`, reject absolute/traversing paths and symlink escapes,
+  cap read/write sizes, and write atomically at mode `0600`.
+
+### Configuration
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TOOL_WORKSPACE_ROOT` | `/tmp/bastion-workspace` | Confinement root for file tools |
+| `TOOL_MAX_READ_BYTES` | `262144` | Read cap |
+| `TOOL_MAX_WRITE_BYTES` | `1048576` | Write cap |
+| `TOOL_MAX_ARGUMENT_BYTES` | `1048576` | Reject oversized job arguments |
+| `TOOL_RESUME_AUTO_ENQUEUE` | `true` | Push resume jobs; the cron sweep is the fallback |
+| `ARQ_CONNECTION_TIMEOUT_SECONDS` | `2` | Gateway enqueue connect timeout |
+
+### Verification
+
+```bash
+uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
+```
 
 ---
 
