@@ -25,6 +25,9 @@ htmlcov/
 *.log
 models/*.gguf
 models/*.bin
+# ONNX repositories are downloaded per machine (hundreds of MB); only the
+# directory marker is tracked.
+models/*/
 docker-compose.override.yml
 
 # --- Evaluations -------------------------------------------------------------
