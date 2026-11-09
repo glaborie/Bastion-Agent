@@ -84,6 +84,13 @@ and a public `bastion-cli` client for password-grant command-line access.
 All seeded accounts share the password **`Bastion-dev-2026!`** — a committed,
 dev-only credential. Rotate or delete these users before exposing the stack.
 
+> **Note:** `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` in `.env` are the
+> **master-realm bootstrap administrator** (`http://localhost:8080/admin`), not
+> a `bastion`-realm dashboard login. The dashboard `admin` user below is a
+> normal realm user seeded by `realm-export.json` and uses
+> `Bastion-dev-2026!`. Using the bootstrap password on the dashboard login page
+> returns `invalid_user_credentials`.
+
 | User | Realm roles | Purpose |
 |------|-------------|---------|
 | `admin` | `admin` | Break-glass superset (satisfies every requirement) |
@@ -317,6 +324,24 @@ is accounted for. If you see CUDA out-of-memory errors, lower
   Toolkit and a Compose runtime that supports device reservations. On a
   CPU-only host use the `server` image, set `LLAMA_N_GPU_LAYERS=0`, and remove
   that reservation block.
+
+### Keycloak reports `invalid_user_credentials` for `admin`
+
+There are two different `admin` identities:
+
+- `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` (`.env`) is the **master-realm**
+  bootstrap administrator used at `http://localhost:8080/admin`.
+- `admin` on the dashboard login page is a **`bastion`-realm** user seeded from
+  `config/keycloak/realm-export.json`, with password `Bastion-dev-2026!`.
+
+Using the bootstrap password for the dashboard therefore fails. Verify the
+realm credentials directly:
+
+```bash
+curl -s -X POST http://localhost:8080/realms/bastion/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=bastion-cli \
+  -d username=admin -d password='Bastion-dev-2026!'
+```
 
 ### `redis` is unhealthy with `MISCONF Redis is configured to save RDB snapshots` or `Permission denied`
 
