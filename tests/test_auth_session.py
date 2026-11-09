@@ -1,5 +1,7 @@
 """Redis-backed session and login-state tests."""
 
+# pylint: disable=protected-access  # tests assert storage invariants
+
 from __future__ import annotations
 
 import asyncio

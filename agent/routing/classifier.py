@@ -202,6 +202,7 @@ class SensitivityClassifier:
         matched: list[str] = []
         total = 0.0
         for rule in _RULES:
+            # pylint: disable-next=no-member  # astroid misreads re.Pattern[str]
             if rule.pattern.search(text):
                 matched.append(rule.name)
                 total += rule.weight

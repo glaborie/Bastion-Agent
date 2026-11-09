@@ -86,12 +86,14 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
         except BaseException:
             await session.rollback()
             raise
-        else:
-            await session.commit()
+        await session.commit()
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency yielding a transactional session."""
+    # FastAPI finalises yield-dependencies through its AsyncExitStack on every
+    # exit path (response, error, disconnect); pylint cannot see that.
+    # pylint: disable-next=contextmanager-generator-missing-cleanup
     async with session_scope() as session:
         yield session
 

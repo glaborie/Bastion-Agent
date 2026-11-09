@@ -317,6 +317,7 @@ uv run arq agent.runtime.WorkerSettings
 ```bash
 uv run ruff check .          # lint
 uv run mypy settings.py logging_setup.py db gateway agent
+uv run pylint settings.py logging_setup.py telemetry.py db gateway agent tests
 uv run python scripts/check_adrs.py
 uv run pytest -m "not integration"   # unit tests (no database required)
 ```

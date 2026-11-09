@@ -49,6 +49,7 @@ dev = [
     "deepeval>=2.5.0,<4.0.0",
     "mypy>=1.13.0,<2.0.0",
     "ruff>=0.8.0,<1.0.0",
+    "pylint>=3.3.0,<4.0.0",
 ]
 
 [build-system]
@@ -73,6 +74,33 @@ markers = [
     "integration: requires a live PostgreSQL instance (set TEST_DATABASE_URL)",
 ]
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.pylint.main]
+py-version = "3.11"
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint."messages control"]
+# Ruff owns style (E/F/I/UP/B/ASYNC/S/RUF/SIM) and mypy owns types; pylint is
+# kept for its error/warning checkers and genuine refactor smells. Everything
+# disabled below is either a deliberate pattern here or a checker Ruff covers.
+disable = [
+    "missing-class-docstring",        # C0115
+    "missing-function-docstring",     # C0116
+    "import-outside-toplevel",        # C0415 - lazy imports keep startup light
+    "duplicate-code",                 # R0801 - shared kwargs blocks
+    "too-few-public-methods",         # R0903 - dataclasses and ARQ/ASGI hooks
+    "too-many-arguments",             # R0913 - explicit dependencies
+    "too-many-positional-arguments",  # R0917
+    "too-many-instance-attributes",   # R0902 - flat config/state records
+    "too-many-return-statements",     # R0911
+    "too-many-branches",              # R0912
+    "too-many-locals",                # R0914
+    "global-statement",               # W0603 - process-wide singletons
+    "unused-argument",                # W0613 - protocol signatures (ctx/context)
+    "redefined-outer-name",           # W0621 - FastAPI app factory and fixtures
+]
 
 [tool.mypy]
 python_version = "3.11"

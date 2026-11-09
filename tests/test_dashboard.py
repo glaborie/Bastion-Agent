@@ -112,8 +112,7 @@ async def api(
             except BaseException:
                 await session.rollback()
                 raise
-            else:
-                await session.commit()
+            await session.commit()
 
     state = {"context": AuthContext(principal=BOB, method="bearer")}
     app.dependency_overrides[get_db_session] = override_db

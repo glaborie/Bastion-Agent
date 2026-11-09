@@ -1,5 +1,7 @@
 """AES-256-GCM token vault tests (ADR-002)."""
 
+# pylint: disable=protected-access  # tests assert storage invariants
+
 from __future__ import annotations
 
 import asyncio

@@ -118,8 +118,10 @@ async def shutdown_auth() -> None:
     import asyncio
 
     closers = []
+    # pylint: disable-next=too-many-function-args  # astroid misreads lru_cache
     if get_token_client.cache_info().currsize:
         closers.append(get_token_client().aclose())
+    # pylint: disable-next=too-many-function-args  # astroid misreads lru_cache
     if get_jwks_client.cache_info().currsize:
         closers.append(get_jwks_client().aclose())
 

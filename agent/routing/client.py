@@ -350,6 +350,7 @@ def get_model_router() -> ModelRouter:
 
 async def close_model_router() -> None:
     """Release the OmniRoute HTTP client (gateway/worker shutdown)."""
+    # pylint: disable-next=too-many-function-args  # astroid misreads lru_cache
     if get_model_router.cache_info().currsize:
         await get_model_router().client.aclose()
     get_model_router.cache_clear()

@@ -316,6 +316,10 @@ BEFORE UPDATE OR DELETE ON audit_logs
 FOR EACH ROW EXECUTE FUNCTION bastion_audit_logs_append_only();
 """
 
+_AUDIT_APPEND_ONLY_DROP_FUNCTION: Final[str] = (
+    "DROP FUNCTION IF EXISTS bastion_audit_logs_append_only() CASCADE"
+)
+
 #: Idempotent statements applied on every boot by ``db.session.init_models`` so
 #: existing databases (where ``after_create`` never fires) also get the guard.
 AUDIT_APPEND_ONLY_DDL: Final[tuple[str, ...]] = (
@@ -327,17 +331,21 @@ AUDIT_APPEND_ONLY_DDL: Final[tuple[str, ...]] = (
 event.listen(
     AuditLog.__table__,
     "after_create",
-    DDL(_AUDIT_APPEND_ONLY_FUNCTION).execute_if(dialect="postgresql"),  # type: ignore[no-untyped-call]
+    DDL(_AUDIT_APPEND_ONLY_FUNCTION).execute_if(  # type: ignore[no-untyped-call]
+        dialect="postgresql"
+    ),
 )
 event.listen(
     AuditLog.__table__,
     "after_create",
-    DDL(_AUDIT_APPEND_ONLY_TRIGGER).execute_if(dialect="postgresql"),  # type: ignore[no-untyped-call]
+    DDL(_AUDIT_APPEND_ONLY_TRIGGER).execute_if(  # type: ignore[no-untyped-call]
+        dialect="postgresql"
+    ),
 )
 event.listen(
     AuditLog.__table__,
     "before_drop",
-    DDL("DROP FUNCTION IF EXISTS bastion_audit_logs_append_only() CASCADE").execute_if(  # type: ignore[no-untyped-call]
+    DDL(_AUDIT_APPEND_ONLY_DROP_FUNCTION).execute_if(  # type: ignore[no-untyped-call]
         dialect="postgresql"
     ),
 )

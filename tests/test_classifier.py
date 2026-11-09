@@ -24,7 +24,7 @@ def test_general_prompt_is_public() -> None:
     assert result.label is Sensitivity.PUBLIC
     assert result.confidence == 0.0
     assert result.model == "semantic-rules"
-    assert result.matched == ()
+    assert not result.matched
 
 
 def test_explicit_confidential_marking_crosses_the_default_threshold() -> None:

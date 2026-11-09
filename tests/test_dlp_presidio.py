@@ -1,5 +1,7 @@
 """Presidio DLP + reversible marker tests (ADR-002)."""
 
+# pylint: disable=protected-access  # tests assert storage invariants
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
