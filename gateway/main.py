@@ -18,6 +18,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from agent.routing.client import close_model_router
 from db.session import dispose_engine, init_models
 from gateway.auth.rbac import shutdown_auth
 from gateway.auth.session import safe_next_path
@@ -67,6 +68,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         shutdown_tracing()
+        await close_model_router()
         await shutdown_auth()
         await dispose_engine()
         logger.info("Bastion-Agent gateway stopped")

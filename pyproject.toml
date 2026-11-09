@@ -33,6 +33,7 @@ dependencies = [
     # --- Semantic sensitivity classifier ----------------------------------
     "onnxruntime>=1.20.0,<2.0.0",
     "numpy>=1.26.4,<3.0.0",
+    "tokenizers>=0.20.0,<1.0.0",
     # --- Observability -----------------------------------------------------
     "opentelemetry-sdk>=1.28.0,<2.0.0",
     "opentelemetry-exporter-otlp-proto-http>=1.28.0,<2.0.0",
@@ -100,6 +101,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106", "S107", "S311", "S603"]
+# Regex patterns describe credentials; they are not credentials themselves.
+"agent/dlp/presidio.py" = ["S105"]
 # Operator CLI scripts print to the terminal and call fixed loopback URLs.
 "scripts/*" = ["T201", "S310"]
 "settings.py" = ["S105"]

@@ -97,9 +97,22 @@ class Settings(BaseSettings):
     # -- DLP: reversible token vault --------------------------------------
     vault_master_key: SecretStr = SecretStr(DEV_VAULT_MASTER_KEY)
     vault_ttl_seconds: int = 1800  # 30 minutes, per specification
+    #: Presidio entity types to detect. API_KEY is a local pattern recognizer
+    #: because Presidio ships no default recognizer for provider tokens.
+    dlp_entities: str = (
+        "PERSON,EMAIL_ADDRESS,PHONE_NUMBER,IBAN_CODE,IP_ADDRESS,CREDIT_CARD,US_SSN,API_KEY"
+    )
+    #: Presidio confidence floor. Lower values catch more edge cases but
+    #: over-redact; this is not the confidentiality routing threshold.
+    dlp_score_threshold: float = 0.35
 
     # -- Two-stage classifier ---------------------------------------------
     classifier_model_path: str | None = None
+    #: Path to the Hugging Face ``tokenizer.json`` for the ONNX model. When
+    #: unset, it is derived from the model directory. Ignored by the semantic
+    #: rule fallback.
+    classifier_tokenizer_path: str | None = None
+    classifier_max_tokens: int = 512
     #: Minimum confidence for the CONFIDENTIAL label. Prompts at or above it are
     #: routed to local inference; borderline results are deliberately treated as
     #: PUBLIC (cloud-primary) to reserve scarce GPU capacity — the threshold is
@@ -111,9 +124,11 @@ class Settings(BaseSettings):
     approval_ttl_seconds: int = 900
 
     # -- OmniRoute inference router ---------------------------------------
-    omniroute_base_url: str = "http://localhost:20128"
+    omniroute_base_url: str = "http://localhost:8001"
     omniroute_api_key: SecretStr = SecretStr("sk-local-dev")
     omniroute_timeout_seconds: float = 120.0
+    omniroute_max_retries: int = 1
+    omniroute_retry_backoff_seconds: float = 0.25
     model_local_alias: str = "local-llama"
     model_cloud_alias: str = "cloud-primary"
 
@@ -135,6 +150,7 @@ class Settings(BaseSettings):
         "keycloak_token_uri",
         "keycloak_end_session_uri",
         "classifier_model_path",
+        "classifier_tokenizer_path",
         mode="before",
     )
     @classmethod
@@ -156,7 +172,11 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("otel_traces_sampler_ratio", "classifier_confidence_threshold")
+    @field_validator(
+        "otel_traces_sampler_ratio",
+        "classifier_confidence_threshold",
+        "dlp_score_threshold",
+    )
     @classmethod
     def _validate_ratio(cls, value: float) -> float:
         if not 0.0 <= value <= 1.0:
@@ -170,6 +190,7 @@ class Settings(BaseSettings):
         "logout_target_ttl_seconds",
         "audit_page_size",
         "approval_page_size",
+        "classifier_max_tokens",
         "keycloak_jwks_cache_ttl_seconds",
     )
     @classmethod
@@ -177,6 +198,30 @@ class Settings(BaseSettings):
         if value <= 0:
             raise ValueError("value must be a positive integer")
         return value
+
+    @field_validator("omniroute_max_retries")
+    @classmethod
+    def _validate_retries(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("OMNIROUTE_MAX_RETRIES must be zero or positive")
+        return value
+
+    @field_validator("omniroute_retry_backoff_seconds")
+    @classmethod
+    def _validate_backoff(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("OMNIROUTE_RETRY_BACKOFF_SECONDS must be zero or positive")
+        return value
+
+    @field_validator("dlp_entities")
+    @classmethod
+    def _normalise_entities(cls, value: str) -> str:
+        parts = tuple(
+            dict.fromkeys(part.strip().upper() for part in value.split(",") if part.strip())
+        )
+        if not parts:
+            raise ValueError("DLP_ENTITIES must contain at least one entity type")
+        return ",".join(parts)
 
     @field_validator("log_level")
     @classmethod
@@ -232,6 +277,11 @@ class Settings(BaseSettings):
         if self.keycloak_end_session_uri:
             return self.keycloak_end_session_uri
         return f"{self.keycloak_issuer.rstrip('/')}/protocol/openid-connect/logout"
+
+    @property
+    def dlp_entity_list(self) -> tuple[str, ...]:
+        """Presidio entity types as an immutable tuple."""
+        return tuple(self.dlp_entities.split(","))
 
     @property
     def vault_key_bytes(self) -> bytes:

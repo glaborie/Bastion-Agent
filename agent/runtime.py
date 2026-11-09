@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 from arq.connections import RedisSettings
 
+from agent.routing.client import close_model_router
 from db.session import dispose_engine, init_models
 from logging_setup import configure_logging
 from settings import get_settings
@@ -43,6 +44,7 @@ async def worker_healthcheck(ctx: dict[str, Any]) -> dict[str, str]:
 async def shutdown(ctx: dict[str, Any]) -> None:
     """Release resources when the worker receives a shutdown signal."""
     shutdown_tracing()
+    await close_model_router()
     await dispose_engine()
     logger.info("Bastion-Agent worker stopped")
 

@@ -212,6 +212,96 @@ Only change it in both places.
 
 ---
 
+## DLP, Token Vault & Confidentiality Routing (Milestone 3)
+
+### Modules
+
+| Module | Responsibility |
+|--------|----------------|
+| `agent/dlp/vault.py` | AES-256-GCM, session-scoped reversible token vault in Redis |
+| `agent/dlp/presidio.py` | Presidio analysis, custom `API_KEY` recognizers, span-level tokenisation |
+| `agent/routing/classifier.py` | ONNX classifier or deterministic semantic-rule fallback |
+| `agent/routing/client.py` | OpenAI-compatible OmniRoute client + `ModelRouter` alias selection |
+
+### Token vault
+
+Detected values are replaced with `{{ENTITY:TYPE_INDEX}}` (for example
+`{{ENTITY:EMAIL_ADDRESS_1}}`). Redis stores:
+
+- `vault:<sha256(session)>` → `token → AES-256-GCM(nonce || ciphertext)`;
+- `vault:<sha256(session)>:rev` → keyed HMAC of `(type, value)` → token, so
+  repeated values reuse the marker without storing plaintext;
+- `vault:<sha256(session)>:seq` → per-entity counters.
+
+AES-GCM authenticates the session id and token as AAD, so a ciphertext copied to
+another session or token fails closed. The 30-minute TTL (`VAULT_TTL_SECONDS`)
+is refreshed on creation and restoration; `clear(session_id)` expires it
+immediately. Plaintext is never written to Redis, audit records or logs.
+
+```python
+from agent.dlp.presidio import get_dlp
+
+dlp = get_dlp()
+result = await dlp.redact("Email alice@example.com", session_id="sess-1")
+restored = await dlp.restore(result.text, session_id="sess-1")
+```
+
+### Deterministic DLP
+
+Presidio runs on the CPU with `en_core_web_sm`. The default entities are
+`PERSON`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `IBAN_CODE`, `IP_ADDRESS`,
+`CREDIT_CARD`, `US_SSN` and `API_KEY`; the last is a local recognizer for
+provider tokens (`sk-…`, `ghp_…`, `AKIA…`, `xox…`) and `api_key = …` style
+assignments. Analysis and tokenisation are fail-closed: if Presidio cannot
+initialise, `DLPUnavailableError` is raised rather than passing text through.
+`DLP_SCORE_THRESHOLD` (default `0.35`) is the Presidio confidence floor.
+
+### Sensitivity classifier
+
+With `CLASSIFIER_MODEL_PATH` unset, a deterministic weighted-marker classifier
+covers explicit markings, internal-only notes, codenames, board/HR/finance
+material, technical IP, customer data and sensitive personal topics. The
+confidence is `weight / (weight + 2)` and `CLASSIFIER_CONFIDENCE_THRESHOLD`
+(default `0.55`) decides the label; borderline prompts are `PUBLIC` by policy.
+
+For ONNX, set `CLASSIFIER_MODEL_PATH` and (optionally)
+`CLASSIFIER_TOKENIZER_PATH` (defaults to `tokenizer.json` next to the model).
+The graph must take `input_ids` (plus `attention_mask` and optional
+`token_type_ids`) and return two logits ordered `[PUBLIC, CONFIDENTIAL]`. A
+missing model/tokenizer fails closed when the classifier is constructed rather
+than silently falling back.
+
+### Routing
+
+`ModelRouter` maps `CONFIDENTIAL` → `MODEL_LOCAL_ALIAS` (`local-llama`) and
+`PUBLIC` → `MODEL_CLOUD_ALIAS` (`cloud-primary`). Completions go to
+`OMNIROUTE_BASE_URL/v1/chat/completions` with `OMNIROUTE_API_KEY`.
+`CONFIDENTIAL` traffic never falls back to cloud: retries stay on the same
+alias, and a local outage raises `UpstreamError` (fail closed).
+
+```python
+from agent.routing.client import ChatMessage, get_model_router
+
+router = get_model_router()
+decision = await router.aroute("Summarise this internal-only memo")
+completion = await router.complete(
+    [ChatMessage("user", "Summarise this internal-only memo")],
+    decision=decision,
+)
+```
+
+### Verification
+
+```bash
+uv run pytest -q tests/test_vault.py tests/test_dlp_presidio.py \
+  tests/test_classifier.py tests/test_routing_client.py
+```
+
+No chat endpoint is wired yet; Milestone 4 connects these primitives to the
+tool guard and worker state machine.
+
+---
+
 ## Local Development (without Docker)
 
 ```bash

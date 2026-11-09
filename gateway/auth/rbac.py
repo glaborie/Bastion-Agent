@@ -18,6 +18,7 @@ from typing import Literal
 
 from fastapi import Depends, HTTPException, Request, status
 
+from db.redis import close_redis, get_redis
 from gateway.auth.oidc import (
     JWKSClient,
     OIDCTokenClient,
@@ -27,7 +28,7 @@ from gateway.auth.oidc import (
     parse_bearer_token,
 )
 from gateway.auth.roles import ROLE_NAMES, any_satisfied
-from gateway.auth.session import SessionManager, SessionRecord, get_redis
+from gateway.auth.session import SessionManager, SessionRecord
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -115,8 +116,6 @@ def get_session_manager() -> SessionManager:
 async def shutdown_auth() -> None:
     """Release HTTP clients and the Redis connection (gateway shutdown)."""
     import asyncio
-
-    from gateway.auth.session import close_redis
 
     closers = []
     if get_token_client.cache_info().currsize:
