@@ -498,7 +498,15 @@ combo. It requires `OPENROUTER_API_KEY` in `.env`.
 
 The gateway and worker export OTLP/HTTP spans to `otel-collector`, which fans
 them out to Langfuse Cloud and Arize AX (and mirrors batch counters to the
-collector log). Health probes are excluded from tracing.
+collector log). Health probes and the dashboard's polling endpoints
+(`/api/approvals` every 3 s, `/api/evals/latest` every 30 s) are excluded from
+tracing, so an open dashboard does not burn a backend quota; the four-eyes
+decision endpoint stays traced.
+
+Remote export is **currently paused** — the collector's `traces` pipeline
+exports to `debug` only. Re-add `otlphttp/langfuse` and/or `otlphttp/arize` to
+the pipeline's `exporters` list in `config/otel/otel-collector-config.yaml` to
+resume fan-out.
 
 Configure in `.env`:
 
