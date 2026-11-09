@@ -328,6 +328,16 @@ is accounted for. If you see CUDA out-of-memory errors, lower
   CPU-only host use the `server` image, set `LLAMA_N_GPU_LAYERS=0`, and remove
   that reservation block.
 
+### Sign out returns `{"detail":"cross-origin request rejected"}`
+
+CSRF-protected mutations compare the browser's `Origin`/`Referer` with the
+request `Host`. Loopback aliases (`localhost`, `127.0.0.1`, `::1`) are treated
+as equivalent because Windows/WSL and Docker Desktop port forwarding can
+rewrite the host between the browser and the gateway. If you front the gateway
+with a reverse proxy under a different hostname, browse to that same hostname
+and set `FORWARDED_ALLOW_IPS` to the proxy address so `X-Forwarded-Host` is
+trusted.
+
 ### Keycloak reports `invalid_user_credentials` or "user not found" for `admin`
 
 There are two different identities:

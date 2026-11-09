@@ -135,6 +135,18 @@ def test_cross_origin_session_mutation_is_rejected() -> None:
     assert response.status_code == 403
 
 
+def test_loopback_host_aliases_are_treated_as_same_origin() -> None:
+    # Windows/WSL or Docker Desktop may rewrite localhost <-> 127.0.0.1 between
+    # the browser and the gateway; both are the same machine.
+    context = AuthContext(principal=BOB, method="session", session=_session(BOB))
+    client = TestClient(_app_with_context(context), base_url="http://127.0.0.1:8000")
+    response = client.post(
+        "/mutate",
+        headers={"X-CSRF-Token": "csrf-token", "Origin": "http://localhost:8000"},
+    )
+    assert response.status_code == 200
+
+
 def test_bearer_mutations_are_exempt_from_csrf() -> None:
     client = TestClient(_app_with_context(AuthContext(principal=BOB, method="bearer")))
     response = client.post("/mutate", headers={"Origin": "http://evil.example"})
