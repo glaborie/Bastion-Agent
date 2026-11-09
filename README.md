@@ -172,9 +172,10 @@ is accounted for. If you see CUDA out-of-memory errors, lower
 
 ### Container hardening notes
 
-- **Host exposure** — every port is bound to `127.0.0.1`, including Keycloak.
-  To serve the IdP or dashboard beyond this host, put a TLS reverse proxy in
-  front and set `FORWARDED_ALLOW_IPS` to that proxy's address (never `*`).
+- **Host exposure** — every published port is bound to `127.0.0.1`, including
+  the gateway and Keycloak. To serve the dashboard or IdP beyond this host, put
+  a TLS reverse proxy in front and set `FORWARDED_ALLOW_IPS` to that proxy's
+  address (never `*`).
 - **Capabilities** — all services run with `no-new-privileges` and
   `cap_drop: [ALL]`. `db` and `redis` add back only the capabilities their
   entrypoints need to drop privileges (`CHOWN`, `SETUID`, `SETGID`, …).

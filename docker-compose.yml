@@ -79,7 +79,9 @@ services:
       <<: *app-environment
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-bastion-gateway}
     ports:
-      - "${GATEWAY_PORT:-8000}:8000"
+      # Loopback-only by default: this is a local control plane. Front it with a
+      # TLS reverse proxy (and set FORWARDED_ALLOW_IPS) before exposing it.
+      - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
