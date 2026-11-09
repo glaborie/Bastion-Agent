@@ -170,6 +170,28 @@ With 8 GB of VRAM, Q4_K_M at `LLAMA_CTX_SIZE=8192` uses ~6.6 GB once the desktop
 is accounted for. If you see CUDA out-of-memory errors, lower
 `LLAMA_CTX_SIZE` (e.g. 4096) or `LLAMA_N_GPU_LAYERS`.
 
+### Container hardening notes
+
+- **Host exposure** — every port is bound to `127.0.0.1`, including Keycloak.
+  To serve the IdP or dashboard beyond this host, put a TLS reverse proxy in
+  front and set `FORWARDED_ALLOW_IPS` to that proxy's address (never `*`).
+- **Capabilities** — all services run with `no-new-privileges` and
+  `cap_drop: [ALL]`. `db` and `redis` add back only the capabilities their
+  entrypoints need to drop privileges (`CHOWN`, `SETUID`, `SETGID`, …).
+- **Image pinning** — third-party images are pinned by tag **and** digest.
+  Refresh with `docker buildx imagetools inspect <image>` and update the digest.
+  The locally built `rigging/omniroute` image keeps its tag (no registry digest).
+- **No `container_name` on gateway/worker** — they are replica-safe; Compose
+  derives names such as `bastion-agent-worker-1`.
+- **No healthcheck on `otel-collector`** — the image is distroless (no shell).
+  It exposes the `health_check` extension on `:13133` for external probes;
+  tracing consumers use `service_started` because tracing is best-effort.
+- **GPU** — `llama-cpp` requests an NVIDIA device through
+  `deploy.resources.reservations.devices`, which needs the NVIDIA Container
+  Toolkit and a Compose runtime that supports device reservations. On a
+  CPU-only host use the `server` image, set `LLAMA_N_GPU_LAYERS=0`, and remove
+  that reservation block.
+
 ### `ports are not available: /forwards/expose returned unexpected status: 500` (WSL2 + Docker Desktop)
 
 Docker Desktop publishes host ports on the Windows side, so any port inside a

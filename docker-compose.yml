@@ -57,6 +57,10 @@ x-app-build: &app-build
       required: false
   init: true
   restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
   networks:
     - bastion-net
 
@@ -66,10 +70,11 @@ services:
   # ---------------------------------------------------------------------------
   gateway:
     <<: *app-build
-    container_name: bastion-gateway
+    # No container_name: the app tier is replica-safe (Compose derives names).
     command: >-
       uvicorn gateway.main:app
-      --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*"
+      --host 0.0.0.0 --port 8000 --proxy-headers
+      --forwarded-allow-ips=${FORWARDED_ALLOW_IPS:-127.0.0.1}
     environment:
       <<: *app-environment
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-bastion-gateway}
@@ -80,6 +85,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      # Inference backends (omniroute, llama-cpp) are deliberately NOT hard
+      # dependencies: approvals and the dashboard must stay up even when the
+      # model backends are degraded. Tracing is best-effort too; the distroless
+      # collector has no shell to probe.
       otel-collector:
         condition: service_started
     healthcheck:
@@ -101,7 +112,6 @@ services:
   # ---------------------------------------------------------------------------
   worker:
     <<: *app-build
-    container_name: bastion-worker
     command: ["arq", "agent.runtime.WorkerSettings"]
     environment:
       <<: *app-environment
@@ -119,7 +129,7 @@ services:
   # PostgreSQL 16: append-only audit chain + suspended approvals
   # ---------------------------------------------------------------------------
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     container_name: bastion-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bastion}
@@ -137,6 +147,17 @@ services:
       retries: 12
       start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # initdb + gosu privilege drop
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     networks:
       - bastion-net
 
@@ -144,7 +165,7 @@ services:
   # Redis 7: ARQ queue + AES-256-GCM encrypted token vault (30 min TTL)
   # ---------------------------------------------------------------------------
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
     container_name: bastion-redis
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
@@ -163,6 +184,15 @@ services:
       retries: 12
       start_period: 5s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # entrypoint chowns /data then gosu-drops to the redis user
+      - CHOWN
+      - SETGID
+      - SETUID
     networks:
       - bastion-net
 
@@ -170,7 +200,7 @@ services:
   # Keycloak: OIDC identity provider, realm imported from config/keycloak
   # ---------------------------------------------------------------------------
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0
+    image: quay.io/keycloak/keycloak:26.0@sha256:09a381c715ab0b111835b70f2905955274843a219c6f27efb348e4d9f4086858
     container_name: bastion-keycloak
     command: ["start-dev", "--import-realm", "--http-port=8080"]
     environment:
@@ -185,8 +215,22 @@ services:
       - ./config/keycloak:/opt/keycloak/data/import:ro
       - keycloak_data:/opt/keycloak/data
     ports:
-      - "${KEYCLOAK_PORT:-8080}:8080"
+      # Loopback-only: the IdP is for this host. Front it with a reverse proxy
+      # (and TLS) before exposing it to a network.
+      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
+    healthcheck:
+      # The UBI-micro image has bash but no curl/wget. The management port
+      # (9000) is enabled via KC_HEALTH_ENABLED.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - bastion-net
 
@@ -195,6 +239,9 @@ services:
   #            `cloud-primary` -> OpenRouter)
   # ---------------------------------------------------------------------------
   omniroute:
+    # Upstream image runs as root and writes /root/.omniroute; re-owning it is
+    # not supported without upstream changes. Compensated by cap_drop + no
+    # published port beyond loopback.
     image: ${OMNIROUTE_IMAGE:-rigging/omniroute:3.8.52}
     container_name: bastion-omniroute
     environment:
@@ -212,7 +259,25 @@ services:
       - ./config/omniroute:/config:ro
     ports:
       - "127.0.0.1:${OMNIROUTE_PORT:-8001}:20128"
+    healthcheck:
+      # /api/health is unauthenticated; the image ships Node 22 with fetch().
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          fetch("http://127.0.0.1:20128/api/health")
+            .then((r) => process.exit(r.ok ? 0 : 1))
+            .catch(() => process.exit(1));
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - bastion-net
 
@@ -220,7 +285,8 @@ services:
   # llama.cpp: confidential prompts never leave the host
   # ---------------------------------------------------------------------------
   llama-cpp:
-    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    # Upstream image runs as root; it only reads the read-only model mount.
+    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:f28803153f5ce48a6c8deaef694f58fca09b5dd79baca75fced670ec23b7bd71}
     container_name: bastion-llama-cpp
     command:
       - --model
@@ -244,6 +310,16 @@ services:
       - ./models:/models:ro
     ports:
       - "127.0.0.1:${LLAMA_PORT:-8002}:8080"
+    healthcheck:
+      # bash TCP probe: the image has no curl/wget. Model load can take minutes.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 180s
+    # GPU access uses the NVIDIA Container Toolkit (device cgroup), not Linux
+    # capabilities. On a CPU-only host use the `server` image, set
+    # LLAMA_N_GPU_LAYERS=0, and delete the deploy.resources block below.
     deploy:
       resources:
         reservations:
@@ -252,6 +328,10 @@ services:
               count: all
               capabilities: [gpu]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - bastion-net
 
@@ -259,7 +339,7 @@ services:
   # OpenTelemetry Collector: OTLP in, Langfuse/Arize out
   # ---------------------------------------------------------------------------
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.111.0
+    image: otel/opentelemetry-collector-contrib:0.111.0@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029
     container_name: bastion-otel-collector
     command: ["--config=/etc/otelcol/config.yaml"]
     environment:
@@ -277,7 +357,14 @@ services:
     ports:
       - "127.0.0.1:4317:4317"
       - "127.0.0.1:4318:4318"
+    # Distroless image: no shell/curl, so an in-container healthcheck is
+    # impossible. The collector exposes `health_check` on :13133 for external
+    # probes, and consumers treat tracing as best-effort (service_started).
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - bastion-net
 
