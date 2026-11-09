@@ -416,6 +416,7 @@ uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
 | `scripts/validate_tool_catalog.py` | Registry ↔ `docs/tools/v1.json` allow-list; `--write` approves the current set |
 | `scripts/validate_rbac.py` | Realm roles/users ↔ code roles ↔ tool requirements; proves four-eyes is possible |
 | `scripts/recalculate_dread.py` | Recompute DREAD totals and the risk-priority list; `--check` / `--write` |
+| `scripts/update_threat_intel.py` | Query OSV for every registry package in `uv.lock`; writes `artifacts/threat-intel/latest.json` |
 | `scripts/demo_tool_request.py` | Originate a guarded tool call for the demo (see `DEMO.md`) |
 | `scripts/seed_demo_approval.py` | Seed a suspended ticket without a worker |
 | `scripts/omniroute_bootstrap.py` | Register OmniRoute provider aliases and the gateway key |
@@ -424,6 +425,19 @@ uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
 The validators are deterministic and offline; run them in CI before deployment.
 `verify_audit_chain.py` needs a reachable database and is therefore a
 post-deploy check rather than a unit test.
+
+The dependency audit needs network access to `api.osv.dev` and exits `1` on any
+unignored finding, so it belongs in a scheduled or post-deploy job rather than
+the offline test gate. Accepted risks are named explicitly:
+
+```bash
+uv run python scripts/update_threat_intel.py --ignore GHSA-xxxx-yyyy-zzzz
+uv run python scripts/update_threat_intel.py --offline artifacts/threat-intel/latest.json
+```
+
+The `--offline` form re-evaluates the last saved report, which lets CI gate
+without network access. The report records the `uv.lock` SHA-256, the OSV batch
+URL, severity, CVSS vectors and fixed versions for each finding.
 
 ## Local Development (without Docker)
 

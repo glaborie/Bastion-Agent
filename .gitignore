@@ -33,3 +33,7 @@ docker-compose.override.yml
 # --- Evaluation reports -----------------------------------------------------
 artifacts/evals/*
 !artifacts/evals/.gitkeep
+
+# --- Threat-intelligence reports --------------------------------------------
+artifacts/threat-intel/*
+!artifacts/threat-intel/.gitkeep

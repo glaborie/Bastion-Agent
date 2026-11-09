@@ -586,13 +586,16 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 ### Integration
 
 ```bash
-# 1. Re-score DREAD (implemented; --check is the CI gate)
+# 1. Refresh dependency CVE intelligence (implemented)
+uv run python scripts/update_threat_intel.py
+#    Queries OSV for every registry package in uv.lock and writes
+#    artifacts/threat-intel/latest.json. Exits 1 on any unignored finding;
+#    --ignore ID records an accepted risk and --offline REPORT re-checks a
+#    saved report without network access.
+
+# 2. Re-score DREAD (implemented; --check is the CI gate)
 uv run python scripts/recalculate_dread.py --check
 uv run python scripts/recalculate_dread.py --write
-
-# 2. Update threat intelligence (planned)
-#    No feed contract exists yet; feeds must be imported by an operator so a
-#    demo or CI run never performs implicit network calls.
 
 # 3. Update mitigations (planned)
 ```
