@@ -586,15 +586,20 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 ### Integration
 
 ```bash
-# 1. Update threat intelligence
-uv run python scripts/update_threat_intel.py
+# 1. Re-score DREAD (implemented; --check is the CI gate)
+uv run python scripts/recalculate_dread.py --check
+uv run python scripts/recalculate_dread.py --write
 
-# 2. Re-score DREAD
-uv run python scripts/recalculate_dread.py
+# 2. Update threat intelligence (planned)
+#    No feed contract exists yet; feeds must be imported by an operator so a
+#    demo or CI run never performs implicit network calls.
 
-# 3. Update mitigations
-uv run python scripts/update_mitigations.py
+# 3. Update mitigations (planned)
 ```
+
+DREAD totals and the risk-priority list are derived from the factor columns:
+edit the factors, then run `--write`. `--check` fails when a hand edit leaves a
+stale total or ordering behind.
 
 ---
 

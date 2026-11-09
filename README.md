@@ -408,6 +408,23 @@ uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
 
 ---
 
+## Operator Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/verify_audit_chain.py` | Recompute the audit hash chain (exit `1` on tamper, `2` if it cannot run) |
+| `scripts/validate_tool_catalog.py` | Registry ↔ `docs/tools/v1.json` allow-list; `--write` approves the current set |
+| `scripts/validate_rbac.py` | Realm roles/users ↔ code roles ↔ tool requirements; proves four-eyes is possible |
+| `scripts/recalculate_dread.py` | Recompute DREAD totals and the risk-priority list; `--check` / `--write` |
+| `scripts/demo_tool_request.py` | Originate a guarded tool call for the demo (see `DEMO.md`) |
+| `scripts/seed_demo_approval.py` | Seed a suspended ticket without a worker |
+| `scripts/omniroute_bootstrap.py` | Register OmniRoute provider aliases and the gateway key |
+| `scripts/check_adrs.py` | Validate the ADR set and index |
+
+The validators are deterministic and offline; run them in CI before deployment.
+`verify_audit_chain.py` needs a reachable database and is therefore a
+post-deploy check rather than a unit test.
+
 ## Local Development (without Docker)
 
 ```bash
@@ -425,6 +442,9 @@ uv run ruff check .          # lint
 uv run mypy settings.py logging_setup.py db gateway agent scripts
 uv run pylint settings.py logging_setup.py telemetry.py db gateway agent tests scripts
 uv run python scripts/check_adrs.py
+uv run python scripts/validate_tool_catalog.py --check
+uv run python scripts/validate_rbac.py
+uv run python scripts/recalculate_dread.py --check
 uv run pytest -m "not integration"   # unit tests (no database required)
 ```
 
