@@ -139,7 +139,7 @@ def ensure_connection(
         print(f"connection created ({provider}): {status}")
         if status >= 300:
             raise SystemExit(f"connection failed: {body[:400]}")
-        connection_id = json.loads(body)["connection"]["id"]
+        connection_id = str(json.loads(body)["connection"]["id"])
     else:
         connection_id = existing["id"]
         print(f"connection exists ({provider}): {connection_id[:8]}")
@@ -176,7 +176,7 @@ def key_is_functional(key: str) -> bool:
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            return response.status == 200
+            return int(response.status) == 200
     except urllib.error.HTTPError:
         return False
 
@@ -199,7 +199,7 @@ def ensure_key(admin: Admin, env: dict[str, str]) -> str:
     status, body = admin.call("POST", "/api/keys", {"name": "bastion-gateway"})
     if status >= 300:
         raise SystemExit(f"key creation failed: {body[:400]}")
-    created = json.loads(body)["key"]
+    created = str(json.loads(body)["key"])
     print(f"gateway key created: {created}")
     return created
 
@@ -264,8 +264,6 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except SystemExit:
-        raise
     except Exception as exc:  # pragma: no cover - operator-facing
         print(f"bootstrap failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

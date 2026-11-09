@@ -21,7 +21,9 @@ Bastion-Agent is an enterprise-grade agent runtime designed for high-security an
 
 ## Architecture
 
-See [`HANDOVER_SPEC.md`](HANDOVER_SPEC.md) for full architectural blueprints and sequence diagrams.
+See [`HANDOVER_SPEC.md`](HANDOVER_SPEC.md) for architectural blueprints and sequence diagrams.
+See [`DEMO.md`](DEMO.md) for a guided, 10–15 minute end-to-end demonstration of
+what is implemented today.
 See [`AGENTS.md`](AGENTS.md) for OpenCode implementation directives and milestone execution.
 
 Architectural decisions live in [`docs/adr/`](docs/adr/ADR-Index.md) (ADR-001 …
@@ -131,9 +133,10 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/approvals
 
 ### Seeding a four-eyes ticket
 
-Until the ARQ worker lands in Milestone 4, the seed script writes the same
-suspended-ticket row and `APPROVAL_REQUESTED` audit event the worker will
-produce:
+The worker creates these tickets from real tool calls (see
+[`DEMO.md`](DEMO.md) and `scripts/demo_tool_request.py`). The seed script is
+still useful for populating the queue without a running worker; it writes the
+same suspended-ticket row and `APPROVAL_REQUESTED` audit event:
 
 ```bash
 # alice's Keycloak subject id (the initiator who must not approve)
@@ -419,8 +422,8 @@ uv run arq agent.runtime.WorkerSettings
 
 ```bash
 uv run ruff check .          # lint
-uv run mypy settings.py logging_setup.py db gateway agent
-uv run pylint settings.py logging_setup.py telemetry.py db gateway agent tests
+uv run mypy settings.py logging_setup.py db gateway agent scripts
+uv run pylint settings.py logging_setup.py telemetry.py db gateway agent tests scripts
 uv run python scripts/check_adrs.py
 uv run pytest -m "not integration"   # unit tests (no database required)
 ```

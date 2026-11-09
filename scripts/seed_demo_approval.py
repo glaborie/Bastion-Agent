@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Create a suspended write-tool ticket for local dashboard testing.
+"""Create a suspended write-tool ticket without running a worker.
 
-Milestone 2 ships the approval queue before the ARQ worker exists, so this
-script stands in for the worker's suspension step. It writes the same
-``PendingApproval`` row and ``APPROVAL_REQUESTED`` audit record that the worker
-will create in Milestone 4.
+For the full flow use ``scripts/demo_tool_request.py``, which enqueues the real
+``execute_tool_job`` and lets the worker execute the approved ticket. This
+script remains useful for populating the approval queue when no worker is
+running; it writes the same ``PendingApproval`` row and ``APPROVAL_REQUESTED``
+audit record the worker produces.
 
     uv run python scripts/seed_demo_approval.py --initiator-id <alice-sub>
 
@@ -90,7 +91,7 @@ def main() -> int:
     )
     parser.add_argument("--session-id", default=None, help="Session id to attach the ticket to")
     parser.add_argument("--tool", default="execute_file_write", help="Tool name")
-    parser.add_argument("--path", default="/srv/reports/q3.csv", help="Tool path argument")
+    parser.add_argument("--path", default="reports/q3.csv", help="Tool path argument")
     parser.add_argument("--content", default="quarterly revenue", help="Tool content argument")
     parser.add_argument("--required-role", default="operator", help="Role required to decide")
     args = parser.parse_args()
