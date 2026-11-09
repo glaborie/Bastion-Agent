@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.audit import append_audit_event, verify_audit_chain
@@ -137,6 +138,8 @@ async def test_tampering_with_payload_hash_breaks_verification(
     await session.commit()
 
     # Rewrite history out-of-band, exactly as a compromised operator would.
+    # The append-only trigger only lets this through with an explicit opt-in.
+    await session.execute(text("SELECT set_config('bastion.allow_audit_mutation', 'on', true)"))
     await session.execute(
         text("UPDATE audit_logs SET payload_hash = :hash WHERE id = :id"),
         {"hash": "f" * 64, "id": target.id},
@@ -164,6 +167,7 @@ async def test_deleting_a_record_breaks_the_chain(session: AsyncSession) -> None
     )
     await session.commit()
 
+    await session.execute(text("SELECT set_config('bastion.allow_audit_mutation', 'on', true)"))
     await session.execute(text("DELETE FROM audit_logs WHERE id = :id"), {"id": middle.id})
     await session.commit()
     session.expire_all()
@@ -172,6 +176,34 @@ async def test_deleting_a_record_breaks_the_chain(session: AsyncSession) -> None
     assert verification.ok is False
     assert verification.first_bad_id == tail.id
     assert verification.reason == "previous_hash does not link to the preceding record"
+
+
+@pytest.mark.integration
+@requires_database
+async def test_database_rejects_update_and_delete(session: AsyncSession) -> None:
+    """ADR-005: append-only is enforced by the database, not by convention."""
+    record = await append_audit_event(
+        session, actor_id="alice", event_type=AuditEventType.INPUT_RECEIVED, payload={"n": 1}
+    )
+    record_id = record.id
+    await session.commit()
+
+    with pytest.raises(DBAPIError, match="append-only"):
+        await session.execute(
+            text("UPDATE audit_logs SET actor_id = 'mallory' WHERE id = :id"),
+            {"id": record_id},
+        )
+    await session.rollback()
+
+    with pytest.raises(DBAPIError, match="append-only"):
+        await session.execute(text("DELETE FROM audit_logs WHERE id = :id"), {"id": record_id})
+    await session.rollback()
+
+    # The record is still intact after both attempts.
+    actor = (
+        await session.execute(select(AuditLog.actor_id).where(AuditLog.id == record_id))
+    ).scalar_one()
+    assert actor == "alice"
 
 
 @pytest.mark.integration

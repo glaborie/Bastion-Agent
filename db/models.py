@@ -30,6 +30,7 @@ from enum import StrEnum
 from typing import Any, Final
 
 from sqlalchemy import (
+    DDL,
     BigInteger,
     CheckConstraint,
     DateTime,
@@ -37,6 +38,7 @@ from sqlalchemy import (
     MetaData,
     Sequence,
     String,
+    event,
     text,
 )
 from sqlalchemy import (
@@ -212,6 +214,11 @@ class AuditLog(Base):
 
     ``metadata_json`` must never contain raw PII or secrets: audit entries are
     retained long after the DLP token vault has expired.
+
+    Append-only is enforced by a PostgreSQL trigger (see the DDL listeners below),
+    not merely by convention. UPDATE/DELETE raise ``insufficient_privilege``
+    unless the transaction explicitly sets ``bastion.allow_audit_mutation = on``
+    (used only by integrity tests and break-glass maintenance).
     """
 
     __tablename__ = "audit_logs"
@@ -274,6 +281,66 @@ class AuditLog(Base):
         return (
             f"AuditLog(id={self.id!r}, event_type={self.event_type!r}, actor_id={self.actor_id!r})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Audit immutability guard (ADR-001 / ADR-005)
+# ---------------------------------------------------------------------------
+
+#: The ledger is append-only by construction. A row-level trigger rejects UPDATE
+#: and DELETE. Integrity tests (and documented break-glass maintenance) can opt
+#: out for the duration of one transaction with:
+#:     SELECT set_config('bastion.allow_audit_mutation', 'on', true);
+#: TRUNCATE is intentionally still allowed: it is a DDL reset (used by tests and
+#: disaster recovery), and it leaves the chain visibly empty rather than forked.
+_AUDIT_APPEND_ONLY_FUNCTION: Final[str] = """
+CREATE OR REPLACE FUNCTION bastion_audit_logs_append_only()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF current_setting('bastion.allow_audit_mutation', true) = 'on' THEN
+        RETURN COALESCE(NEW, OLD);
+    END IF;
+    -- No format placeholders here: SQLAlchemy formats DDL strings.
+    RAISE EXCEPTION 'audit_logs is append-only'
+        USING ERRCODE = 'insufficient_privilege',
+              HINT = 'blocked operation: ' || TG_OP;
+END;
+$$;
+"""
+
+_AUDIT_APPEND_ONLY_TRIGGER: Final[str] = """
+CREATE TRIGGER trg_audit_logs_append_only
+BEFORE UPDATE OR DELETE ON audit_logs
+FOR EACH ROW EXECUTE FUNCTION bastion_audit_logs_append_only();
+"""
+
+#: Idempotent statements applied on every boot by ``db.session.init_models`` so
+#: existing databases (where ``after_create`` never fires) also get the guard.
+AUDIT_APPEND_ONLY_DDL: Final[tuple[str, ...]] = (
+    _AUDIT_APPEND_ONLY_FUNCTION,
+    "DROP TRIGGER IF EXISTS trg_audit_logs_append_only ON audit_logs",
+    _AUDIT_APPEND_ONLY_TRIGGER,
+)
+
+event.listen(
+    AuditLog.__table__,
+    "after_create",
+    DDL(_AUDIT_APPEND_ONLY_FUNCTION).execute_if(dialect="postgresql"),  # type: ignore[no-untyped-call]
+)
+event.listen(
+    AuditLog.__table__,
+    "after_create",
+    DDL(_AUDIT_APPEND_ONLY_TRIGGER).execute_if(dialect="postgresql"),  # type: ignore[no-untyped-call]
+)
+event.listen(
+    AuditLog.__table__,
+    "before_drop",
+    DDL("DROP FUNCTION IF EXISTS bastion_audit_logs_append_only() CASCADE").execute_if(  # type: ignore[no-untyped-call]
+        dialect="postgresql"
+    ),
+)
 
 
 # ---------------------------------------------------------------------------

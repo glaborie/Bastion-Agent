@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from db.models import SCHEMA_INIT_LOCK_ID, Base
+from db.models import AUDIT_APPEND_ONLY_DDL, SCHEMA_INIT_LOCK_ID, Base
 from settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -110,6 +110,10 @@ async def init_models(engine: AsyncEngine | None = None) -> None:
             {"lock_id": SCHEMA_INIT_LOCK_ID},
         )
         await connection.run_sync(Base.metadata.create_all)
+        # `after_create` only fires for new tables; re-apply the audit guard so
+        # upgraded databases enforce append-only too.
+        for statement in AUDIT_APPEND_ONLY_DDL:
+            await connection.execute(text(statement))
     logger.info(
         "Database schema ready",
         extra={"tables": sorted(Base.metadata.tables)},
