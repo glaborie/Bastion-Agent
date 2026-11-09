@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Signing out{% endblock %}
+
+{% block head_extra %}
+  {% if end_session_url %}
+    <meta http-equiv="refresh" content="0;url={{ end_session_url }}">
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <article class="error-page">
+    <header><strong>{% if end_session_url %}Signing out…{% else %}Signed out{% endif %}</strong></header>
+    {% if end_session_url %}
+      <p>Ending your Keycloak single sign-on session.</p>
+      <footer>
+        <a href="{{ end_session_url }}" role="button">Continue</a>
+      </footer>
+    {% else %}
+      <p>Your dashboard session has been closed.</p>
+      <footer>
+        <a href="/auth/login" role="button">Sign in again</a>
+      </footer>
+    {% endif %}
+  </article>
+{% endblock %}

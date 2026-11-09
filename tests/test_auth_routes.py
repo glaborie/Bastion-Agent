@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import urllib.parse
 from typing import Any, cast
 
@@ -221,10 +222,34 @@ async def test_logout_deletes_the_session_and_requires_csrf(harness: Any) -> Non
     assert without_csrf.status_code == 403
 
     raw = await harness["redis"].get(SESSION_KEY_PREFIX + session_id)
-    import json
-
     csrf = json.loads(raw)["csrf_token"]
-    response = await harness["client"].post("/auth/logout", headers={"X-CSRF-Token": csrf})
+    response = await harness["client"].post(
+        "/auth/logout", headers={"X-CSRF-Token": csrf, "Origin": "null"}
+    )
     assert response.status_code == 303
-    assert "/protocol/openid-connect/logout" in response.headers["location"]
+    landing_url = response.headers["location"]
+    assert landing_url.startswith("/auth/logged-out?t=")
+    assert any(
+        "bastion_logged_out=1" in cookie for cookie in response.headers.get_list("set-cookie")
+    )
     assert await harness["redis"].exists(SESSION_KEY_PREFIX + session_id) == 0
+
+    landing = await harness["client"].get(landing_url)
+    assert landing.status_code == 200
+    assert "/protocol/openid-connect/logout" in landing.text
+    assert 'http-equiv="refresh"' in landing.text
+
+    # The hand-off is single-use: reloading the landing page no longer exposes
+    # an end-session URL (and therefore no id_token_hint).
+    replay = await harness["client"].get(landing_url)
+    assert replay.status_code == 200
+    assert "Signed out" in replay.text
+    assert 'http-equiv="refresh"' not in replay.text
+
+
+async def test_login_forces_credentials_while_a_logout_is_in_flight(harness: Any) -> None:
+    harness["client"].cookies.set("bastion_logged_out", "1")
+    response = await harness["client"].get("/auth/login")
+    assert response.status_code == 303
+    params = urllib.parse.parse_qs(urllib.parse.urlsplit(response.headers["location"]).query)
+    assert params["prompt"] == ["login"]

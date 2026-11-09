@@ -107,6 +107,13 @@ server-side session in Redis. The browser only holds an opaque, `HttpOnly`,
 access token is refreshed back-channel, so a 5-minute Keycloak token does not
 log an operator out mid-incident.
 
+Signing out deletes the session and redirects to a **one-time same-origin
+landing page** (`/auth/logged-out`) that unloads the dashboard before sending
+the browser to Keycloak's end-session endpoint. A short-lived
+`bastion_logged_out` cookie forces `prompt=login` on any login that races the
+logout, so an in-flight dashboard poll cannot silently re-authenticate through
+the still-open SSO session.
+
 ### API access with a Bearer token
 
 The gateway accepts the same RS256 token on `/api/*` and `/auth/me`:

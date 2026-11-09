@@ -195,6 +195,16 @@ async def test_login_state_is_single_use() -> None:
     assert second is None
 
 
+async def test_logout_target_is_single_use() -> None:
+    manager, _redis = await _manager()
+    token = await manager.store_logout_target("https://idp.test/logout?x=1")
+    first = await manager.pop_logout_target(token)
+    second = await manager.pop_logout_target(token)
+    assert first == "https://idp.test/logout?x=1"
+    assert second is None
+    assert await manager.pop_logout_target("") is None
+
+
 def test_session_record_json_round_trip() -> None:
     now = datetime.now(UTC).replace(microsecond=123456)
     record = SessionRecord(

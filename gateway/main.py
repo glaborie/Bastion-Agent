@@ -133,12 +133,20 @@ def create_app() -> FastAPI:
             return response
         if exc.status_code == 401:
             target = path + (f"?{request.url.query}" if request.url.query else "")
-            login_url = "/auth/login?next=" + urllib.parse.quote(safe_next_path(target), safe="")
             if is_htmx(request):
+                # A partial endpoint must not become the post-login destination;
+                # send the browser back to the page that hosts the partial.
+                next_path = "/dashboard" if path.startswith("/api/") else target
+                login_url = "/auth/login?next=" + urllib.parse.quote(
+                    safe_next_path(next_path), safe=""
+                )
                 # A 3xx would be followed by XHR and render the login page into
                 # the fragment; ask htmx to navigate instead.
                 return Response(status_code=401, headers={"HX-Redirect": login_url})
             if path.startswith("/dashboard") or path == "/":
+                login_url = "/auth/login?next=" + urllib.parse.quote(
+                    safe_next_path(target), safe=""
+                )
                 return RedirectResponse(login_url, status_code=303)
         if exc.status_code == 403 and path.startswith("/dashboard"):
             return render_error(

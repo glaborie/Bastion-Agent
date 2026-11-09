@@ -37,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 SESSION_KEY_PREFIX: Final[str] = "auth:session:"
 LOGIN_STATE_KEY_PREFIX: Final[str] = "auth:oidc-state:"
+#: One-time hand-off of the Keycloak end-session URL from POST /auth/logout to
+#: the GET landing page (PRG), so the old dashboard document is unloaded before
+#: the browser leaves for the IdP.
+LOGOUT_TARGET_KEY_PREFIX: Final[str] = "auth:logout-target:"
 #: Short-lived lock serialising token refresh for one session. Keycloak rotates
 #: refresh tokens on use, so two concurrent refreshes would otherwise revoke the
 #: session.
@@ -133,6 +137,7 @@ class SessionManager:
         ttl_seconds: int = 28800,
         refresh_leeway_seconds: int = 60,
         login_state_ttl_seconds: int = 600,
+        logout_target_ttl_seconds: int = 120,
     ) -> None:
         if ttl_seconds <= 0:
             raise ValueError("session TTL must be positive")
@@ -142,6 +147,7 @@ class SessionManager:
         self._ttl = ttl_seconds
         self._refresh_leeway = max(0, refresh_leeway_seconds)
         self._login_state_ttl = login_state_ttl_seconds
+        self._logout_target_ttl = logout_target_ttl_seconds
 
     # -- sessions ---------------------------------------------------------
     async def create(self, tokens: TokenSet) -> SessionRecord:
@@ -301,6 +307,26 @@ class SessionManager:
         except (KeyError, TypeError, ValueError):
             logger.warning("Discarding a malformed login-state record")
             return None
+
+    # -- logout hand-off --------------------------------------------------
+    async def store_logout_target(self, end_session_url: str) -> str:
+        """Persist the IdP end-session URL under a one-time, short-lived key."""
+        token = secrets.token_urlsafe(32)
+        await self._redis.set(
+            LOGOUT_TARGET_KEY_PREFIX + token,
+            end_session_url,
+            ex=self._logout_target_ttl,
+        )
+        return token
+
+    async def pop_logout_target(self, token: str) -> str | None:
+        """Read and delete the end-session URL (the landing page is single-use)."""
+        if not token or len(token) > 256:
+            return None
+        payload = await self._redis.getdel(LOGOUT_TARGET_KEY_PREFIX + token)
+        if not isinstance(payload, str) or not payload:
+            return None
+        return payload
 
 
 # ---------------------------------------------------------------------------

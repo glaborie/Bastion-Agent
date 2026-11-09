@@ -33,7 +33,7 @@ from gateway.auth.rbac import (
     require_csrf,
 )
 from gateway.auth.session import LoginState, SessionManager, safe_next_path
-from gateway.dashboard.templating import render_error
+from gateway.dashboard.templating import render, render_error
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -52,11 +52,16 @@ _ERROR_DETAILS: dict[str, str] = {
 
 @router.get("/login", include_in_schema=False)
 async def login(
+    request: Request,
     next_path: str | None = Query(default=None, alias="next", max_length=512),
     token_client: OIDCTokenClient = Depends(get_token_client),
     sessions: SessionManager = Depends(get_session_manager),
 ) -> RedirectResponse:
     """Start an authorization-code + PKCE login."""
+    settings = get_settings()
+    # If a logout is still in flight, never silently re-use the SSO session that
+    # the end-session redirect is about to terminate.
+    prompt = "login" if request.cookies.get(settings.logout_marker_cookie_name) else None
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     pkce = generate_pkce_pair()
@@ -73,6 +78,7 @@ async def login(
             state=state,
             nonce=nonce,
             code_challenge=pkce.challenge,
+            prompt=prompt,
         ),
         status_code=status.HTTP_303_SEE_OTHER,
     )
@@ -137,6 +143,7 @@ async def callback(
         samesite="lax",
         path="/",
     )
+    response.delete_cookie(settings.logout_marker_cookie_name, path="/")
     response.headers["Cache-Control"] = "no-store"
     logger.info("Operator signed in", extra={"subject": record.principal.subject})
     return response
@@ -156,17 +163,56 @@ async def logout(
     context: AuthContext = Depends(require_csrf),
     sessions: SessionManager = Depends(get_session_manager),
 ) -> RedirectResponse:
-    """Delete the server-side session, then end the Keycloak SSO session."""
+    """Delete the session, then hand the browser a one-time logout landing page.
+
+    The POST redirects to a same-origin GET instead of straight to Keycloak, so
+    the dashboard document (and its 3s polling) is unloaded before the browser
+    leaves for the IdP. That removes the race where an in-flight poll's 401
+    redirect interrupted the RP-initiated logout.
+    """
     settings = get_settings()
     id_token = context.session.id_token if context.session is not None else None
     if context.session is not None:
         await sessions.delete(context.session.session_id)
 
-    response = RedirectResponse(_end_session_url(id_token), status_code=status.HTTP_303_SEE_OTHER)
+    target = _end_session_url(id_token)
+    token = await sessions.store_logout_target(target)
+    response = RedirectResponse(
+        f"/auth/logged-out?t={urllib.parse.quote(token)}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
     response.delete_cookie(settings.session_cookie_name, path="/")
+    response.set_cookie(
+        settings.logout_marker_cookie_name,
+        "1",
+        max_age=settings.logout_marker_ttl_seconds,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
     response.headers["Cache-Control"] = "no-store"
     logger.info("Operator signed out", extra={"subject": context.principal.subject})
     return response
+
+
+@router.get("/logged-out", include_in_schema=False)
+async def logged_out(
+    request: Request,
+    token: str | None = Query(default=None, alias="t", max_length=256),
+    sessions: SessionManager = Depends(get_session_manager),
+) -> HTMLResponse:
+    """Public, single-use landing page that completes the IdP logout."""
+    end_session_url = await sessions.pop_logout_target(token) if token else None
+    return render(
+        request,
+        "logged_out.html",
+        context={
+            "principal": None,
+            "csrf_token": None,
+            "end_session_url": end_session_url,
+        },
+    )
 
 
 @router.get("/me", summary="Current identity")

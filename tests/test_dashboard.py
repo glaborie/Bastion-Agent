@@ -370,4 +370,4 @@ async def test_unauthenticated_dashboard_redirects_to_login() -> None:
 
         htmx = await client.get("/api/approvals", headers={"HX-Request": "true"})
         assert htmx.status_code == 401
-        assert htmx.headers["hx-redirect"].startswith("/auth/login?next=")
+        assert htmx.headers["hx-redirect"] == "/auth/login?next=%2Fdashboard"

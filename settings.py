@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     session_refresh_leeway_seconds: int = 60
     session_cookie_secure: bool = False  # local stack is plain HTTP on loopback
     login_state_ttl_seconds: int = 600
+    #: Cookie set while a logout is in flight. `/auth/login` sees it and adds
+    #: `prompt=login`, so a racing dashboard poll cannot silently re-use the
+    #: Keycloak SSO session before RP-initiated logout completes.
+    logout_marker_cookie_name: str = "bastion_logged_out"
+    logout_marker_ttl_seconds: int = 120
+    #: TTL for the one-time end-session URL handed to `/auth/logged-out`.
+    logout_target_ttl_seconds: int = 120
     audit_page_size: int = 50
     approval_page_size: int = 100
 
@@ -159,6 +166,8 @@ class Settings(BaseSettings):
     @field_validator(
         "session_ttl_seconds",
         "login_state_ttl_seconds",
+        "logout_marker_ttl_seconds",
+        "logout_target_ttl_seconds",
         "audit_page_size",
         "approval_page_size",
         "keycloak_jwks_cache_ttl_seconds",

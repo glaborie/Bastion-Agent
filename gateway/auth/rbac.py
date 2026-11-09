@@ -108,6 +108,7 @@ def get_session_manager() -> SessionManager:
         ttl_seconds=settings.session_ttl_seconds,
         refresh_leeway_seconds=settings.session_refresh_leeway_seconds,
         login_state_ttl_seconds=settings.login_state_ttl_seconds,
+        logout_target_ttl_seconds=settings.logout_target_ttl_seconds,
     )
 
 
