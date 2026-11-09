@@ -6,6 +6,12 @@
 #   • Arize AX (OTLP/HTTP)
 #   • local debug logs
 #
+# Egress is currently local debug only: both remote exporters are defined below
+# but are not wired into the traces pipeline. The Langfuse free tier was
+# exhausted by dashboard polling, and telemetry.py now excludes those poll URLs
+# so that a re-enabled export carries real traffic instead of poll noise. To
+# resume export, add the exporter back to the pipeline's `exporters` list.
+#
 # Every ${env:...} variable below is supplied by docker-compose.yml with a
 # non-empty default, because the collector's env provider does not implement
 # shell-style `${VAR:-default}` fallbacks.
@@ -90,4 +96,6 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [debug, otlphttp/langfuse, otlphttp/arize]  
+      # Remote egress paused (see the header). Re-add otlphttp/arize and/or
+      # otlphttp/langfuse here to resume fan-out.
+      exporters: [debug]
