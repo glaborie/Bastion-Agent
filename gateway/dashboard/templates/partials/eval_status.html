@@ -1,0 +1,27 @@
+<article id="eval-health"
+         hx-get="/api/evals/latest"
+         hx-trigger="every 30s"
+         hx-swap="outerHTML"
+         aria-live="polite">
+  <header><small>Evaluation health</small></header>
+
+  {% if report.available and report.summary %}
+    {% set summary = report.summary %}
+    <p class="metric">
+      <span class="badge {{ 'badge-ok' if summary.status == 'passed' else 'badge-bad' }}">
+        {{ summary.status }}
+      </span>
+      {{ (summary.pass_rate * 100) | round(1) }}%
+    </p>
+    <footer>
+      <small>
+        {{ summary.passed }}/{{ summary.total }} goldens ·
+        {{ summary.finished_at | utc_ts }}
+        {% if report.stale %}· <mark>stale</mark>{% endif %}
+      </small>
+    </footer>
+  {% else %}
+    <p class="metric metric-small">Not run yet</p>
+    <footer><small>{{ report.error or "no evaluation report" }}</small></footer>
+  {% endif %}
+</article>

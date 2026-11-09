@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Create a suspended write-tool ticket for local dashboard testing.
+
+Milestone 2 ships the approval queue before the ARQ worker exists, so this
+script stands in for the worker's suspension step. It writes the same
+``PendingApproval`` row and ``APPROVAL_REQUESTED`` audit record that the worker
+will create in Milestone 4.
+
+    uv run python scripts/seed_demo_approval.py --initiator-id <alice-sub>
+
+The initiator id must be the Keycloak ``sub`` of the user who should not be able
+to approve the ticket (fetch it from ``GET /auth/me``).
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import uuid
+from typing import Any
+
+from db.audit import append_audit_event
+from db.models import (
+    ApprovalStatus,
+    AuditEventType,
+    PendingApproval,
+    fingerprint_request,
+    hash_approval_token,
+    sign_approval_token,
+    utcnow,
+)
+from db.session import init_models, session_scope
+from settings import get_settings
+
+
+async def create_ticket(
+    *,
+    initiator_id: str,
+    session_id: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    required_role: str,
+) -> uuid.UUID:
+    settings = get_settings()
+    now = utcnow()
+    expires_at = PendingApproval.expiry_for(now, settings.approval_ttl_seconds)
+    ticket_id = uuid.uuid4()
+    fingerprint = fingerprint_request(tool_name, arguments)
+    token = sign_approval_token(
+        ticket_id=ticket_id,
+        request_fingerprint=fingerprint,
+        expires_at=expires_at,
+        secret=settings.approval_hmac_secret.get_secret_value(),
+    )
+
+    async with session_scope() as session:
+        session.add(
+            PendingApproval(
+                ticket_id=ticket_id,
+                session_id=session_id,
+                initiator_id=initiator_id,
+                tool_name=tool_name,
+                tool_arguments=arguments,
+                required_role=required_role,
+                request_fingerprint=fingerprint,
+                approval_token_hash=hash_approval_token(token),
+                token_expires_at=expires_at,
+                status=ApprovalStatus.PENDING,
+                created_at=now,
+            )
+        )
+        await append_audit_event(
+            session,
+            actor_id=initiator_id,
+            event_type=AuditEventType.APPROVAL_REQUESTED,
+            session_id=session_id,
+            payload={"ticket_id": str(ticket_id), "tool": tool_name},
+            metadata_json={"required_role": required_role},
+        )
+    return ticket_id
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--initiator-id",
+        required=True,
+        help="Keycloak sub of the initiator (cannot approve their own ticket)",
+    )
+    parser.add_argument("--session-id", default=None, help="Session id to attach the ticket to")
+    parser.add_argument("--tool", default="execute_file_write", help="Tool name")
+    parser.add_argument("--path", default="/srv/reports/q3.csv", help="Tool path argument")
+    parser.add_argument("--content", default="quarterly revenue", help="Tool content argument")
+    parser.add_argument("--required-role", default="operator", help="Role required to decide")
+    args = parser.parse_args()
+
+    async def run() -> None:
+        await init_models()
+        ticket_id = await create_ticket(
+            initiator_id=args.initiator_id,
+            session_id=args.session_id or f"demo-{uuid.uuid4()}",
+            tool_name=args.tool,
+            arguments={"path": args.path, "content": args.content},
+            required_role=args.required_role,
+        )
+        print(json.dumps({"ticket_id": str(ticket_id), "status": "pending"}, indent=2))
+
+    asyncio.run(run())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

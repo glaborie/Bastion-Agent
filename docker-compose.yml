@@ -28,9 +28,26 @@ x-app-environment: &app-environment
   REDIS_MAX_CONNECTIONS: ${REDIS_MAX_CONNECTIONS:-50}
   KEYCLOAK_ISSUER: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080}/realms/${KEYCLOAK_REALM:-bastion}
   KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-bastion-gateway}
+  KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-bastion-gateway}
+  KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in .env}
+  KEYCLOAK_REDIRECT_URI: ${KEYCLOAK_REDIRECT_URI:-http://localhost:8000/auth/callback}
   KEYCLOAK_JWKS_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-bastion}/protocol/openid-connect/certs
+  # Back-channel token endpoint: the gateway reaches Keycloak internally even
+  # though tokens carry the public issuer (http://localhost:8080/...).
+  KEYCLOAK_TOKEN_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-bastion}/protocol/openid-connect/token
+  KEYCLOAK_SCOPES: ${KEYCLOAK_SCOPES:-openid profile email}
   KEYCLOAK_JWKS_CACHE_TTL_SECONDS: ${KEYCLOAK_JWKS_CACHE_TTL_SECONDS:-300}
+  KEYCLOAK_JWKS_MIN_REFRESH_SECONDS: ${KEYCLOAK_JWKS_MIN_REFRESH_SECONDS:-5}
   KEYCLOAK_LEEWAY_SECONDS: ${KEYCLOAK_LEEWAY_SECONDS:-30}
+  KEYCLOAK_HTTP_TIMEOUT_SECONDS: ${KEYCLOAK_HTTP_TIMEOUT_SECONDS:-10}
+  SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-bastion_session}
+  SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
+  SESSION_REFRESH_LEEWAY_SECONDS: ${SESSION_REFRESH_LEEWAY_SECONDS:-60}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+  LOGIN_STATE_TTL_SECONDS: ${LOGIN_STATE_TTL_SECONDS:-600}
+  APPROVAL_PAGE_SIZE: ${APPROVAL_PAGE_SIZE:-100}
+  AUDIT_PAGE_SIZE: ${AUDIT_PAGE_SIZE:-50}
+  EVAL_REPORT_PATH: ${EVAL_REPORT_PATH:-artifacts/evals/latest.json}
   VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:?set VAULT_MASTER_KEY in .env}
   VAULT_TTL_SECONDS: ${VAULT_TTL_SECONDS:-1800}
   APPROVAL_HMAC_SECRET: ${APPROVAL_HMAC_SECRET:?set APPROVAL_HMAC_SECRET in .env}
@@ -82,6 +99,9 @@ services:
       # Loopback-only by default: this is a local control plane. Front it with a
       # TLS reverse proxy (and set FORWARDED_ALLOW_IPS) before exposing it.
       - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
+    volumes:
+      # DeepEval run summaries written by the test harness (read-only here).
+      - ./artifacts:/app/artifacts:ro
     depends_on:
       db:
         condition: service_healthy
@@ -172,9 +192,17 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
     command:
-      - sh
-      - -c
-      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${REDIS_PASSWORD}"
+      # Pass redis-server arguments directly: the image's entrypoint then chowns
+      # /data and drops from root to the `redis` user. Wrapping the server in
+      # `sh -c` (as an earlier revision did) bypasses that drop and leaves the
+      # server running as root, which breaks AOF once /data is redis-owned.
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
     volumes:
       - redisdata:/data
     ports:
@@ -193,6 +221,7 @@ services:
     cap_add:
       # entrypoint chowns /data then gosu-drops to the redis user
       - CHOWN
+      - DAC_OVERRIDE
       - SETGID
       - SETUID
     networks:

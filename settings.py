@@ -20,6 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: rejected at startup if these values are still in place (see ``_reject_dev_secrets``).
 DEV_VAULT_MASTER_KEY = "YmFzdGlvbi1kZXYtaW5zZWN1cmUtdmF1bHQta2V5ISE="
 DEV_APPROVAL_HMAC_SECRET = "dev-only-approval-hmac-secret-change-me"
+DEV_KEYCLOAK_CLIENT_SECRET = "dev-only-keycloak-client-secret"
 
 Environment = Literal["local", "ci", "staging", "production"]
 
@@ -56,9 +57,35 @@ class Settings(BaseSettings):
     # -- Keycloak / OIDC ---------------------------------------------------
     keycloak_issuer: str = "http://localhost:8080/realms/bastion"
     keycloak_audience: str = "bastion-gateway"
+    keycloak_client_id: str = "bastion-gateway"
+    keycloak_client_secret: SecretStr = SecretStr(DEV_KEYCLOAK_CLIENT_SECRET)
+    #: Browser-facing callback registered on the Keycloak client.
+    keycloak_redirect_uri: str = "http://localhost:8000/auth/callback"
+    #: Endpoints default to the conventional paths under ``keycloak_issuer``.
+    #: The token endpoint is separately overridable because the gateway reaches
+    #: Keycloak over the internal network while the browser uses the public URL.
+    keycloak_authorization_uri: str | None = None
+    keycloak_token_uri: str | None = None
+    keycloak_end_session_uri: str | None = None
+    keycloak_scopes: str = "openid profile email"
     keycloak_jwks_uri: str | None = None
     keycloak_jwks_cache_ttl_seconds: int = 300
+    keycloak_jwks_min_refresh_seconds: float = 5.0
     keycloak_leeway_seconds: int = 30
+    keycloak_http_timeout_seconds: float = 10.0
+
+    # -- Dashboard sessions (server-side, Redis-backed) --------------------
+    session_cookie_name: str = "bastion_session"
+    session_ttl_seconds: int = 28800  # 8 hours, sliding
+    session_refresh_leeway_seconds: int = 60
+    session_cookie_secure: bool = False  # local stack is plain HTTP on loopback
+    login_state_ttl_seconds: int = 600
+    audit_page_size: int = 50
+    approval_page_size: int = 100
+
+    # -- Evaluation reports ------------------------------------------------
+    #: JSON summary written by the DeepEval harness (Milestone 6).
+    eval_report_path: str = "artifacts/evals/latest.json"
 
     # -- DLP: reversible token vault --------------------------------------
     vault_master_key: SecretStr = SecretStr(DEV_VAULT_MASTER_KEY)
@@ -95,7 +122,14 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
-    @field_validator("keycloak_jwks_uri", "classifier_model_path", mode="before")
+    @field_validator(
+        "keycloak_jwks_uri",
+        "keycloak_authorization_uri",
+        "keycloak_token_uri",
+        "keycloak_end_session_uri",
+        "classifier_model_path",
+        mode="before",
+    )
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -122,6 +156,19 @@ class Settings(BaseSettings):
             raise ValueError("value must be within [0.0, 1.0]")
         return value
 
+    @field_validator(
+        "session_ttl_seconds",
+        "login_state_ttl_seconds",
+        "audit_page_size",
+        "approval_page_size",
+        "keycloak_jwks_cache_ttl_seconds",
+    )
+    @classmethod
+    def _validate_positive(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("value must be a positive integer")
+        return value
+
     @field_validator("log_level")
     @classmethod
     def _validate_log_level(cls, value: str) -> str:
@@ -139,6 +186,10 @@ class Settings(BaseSettings):
             raise ValueError("VAULT_MASTER_KEY must be rotated before non-local deployment")
         if self.approval_hmac_secret.get_secret_value() == DEV_APPROVAL_HMAC_SECRET:
             raise ValueError("APPROVAL_HMAC_SECRET must be rotated before non-local deployment")
+        if self.keycloak_client_secret.get_secret_value() == DEV_KEYCLOAK_CLIENT_SECRET:
+            raise ValueError("KEYCLOAK_CLIENT_SECRET must be rotated before non-local deployment")
+        if not self.session_cookie_secure:
+            raise ValueError("SESSION_COOKIE_SECURE must be enabled outside local development")
         return self
 
     # ------------------------------------------------------------------
@@ -151,6 +202,27 @@ class Settings(BaseSettings):
         if self.keycloak_jwks_uri:
             return self.keycloak_jwks_uri
         return f"{self.keycloak_issuer.rstrip('/')}/protocol/openid-connect/certs"
+
+    @property
+    def keycloak_authorization_endpoint(self) -> str:
+        """Browser-facing authorization endpoint."""
+        if self.keycloak_authorization_uri:
+            return self.keycloak_authorization_uri
+        return f"{self.keycloak_issuer.rstrip('/')}/protocol/openid-connect/auth"
+
+    @property
+    def keycloak_token_endpoint(self) -> str:
+        """Back-channel token endpoint (internal URL in Compose)."""
+        if self.keycloak_token_uri:
+            return self.keycloak_token_uri
+        return f"{self.keycloak_issuer.rstrip('/')}/protocol/openid-connect/token"
+
+    @property
+    def keycloak_end_session_endpoint(self) -> str:
+        """Browser-facing RP-initiated logout endpoint."""
+        if self.keycloak_end_session_uri:
+            return self.keycloak_end_session_uri
+        return f"{self.keycloak_issuer.rstrip('/')}/protocol/openid-connect/logout"
 
     @property
     def vault_key_bytes(self) -> bytes:

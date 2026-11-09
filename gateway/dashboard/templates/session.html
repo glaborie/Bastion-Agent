@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Session {{ session_id | short_hash(12) }}{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Session inspector</h1>
+    <p><code>{{ session_id }}</code></p>
+  </hgroup>
+
+  <p>
+    <small>
+      {{ events | length }} audit record(s), oldest first ·
+      <a href="/dashboard/audit?session_id={{ session_id | urlencode }}">open in the audit ledger</a>
+    </small>
+  </p>
+
+  {% if events %}
+    <ol class="timeline">
+      {% for event in events %}
+        <li>
+          <article>
+            <header>
+              <strong>{{ event.event_type }}</strong>
+              <small>{{ event.timestamp | utc_ts }}</small>
+            </header>
+            <p>
+              <small>
+                actor <code>{{ event.actor_id }}</code> ·
+                record <code title="{{ event.record_hash }}">{{ event.record_hash | short_hash(16) }}</code>
+              </small>
+            </p>
+            <details>
+              <summary>Payload hash &amp; metadata</summary>
+              <pre>{{ {"payload_hash": event.payload_hash, "previous_hash": event.previous_hash, "metadata": event.metadata_json} | tojson(indent=2) }}</pre>
+            </details>
+          </article>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <article>
+      <p>No audit records exist for this session.</p>
+    </article>
+  {% endif %}
+{% endblock %}

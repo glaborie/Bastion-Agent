@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Command Control{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Command Control</h1>
+    <p>Four-eyes approvals, audit integrity and evaluation health.</p>
+  </hgroup>
+
+  {% if error %}
+    <article class="alert" role="alert">{{ error }}</article>
+  {% endif %}
+
+  <section class="grid metric-grid">
+    <article>
+      <header><small>Pending approvals</small></header>
+      <p class="metric">{{ pending_count }}</p>
+      <footer>
+        <small>Queue refreshed every 3 seconds</small>
+      </footer>
+    </article>
+
+    {% include "partials/eval_status.html" %}
+
+    <article>
+      <header><small>Audit chain</small></header>
+      <p class="metric metric-small">Hash-chained and append-only</p>
+      <form hx-post="/api/audit/verify"
+            hx-target="#verify-result"
+            hx-swap="innerHTML"
+            hx-indicator="#verify-spinner">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
+        <button type="submit" class="secondary">Verify chain</button>
+        <span id="verify-spinner" class="htmx-indicator" aria-busy="true"></span>
+      </form>
+      <div id="verify-result" aria-live="polite"></div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Approval queue</h2>
+    <p>
+      <small>
+        Write tools suspend until a second operator decides the ticket.
+        The initiator can never approve their own action (ADR-003).
+      </small>
+    </p>
+    {% include "partials/approval_table.html" %}
+  </section>
+{% endblock %}

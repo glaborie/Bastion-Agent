@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+  <article class="error-page" role="alert">
+    <header><strong>{{ title }}</strong></header>
+    <p>{{ detail }}</p>
+    <footer>
+      <a href="/dashboard" role="button">Back to Command Control</a>
+    </footer>
+  </article>
+{% endblock %}

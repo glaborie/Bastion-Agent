@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Audit ledger{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Audit ledger</h1>
+    <p>Append-only, hash-chained records. Metadata never contains raw PII.</p>
+  </hgroup>
+
+  <form method="get" action="/dashboard/audit" class="filter-form">
+    <div class="grid">
+      <label>
+        Event type
+        <select name="event_type">
+          <option value="">All events</option>
+          {% for value, label in event_types %}
+            <option value="{{ value }}" {% if filters.event_type == value %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Actor
+        <input type="search" name="actor_id" value="{{ filters.actor_id or '' }}"
+               placeholder="subject or substring" maxlength="128">
+      </label>
+      <label>
+        Session
+        <input type="search" name="session_id" value="{{ filters.session_id or '' }}"
+               placeholder="exact session id" maxlength="128">
+      </label>
+      <label>
+        &nbsp;
+        <button type="submit">Filter</button>
+      </label>
+    </div>
+  </form>
+
+  <article>
+    <header class="row-between">
+      <strong>Integrity verification</strong>
+      <button hx-post="/api/audit/verify"
+              hx-target="#verify-result"
+              hx-swap="innerHTML"
+              class="secondary">Verify chain</button>
+    </header>
+    <div id="verify-result" aria-live="polite">
+      <small>Recomputes every record hash and link. A tampered row is named by id.</small>
+    </div>
+  </article>
+
+  {% include "partials/audit_table.html" %}
+{% endblock %}

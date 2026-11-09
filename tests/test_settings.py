@@ -47,10 +47,28 @@ def test_production_rejects_development_secrets() -> None:
             approval_hmac_secret=DEV_APPROVAL_HMAC_SECRET,
         )
 
+    with pytest.raises(ValidationError, match="KEYCLOAK_CLIENT_SECRET"):
+        make_settings(
+            environment="production",
+            vault_master_key=rotated_key,
+            approval_hmac_secret="rotated-production-hmac-secret",
+            session_cookie_secure=True,
+        )
+
+    with pytest.raises(ValidationError, match="SESSION_COOKIE_SECURE"):
+        make_settings(
+            environment="production",
+            vault_master_key=rotated_key,
+            approval_hmac_secret="rotated-production-hmac-secret",
+            keycloak_client_secret="rotated-production-client-secret",
+        )
+
     hardened = make_settings(
         environment="production",
         vault_master_key=rotated_key,
         approval_hmac_secret="rotated-production-hmac-secret",
+        keycloak_client_secret="rotated-production-client-secret",
+        session_cookie_secure=True,
     )
     assert hardened.environment == "production"
 

@@ -1,0 +1,140 @@
+:root {
+  --bastion-radius: 0.5rem;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+main.container {
+  flex: 1;
+}
+
+.operator-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block-end: 0.75rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.operator-bar span {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.inline-form {
+  margin: 0;
+}
+
+.metric-grid article {
+  margin-bottom: 0;
+}
+
+.metric {
+  font-size: 2.25rem;
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 0.25rem 0;
+}
+
+.metric-small {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--bastion-radius);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge-ok {
+  background: #1b7f4b;
+  color: #fff;
+}
+
+.badge-bad {
+  background: #a4161a;
+  color: #fff;
+}
+
+.alert {
+  border-left: 4px solid #a4161a;
+  background: color-mix(in srgb, #a4161a 10%, transparent);
+  padding: 0.75rem 1rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  font-size: 0.9rem;
+}
+
+pre {
+  max-height: 20rem;
+  overflow: auto;
+  font-size: 0.75rem;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.filter-form {
+  margin-bottom: 1rem;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.timeline {
+  list-style: none;
+  padding-left: 1.25rem;
+  border-left: 2px solid var(--pico-muted-border-color);
+}
+
+.timeline li {
+  margin-bottom: 1rem;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.muted {
+  color: var(--pico-muted-color);
+}
+
+.error-page {
+  max-width: 40rem;
+  margin: 4rem auto;
+}
+
+.htmx-indicator {
+  display: none;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  display: inline;
+}

@@ -1,0 +1,83 @@
+<div id="approvals"
+     hx-get="/api/approvals"
+     hx-trigger="every 3s"
+     hx-swap="outerHTML"
+     aria-live="polite">
+  {% if approval_error %}
+    <article class="alert" role="alert">{{ approval_error }}</article>
+  {% endif %}
+  {% if approval_notice %}
+    <article class="notice" role="status">{{ approval_notice }}</article>
+  {% endif %}
+
+  {% if approvals %}
+    <div class="table-scroll">
+      <table role="grid">
+        <thead>
+          <tr>
+            <th scope="col">Ticket</th>
+            <th scope="col">Tool</th>
+            <th scope="col">Arguments</th>
+            <th scope="col">Initiator</th>
+            <th scope="col">Role</th>
+            <th scope="col">Expires</th>
+            <th scope="col">Decision</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for approval in approvals %}
+            <tr>
+              <td><code title="{{ approval.ticket_id }}">{{ approval.ticket_id | short_hash(8) }}</code></td>
+              <td>{{ approval.tool_name }}</td>
+              <td>
+                <details>
+                  <summary>{{ approval.argument_count }} field(s)</summary>
+                  <pre>{{ approval.tool_arguments | tojson(indent=2) }}</pre>
+                </details>
+              </td>
+              <td>
+                <code title="{{ approval.initiator_id }}">{{ approval.initiator_id | short_hash(8) }}</code>
+                {% if approval.initiator_id == principal.subject %}
+                  <br><mark>you</mark>
+                {% endif %}
+              </td>
+              <td><small>{{ approval.required_role }}</small></td>
+              <td>
+                <small>{{ approval.expires_in }}</small>
+              </td>
+              <td>
+                {% if approval.initiator_id == principal.subject %}
+                  <small class="muted">
+                    Four-eyes: a second operator must decide this ticket.
+                  </small>
+                {% elif approval.expired %}
+                  <small class="muted">expired</small>
+                {% elif not approval.decidable %}
+                  <small class="muted">{{ approval.status }}</small>
+                {% else %}
+                  <form hx-post="/api/approvals/{{ approval.ticket_id }}/action"
+                        hx-target="#approvals"
+                        hx-swap="outerHTML"
+                        method="post"
+                        action="/api/approvals/{{ approval.ticket_id }}/action">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
+                    <input type="text" name="reason" maxlength="1024"
+                           placeholder="Reason (optional)" aria-label="Decision reason">
+                    <div class="button-row">
+                      <button type="submit" name="action" value="approve">Approve</button>
+                      <button type="submit" name="action" value="reject" class="secondary">Reject</button>
+                    </div>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <article>
+      <p>No tickets are waiting for approval.</p>
+    </article>
+  {% endif %}
+</div>

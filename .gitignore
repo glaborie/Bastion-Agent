@@ -29,3 +29,7 @@ docker-compose.override.yml
 
 # --- Evaluations -------------------------------------------------------------
 .eval_reports/
+
+# --- Evaluation reports -----------------------------------------------------
+artifacts/evals/*
+!artifacts/evals/.gitkeep

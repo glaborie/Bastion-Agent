@@ -64,10 +64,123 @@ uv run python scripts/omniroute_bootstrap.py --write-env
 docker compose up -d --no-deps gateway worker   # only needed if a key was written
 
 # 6. Access Command Control Center
-# Gateway & Dashboard: http://localhost:8000/dashboard
+# Gateway & Dashboard: http://localhost:8000/dashboard  (Keycloak SSO)
 # Health / readiness:  http://localhost:8000/health, /health/ready
 # Keycloak SSO:        http://localhost:8080
 # OmniRoute:           http://localhost:8001
+```
+
+---
+
+## Authentication & Command Control Center (Milestone 2)
+
+Keycloak imports the `bastion` realm from `config/keycloak/realm-export.json`
+on first start. It defines four roles (`admin`, `operator`, `analyst`,
+`readonly`), the confidential `bastion-gateway` client used by the dashboard,
+and a public `bastion-cli` client for password-grant command-line access.
+
+### Development identities
+
+All seeded accounts share the password **`Bastion-dev-2026!`** — a committed,
+dev-only credential. Rotate or delete these users before exposing the stack.
+
+| User | Realm roles | Purpose |
+|------|-------------|---------|
+| `admin` | `admin` | Break-glass superset (satisfies every requirement) |
+| `alice` | `operator` | Initiator of the demo write requests |
+| `bob` | `operator`, `analyst` | The second operator who decides tickets |
+| `carol` | `analyst` | Read/analysis only; dashboard is forbidden |
+| `dave` | `readonly` | API read-only; dashboard is forbidden |
+
+Open **`http://localhost:8000/dashboard`** in a browser (use `localhost`, not
+`127.0.0.1`, because the registered redirect URI and Keycloak's secure cookies
+are scoped to that host). The gateway redirects to Keycloak, then creates a
+server-side session in Redis. The browser only holds an opaque, `HttpOnly`,
+`SameSite=Lax` cookie — access and refresh tokens never leave the server. The
+access token is refreshed back-channel, so a 5-minute Keycloak token does not
+log an operator out mid-incident.
+
+### API access with a Bearer token
+
+The gateway accepts the same RS256 token on `/api/*` and `/auth/me`:
+
+```bash
+TOKEN=$(curl -s -X POST \
+  http://localhost:8080/realms/bastion/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=bastion-cli \
+  -d username=bob -d password='Bastion-dev-2026!' \
+  -d scope='openid profile email' | jq -r .access_token)
+
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/auth/me
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/approvals
+```
+
+### Seeding a four-eyes ticket
+
+Until the ARQ worker lands in Milestone 4, the seed script writes the same
+suspended-ticket row and `APPROVAL_REQUESTED` audit event the worker will
+produce:
+
+```bash
+# alice's Keycloak subject id (the initiator who must not approve)
+ALICE_SUB=$(curl -s -H "Authorization: Bearer $ALICE_TOKEN" \
+  http://localhost:8000/auth/me | jq -r .subject)
+uv run python scripts/seed_demo_approval.py --initiator-id "$ALICE_SUB"
+```
+
+Approve it as `bob`; the dashboard disables the buttons for `alice` and the
+server returns `403` if she tries anyway. Every decision appends
+`APPROVAL_GRANTED` / `APPROVAL_REJECTED` to the audit chain in the same
+transaction, with a hash of the free-text reason (never the text itself).
+
+### Routes
+
+| Method | Path | Access |
+|--------|------|--------|
+| GET | `/dashboard` | operator or admin |
+| GET | `/dashboard/audit` | operator or admin (filter + cursor paging) |
+| GET | `/dashboard/sessions/{id}` | operator or admin (audit timeline) |
+| GET | `/api/approvals` | operator or admin; JSON, or HTML with `HX-Request: true` |
+| POST | `/api/approvals/{id}/action` | operator or admin + CSRF (cookie auth) |
+| GET | `/api/audit` | operator or admin (JSON/HTML, cursor paging) |
+| POST | `/api/audit/verify` | operator or admin + CSRF; full chain verification |
+| GET | `/api/sessions/{id}/timeline` | operator or admin |
+| GET | `/api/evals/latest` | operator or admin |
+| GET | `/auth/login`, `/auth/callback`, `/auth/logout` | public flow / session |
+| GET | `/auth/me` | any authenticated identity |
+
+### Evaluation health card
+
+`GET /api/evals/latest` reads `EVAL_REPORT_PATH`
+(default `artifacts/evals/latest.json`, mounted read-only into the gateway).
+The Milestone 6 harness writes:
+
+```json
+{
+  "run_id": "2026-11-09T13:00:00Z-abc123",
+  "started_at": "2026-11-09T13:00:00Z",
+  "finished_at": "2026-11-09T13:00:42Z",
+  "total": 27,
+  "passed": 27,
+  "failed": 0,
+  "metrics": {"DLPRedactionMetric": 1.0, "EgressCanaryMetric": 1.0},
+  "git_sha": "9d1d5a9"
+}
+```
+
+A missing, malformed or >24h-old report is shown as "not run yet" / stale; the
+dashboard never invents a green result.
+
+### Realm changes
+
+Keycloak imports with the `IGNORE_EXISTING` strategy, so editing
+`realm-export.json` does not update a realm that already exists. For a clean
+re-import (this deletes Keycloak's state, not the audit ledger):
+
+```bash
+docker compose down keycloak
+docker volume rm bastion-agent_keycloak_data
+docker compose up -d keycloak
 ```
 
 `./models` is bind-mounted read-only at `/models` inside the `llama-cpp`
@@ -97,6 +210,7 @@ uv run arq agent.runtime.WorkerSettings
 ```bash
 uv run ruff check .          # lint
 uv run mypy settings.py logging_setup.py db gateway agent
+uv run python scripts/check_adrs.py
 uv run pytest -m "not integration"   # unit tests (no database required)
 ```
 
@@ -186,7 +300,10 @@ is accounted for. If you see CUDA out-of-memory errors, lower
   address (never `*`).
 - **Capabilities** — all services run with `no-new-privileges` and
   `cap_drop: [ALL]`. `db` and `redis` add back only the capabilities their
-  entrypoints need to drop privileges (`CHOWN`, `SETUID`, `SETGID`, …).
+  entrypoints need to drop privileges (`CHOWN`, `SETUID`, `SETGID`, …). Redis
+  also keeps `DAC_OVERRIDE` so its entrypoint can inspect a `redis`-owned
+  `/data` before dropping privileges; `redis-server` itself runs as the
+  unprivileged `redis` user.
 - **Image pinning** — third-party images are pinned by tag **and** digest.
   Refresh with `docker buildx imagetools inspect <image>` and update the digest.
   The locally built `rigging/omniroute` image keeps its tag (no registry digest).
@@ -200,6 +317,19 @@ is accounted for. If you see CUDA out-of-memory errors, lower
   Toolkit and a Compose runtime that supports device reservations. On a
   CPU-only host use the `server` image, set `LLAMA_N_GPU_LAYERS=0`, and remove
   that reservation block.
+
+### `redis` is unhealthy with `MISCONF Redis is configured to save RDB snapshots` or `Permission denied`
+
+A `/data` directory that was previously written by a root-owned `redis-server`
+can leave files that the unprivileged `redis` user cannot replace. The compose
+command now passes `redis-server` directly so the image entrypoint chowns
+`/data` and drops privileges; for a volume created by an older revision, repair
+the ownership once:
+
+```bash
+docker exec -u 0 bastion-redis chown -R redis:redis /data
+docker compose restart redis
+```
 
 ### `ports are not available: /forwards/expose returned unexpected status: 500` (WSL2 + Docker Desktop)
 

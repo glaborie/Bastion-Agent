@@ -1,0 +1,56 @@
+<div id="audit-results" aria-live="polite">
+  {% if records %}
+    <div class="table-scroll">
+      <table role="grid">
+        <thead>
+          <tr>
+            <th scope="col">ID</th>
+            <th scope="col">Timestamp (UTC)</th>
+            <th scope="col">Event</th>
+            <th scope="col">Actor</th>
+            <th scope="col">Session</th>
+            <th scope="col">Payload hash</th>
+            <th scope="col">Previous hash</th>
+            <th scope="col">Metadata</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for record in records %}
+            <tr>
+              <td>{{ record.id }}</td>
+              <td><small>{{ record.timestamp | utc_ts }}</small></td>
+              <td><small>{{ record.event_type }}</small></td>
+              <td><code title="{{ record.actor_id }}">{{ record.actor_id | short_hash(10) }}</code></td>
+              <td>
+                {% if record.session_id %}
+                  <a href="/dashboard/sessions/{{ record.session_id }}"
+                     title="{{ record.session_id }}">{{ record.session_id | short_hash(10) }}</a>
+                {% else %}
+                  <small>—</small>
+                {% endif %}
+              </td>
+              <td><code title="{{ record.payload_hash }}">{{ record.payload_hash | short_hash(12) }}</code></td>
+              <td><code title="{{ record.previous_hash }}">{{ record.previous_hash | short_hash(12) }}</code></td>
+              <td>
+                <details>
+                  <summary>view</summary>
+                  <pre>{{ record.metadata_json | tojson(indent=2) }}</pre>
+                </details>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <footer class="pager">
+      <small>{{ records | length }} record(s) on this page</small>
+      {% if next_url %}
+        <a href="{{ next_url }}" role="button" class="secondary outline">Older records →</a>
+      {% endif %}
+    </footer>
+  {% else %}
+    <article>
+      <p>No audit records match those filters.</p>
+    </article>
+  {% endif %}
+</div>

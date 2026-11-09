@@ -1,29 +1,59 @@
 """FastAPI application entrypoint for the Bastion-Agent gateway.
 
-Milestone 1 wires the health probes and the database lifecycle. Authentication,
-the HTMX Command Control Center and the chat API are added by later milestones.
+Wires authentication, the Command Control Center, the approval queue and the
+audit ledger around the health probes from Milestone 1.
 """
 
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler as default_http_exception_handler
+from fastapi.responses import RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from db.session import dispose_engine, init_models
-from gateway.routers import health
+from gateway.auth.rbac import shutdown_auth
+from gateway.auth.session import safe_next_path
+from gateway.dashboard.routes import router as dashboard_router
+from gateway.dashboard.templating import render_error
+from gateway.routers import approvals, audit, auth, evals, health
+from gateway.web import is_htmx
 from logging_setup import configure_logging
 from settings import get_settings
 from telemetry import configure_tracing, instrument_app, shutdown_tracing
 
 logger = logging.getLogger(__name__)
 
+STATIC_DIR = Path(__file__).resolve().parent / "dashboard" / "static"
+
+_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "base-uri 'none'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'self'; "
+    "script-src 'self'; "
+    # htmx toggles inline style properties while swapping fragments; scripts stay
+    # strictly first-party and no inline <script> is allowed.
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "font-src 'self'; "
+    "connect-src 'self'"
+)
+
+_NO_STORE_PREFIXES = ("/dashboard", "/api", "/auth")
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Boot the persistence layer and tear it down cleanly."""
+    """Boot the persistence layer and tear everything down cleanly."""
     configure_logging(get_settings().log_level)
     logger.info(
         "Starting Bastion-Agent gateway",
@@ -37,6 +67,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         shutdown_tracing()
+        await shutdown_auth()
         await dispose_engine()
         logger.info("Bastion-Agent gateway stopped")
 
@@ -55,8 +86,68 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.environment != "production" else None,
         redoc_url=None,
         lifespan=lifespan,
+        openapi_tags=[
+            {"name": "health", "description": "Liveness and readiness probes."},
+            {"name": "auth", "description": "OIDC login, session and identity endpoints."},
+            {"name": "approvals", "description": "Four-eyes approval queue."},
+            {"name": "audit", "description": "Hash-chained audit ledger."},
+            {"name": "evals", "description": "DeepEval regression health."},
+        ],
     )
+
     app.include_router(health.router)
+    app.include_router(auth.router)
+    app.include_router(approvals.router)
+    app.include_router(audit.router)
+    app.include_router(evals.router)
+    app.include_router(dashboard_router)
+
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response: Response = await call_next(request)
+        response.headers.setdefault("Content-Security-Policy", _CONTENT_SECURITY_POLICY)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
+        if request.url.path.startswith(_NO_STORE_PREFIXES):
+            response.headers.setdefault("Cache-Control", "no-store")
+        if request.url.scheme == "https":
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(request: Request, exc: StarletteHTTPException) -> Response:
+        path = request.url.path
+        if exc.status_code == 401 and path == "/auth/logout":
+            # The session already expired; clearing the cookie is the useful
+            # outcome, and the operator lands back on a public page.
+            response = RedirectResponse("/", status_code=303)
+            response.delete_cookie(get_settings().session_cookie_name, path="/")
+            return response
+        if exc.status_code == 401:
+            target = path + (f"?{request.url.query}" if request.url.query else "")
+            login_url = "/auth/login?next=" + urllib.parse.quote(safe_next_path(target), safe="")
+            if is_htmx(request):
+                # A 3xx would be followed by XHR and render the login page into
+                # the fragment; ask htmx to navigate instead.
+                return Response(status_code=401, headers={"HX-Redirect": login_url})
+            if path.startswith("/dashboard") or path == "/":
+                return RedirectResponse(login_url, status_code=303)
+        if exc.status_code == 403 and path.startswith("/dashboard"):
+            return render_error(
+                request,
+                title="Not authorized",
+                detail="This dashboard requires the operator or admin role.",
+                status_code=403,
+            )
+        return await default_http_exception_handler(request, exc)
 
     configure_tracing(settings)
     instrument_app(app)

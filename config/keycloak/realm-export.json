@@ -1,0 +1,217 @@
+{
+  "realm": "bastion",
+  "enabled": true,
+  "displayName": "Bastion-Agent",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 10,
+  "passwordPolicy": "length(12) and notUsername",
+  "accessTokenLifespan": 300,
+  "accessCodeLifespan": 60,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 36000,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "internationalizationEnabled": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Break-glass operator: satisfies every role requirement.",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "operator",
+        "description": "Can request mutating tools and decide four-eyes tickets.",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "analyst",
+        "description": "Read and analysis access without mutating tools.",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "readonly",
+        "description": "API read-only access; no dashboard access.",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "bastion-gateway",
+      "name": "Bastion-Agent Gateway",
+      "description": "Confidential client used by the dashboard authorization-code flow.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dev-only-keycloak-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "consentRequired": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:8000/auth/callback",
+        "http://127.0.0.1:8000/auth/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8000/*##http://127.0.0.1:8000/*",
+        "access.token.lifespan": "300"
+      },
+      "protocolMappers": [
+        {
+          "name": "bastion-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "bastion-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "bastion-cli",
+      "name": "Bastion-Agent CLI (development)",
+      "description": "Public client for password-grant smoke tests and command-line clients. Disable outside local development.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "consentRequired": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "bastion-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "bastion-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Break-glass",
+      "lastName": "Admin",
+      "email": "admin@bastion.local",
+      "requiredActions": [],
+      "realmRoles": ["admin"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Bastion-dev-2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Operator",
+      "email": "alice@bastion.local",
+      "requiredActions": [],
+      "realmRoles": ["operator"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Bastion-dev-2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Approver",
+      "email": "bob@bastion.local",
+      "requiredActions": [],
+      "realmRoles": ["operator", "analyst"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Bastion-dev-2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Analyst",
+      "email": "carol@bastion.local",
+      "requiredActions": [],
+      "realmRoles": ["analyst"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Bastion-dev-2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "dave",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Dave",
+      "lastName": "Readonly",
+      "email": "dave@bastion.local",
+      "requiredActions": [],
+      "realmRoles": ["readonly"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Bastion-dev-2026!",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
