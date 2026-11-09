@@ -279,6 +279,19 @@ Then the safety guard's aggregate `unsafe >= 0.5` routes `unsafe_content`, and
 maximum score wins. Both guards fail closed: any inference error or malformed
 output yields `CONFIDENTIAL`.
 
+The deterministic rule classifier stays active as a **floor** in the ensemble:
+explicit markings, board/HR/finance material, technical IP and customer data
+are `CONFIDENTIAL` even though a content-safety model scores them as harmless.
+The floor is evaluated after the model verdict and can only add `CONFIDENTIAL`
+decisions; `CLASSIFIER_RULES_FLOOR=false` disables it for evaluation runs.
+
+Demo the whole thing with:
+
+```bash
+uv run python scripts/demo_classifier.py
+uv run python scripts/demo_classifier.py --no-rules-floor "strictly confidential"
+```
+
 The models are mounted at `/app/models:ro` on `gateway` and `worker`; download
 them with the commands in `.env.example`. Their SHA-256 digests are pinned there
 and verified before a session opens.

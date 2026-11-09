@@ -225,6 +225,27 @@ def test_ensemble_wiring_routes_through_the_decision_table() -> None:
     assert classifier_.model_name == "ensemble"
 
 
+def test_ensemble_keeps_explicit_markings_confidential() -> None:
+    """The safety model scores "board minutes" as harmless; the rules must not."""
+    classifier_ = SensitivityClassifier(
+        injection_predictor=_InjectionStub(0.0),
+        safety_predictor=_SafetyStub(_clean()),
+    )
+    result = classifier_.classify("This is strictly confidential: the board minutes are attached.")
+    assert result.label is Sensitivity.CONFIDENTIAL
+    assert result.model == "semantic-rules"
+    assert "explicit_marking" in result.matched
+
+
+def test_rules_floor_can_be_disabled() -> None:
+    classifier_ = SensitivityClassifier(
+        injection_predictor=_InjectionStub(0.0),
+        safety_predictor=_SafetyStub(_clean()),
+        rules_floor=False,
+    )
+    assert classifier_.classify("This is strictly confidential.").label is Sensitivity.PUBLIC
+
+
 def test_injection_error_fails_closed() -> None:
     classifier_ = SensitivityClassifier(
         injection_predictor=_InjectionStub(RuntimeError("cuda oom")),
@@ -373,6 +394,10 @@ def test_real_ensemble_separates_injection_privacy_and_public_prompts() -> None:
     )
     assert privacy.label is Sensitivity.CONFIDENTIAL
     assert privacy.reason in {"privacy_risk", "unsafe_content"}
+
+    marked = classifier_.classify("This is strictly confidential: the board minutes are attached.")
+    assert marked.label is Sensitivity.CONFIDENTIAL
+    assert marked.model == "semantic-rules"
 
     public = classifier_.classify("Write a haiku about the sea.")
     assert public.label is Sensitivity.PUBLIC

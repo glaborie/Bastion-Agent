@@ -152,6 +152,12 @@ class Settings(BaseSettings):
     #: operator cannot silently run a different quantisation.
     classifier_injection_model_sha256: str | None = None
     classifier_safety_model_sha256: str | None = None
+    #: Keep the deterministic rule classifier as a floor when the ensemble is
+    #: active. The safety model detects harmful content, not corporate
+    #: confidentiality markings ("strictly confidential", board minutes,
+    #: compensation), so disabling this lets explicitly marked material take the
+    #: cloud path. It can only add CONFIDENTIAL decisions, never remove one.
+    classifier_rules_floor: bool = True
 
     # -- HITL approvals ----------------------------------------------------
     approval_hmac_secret: SecretStr = SecretStr(DEV_APPROVAL_HMAC_SECRET)

@@ -418,6 +418,7 @@ class SensitivityClassifier:
         safety_model_sha256: str | None = None,
         injection_predictor: _InjectionPredictor | None = None,
         safety_predictor: _SafetyPredictor | None = None,
+        rules_floor: bool = True,
         require_models: bool = False,
     ) -> None:
         settings = get_settings()
@@ -444,6 +445,7 @@ class SensitivityClassifier:
 
         self._injection = injection_predictor
         self._safety = safety_predictor
+        self._rules_floor = rules_floor
         if self._injection is None and injection_model_path is not None:
             self._injection = _OnnxInjectionModel(
                 self._build_graph(
@@ -528,7 +530,15 @@ class SensitivityClassifier:
                 model="ensemble",
                 reason="classifier_error",
             )
-        return decide_ensemble(injection_probability, safety_scores, self._thresholds)
+        decision = decide_ensemble(injection_probability, safety_scores, self._thresholds)
+        if decision.is_confidential or not self._rules_floor:
+            return decision
+        # Deterministic floor: the safety guard models harm, not corporate
+        # secrecy, so "strictly confidential: board minutes" scores as harmless
+        # content. Explicit markings and domain markers must never depend on a
+        # learned notion of harm. The rules can only add CONFIDENTIAL.
+        rule_decision = self._classify_rules(text)
+        return rule_decision if rule_decision.is_confidential else decision
 
     @staticmethod
     def _build_graph(
@@ -729,5 +739,6 @@ def get_classifier() -> SensitivityClassifier:
         safety_category_threshold=settings.classifier_safety_category_threshold,
         injection_model_sha256=settings.classifier_injection_model_sha256,
         safety_model_sha256=settings.classifier_safety_model_sha256,
+        rules_floor=settings.classifier_rules_floor,
         require_models=settings.environment != "local",
     )
