@@ -24,7 +24,10 @@ dependencies = [
     "httpx>=0.27.2,<1.0.0",
     # --- Security: OIDC, AES-256-GCM vault, HMAC tokens --------------------
     "pyjwt[crypto]>=2.9.0,<3.0.0",
-    "cryptography>=43.0.0,<46.0.0",
+    # 50.x is the first line with no open OSV advisories for this package; every
+    # release up to 49.0.0 still carries the 4 HIGH findings (see
+    # docs/THREAT_MODEL.md). Keep the major bounded and re-audit on upgrade.
+    "cryptography>=50.0.2,<51.0.0",
     # --- DLP: deterministic entity detection & anonymisation --------------
     "presidio-analyzer>=2.2.355,<3.0.0",
     "presidio-anonymizer>=2.2.355,<3.0.0",
