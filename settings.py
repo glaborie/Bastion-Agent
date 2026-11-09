@@ -66,6 +66,10 @@ class Settings(BaseSettings):
 
     # -- Two-stage classifier ---------------------------------------------
     classifier_model_path: str | None = None
+    #: Minimum confidence for the CONFIDENTIAL label. Prompts at or above it are
+    #: routed to local inference; borderline results are deliberately treated as
+    #: PUBLIC (cloud-primary) to reserve scarce GPU capacity — the threshold is
+    #: the control point for that cost trade-off.
     classifier_confidence_threshold: float = 0.55
 
     # -- HITL approvals ----------------------------------------------------
