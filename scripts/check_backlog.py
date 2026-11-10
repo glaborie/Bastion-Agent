@@ -149,7 +149,7 @@ def find_cycle(graph: dict[str, list[str]]) -> list[str] | None:
     def visit(node: str) -> list[str] | None:
         status = state.get(node, 0)
         if status == 1:
-            return stack[stack.index(node):] + [node]
+            return [*stack[stack.index(node) :], node]
         if status == 2:
             return None
         state[node] = 1
@@ -214,7 +214,9 @@ def validate(text: str) -> tuple[dict[str, str], list[Item], list[str], list[str
         if item.status and item.status not in STATUSES:
             errors.append(f"{where}: status '{item.status}' is not one of {', '.join(STATUSES)}")
         if item.priority and item.priority not in PRIORITIES:
-            errors.append(f"{where}: priority '{item.priority}' is not one of {', '.join(PRIORITIES)}")
+            errors.append(
+                f"{where}: priority '{item.priority}' is not one of {', '.join(PRIORITIES)}"
+            )
         if item.phase and item.phase not in PHASES:
             errors.append(f"{where}: phase '{item.phase}' is not one of {', '.join(PHASES)}")
         area = item.fields.get("area", "")
@@ -236,7 +238,9 @@ def validate(text: str) -> tuple[dict[str, str], list[Item], list[str], list[str
 
         spec = item.fields.get("spec", "")
         if spec and not SPEC_RE.match(spec):
-            errors.append(f"{where}: spec '{spec}' must be ADR-NNN, ADR-Index, HANDOVER_SPEC or '-'")
+            errors.append(
+                f"{where}: spec '{spec}' must be ADR-NNN, ADR-Index, HANDOVER_SPEC or '-'"
+            )
 
         created_raw = item.fields.get("created", "")
         updated_raw = item.fields.get("updated", "")
@@ -269,7 +273,8 @@ def validate(text: str) -> tuple[dict[str, str], list[Item], list[str], list[str
 
         if item.status in ("ready", "active"):
             unresolved = [
-                dep for dep in item.deps
+                dep
+                for dep in item.deps
                 if next((other.status for other in items if other.id == dep), "missing")
                 not in DONE_STATES
             ]
@@ -315,7 +320,7 @@ def validate(text: str) -> tuple[dict[str, str], list[Item], list[str], list[str
         titles[normalized] = item.id
 
     for index, item in enumerate(items):
-        for other in items[index + 1:]:
+        for other in items[index + 1 :]:
             if normalize_title(item.title) == normalize_title(other.title):
                 continue
             ratio = difflib.SequenceMatcher(
@@ -370,7 +375,9 @@ def render_board(meta: dict[str, str], items: list[Item]) -> str:
                 )
         lines.append("")
     phase = meta.get("current-phase", "?")
-    lines.append(f"_Phase gate: {phase} - items at or below it may start; later phases stay parked._")
+    lines.append(
+        f"_Phase gate: {phase} - items at or below it may start; later phases stay parked._"
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -402,7 +409,9 @@ def ready_items(meta: dict[str, str], items: list[Item]) -> list[Item]:
     for item in items:
         if item.status != "ready":
             continue
-        if item.deps and any(by_id[dep].status not in DONE_STATES for dep in item.deps if dep in by_id):
+        if item.deps and any(
+            by_id[dep].status not in DONE_STATES for dep in item.deps if dep in by_id
+        ):
             continue
         if current_phase and item.phase > current_phase:
             continue
@@ -418,11 +427,17 @@ def print_summary(meta: dict[str, str], items: list[Item]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--file", default=None, help="path to BACKLOG.md (default: repository root)")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--file", default=None, help="path to BACKLOG.md (default: repository root)"
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--check", action="store_true", help="validate only (default)")
-    group.add_argument("--write", action="store_true", help="validate, then refresh Board and Index")
+    group.add_argument(
+        "--write", action="store_true", help="validate, then refresh Board and Index"
+    )
     group.add_argument("--next", dest="list_next", action="store_true", help="list ready items")
     parser.add_argument("--json", action="store_true", help="machine-readable output for --next")
     parser.add_argument("--quiet", action="store_true", help="suppress warnings")
@@ -471,7 +486,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("no ready items")
             for item in ready:
                 deps = ", ".join(item.deps) if item.deps else "-"
-                print(f"{item.id}  {item.priority}  {item.phase}  {item.fields.get('area', '?'):<8}  {item.title}  [deps: {deps}]")
+                area = item.fields.get("area", "?")
+                columns = (item.id, item.priority, item.phase, f"{area:<8}", item.title)
+                print("  ".join(columns) + f"  [deps: {deps}]")
         return 0
 
     if errors:
