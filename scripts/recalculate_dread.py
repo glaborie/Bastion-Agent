@@ -145,7 +145,7 @@ def render(text: str) -> tuple[str, list[str]]:
 
     ordered = sorted(enumerate(rows), key=lambda item: (-item[1].total, item[0]))
     priority = [
-        f"{rank}. {row.label} — {row.total}" for rank, (_, row) in enumerate(ordered, start=1)
+        f"{rank}. {row.label} - {row.total}" for rank, (_, row) in enumerate(ordered, start=1)
     ]
     if lines[priority_start:priority_end] != priority:
         lines[priority_start:priority_end] = priority

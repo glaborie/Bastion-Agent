@@ -248,7 +248,42 @@ Two facts shape the model:
   - PLANNED: per-principal rate limits and token or cost budgets. None are implemented.
 - Residual risk: fail-closed design is a deliberate trade. An outage of Presidio, Redis or the classifier denies service instead of degrading security.
 
-## 6. Known gaps, in priority order
+## 6. Risk scoring
+
+Scores are the author's estimates of residual risk with the controls as they exist in the repository today, 1 to 10 per factor, total is the sum. They are a prioritisation aid, not a measurement. `scripts/recalculate_dread.py --check` keeps the totals and the priority list consistent with the factors.
+
+### DREAD Scoring
+
+| Threat | Damage Potential | Reproducibility | Exploitability | Affected Users | Discoverability | **Total Score** |
+|--------|------------------|-----------------|----------------|----------------|----------------|-----------------|
+| **T1 Direct prompt injection** | 6 | 8 | 7 | 5 | 8 | **34** |
+| **T2 Indirect prompt injection** | 6 | 7 | 6 | 5 | 6 | **30** |
+| **T3 Hidden-context extraction** | 3 | 6 | 6 | 4 | 7 | **26** |
+| **T4 Sensitive data disclosure** | 8 | 6 | 5 | 7 | 6 | **32** |
+| **T5 Cross-session vault decoding** | 7 | 3 | 3 | 4 | 3 | **20** |
+| **T6 Gateway identity and privilege abuse** | 8 | 4 | 4 | 7 | 5 | **28** |
+| **T7 Tool misuse and unauthorized change** | 7 | 4 | 3 | 5 | 4 | **23** |
+| **T8 Job queue trust boundary** | 9 | 9 | 4 | 8 | 4 | **34** |
+| **T9 Approval workflow abuse** | 7 | 5 | 4 | 4 | 4 | **24** |
+| **T10 Audit tampering** | 7 | 5 | 3 | 6 | 4 | **25** |
+| **T11 Supply chain and model artifacts** | 8 | 3 | 3 | 8 | 5 | **27** |
+| **T12 Resource exhaustion** | 5 | 8 | 7 | 5 | 6 | **31** |
+
+**Risk Priority:**
+1. T1 Direct prompt injection - 34
+2. T8 Job queue trust boundary - 34
+3. T4 Sensitive data disclosure - 32
+4. T12 Resource exhaustion - 31
+5. T2 Indirect prompt injection - 30
+6. T6 Gateway identity and privilege abuse - 28
+7. T11 Supply chain and model artifacts - 27
+8. T3 Hidden-context extraction - 26
+9. T10 Audit tampering - 25
+10. T9 Approval workflow abuse - 24
+11. T7 Tool misuse and unauthorized change - 23
+12. T5 Cross-session vault decoding - 20
+
+## 7. Known gaps, in priority order
 
 1. Close T8: authenticate queued jobs and isolate Redis.
 2. Run `pytest` and `scripts/run_evals.py` in CI and fail the build below threshold. The README states that evals gate merges, and CI does not do that yet.
@@ -259,7 +294,7 @@ Two facts shape the model:
 7. Wire the OSV script into CI and add an SBOM (T11).
 8. Replace development secrets with a secret-manager integration (T4, T6).
 
-## 7. Verification
+## 8. Verification
 
 ```bash
 uv run pytest                                  # unit and contract tests
@@ -267,6 +302,7 @@ uv run python scripts/run_evals.py             # golden gates, writes artifacts/
 uv run python scripts/verify_audit_chain.py    # recompute the audit hash chain
 uv run python scripts/validate_tool_catalog.py --check
 uv run python scripts/update_threat_intel.py   # OSV audit of uv.lock
+uv run python scripts/recalculate_dread.py --check
 ```
 
 Update this document in the same commit as any change to a control, and keep the status column in section 4 in step with the code.
