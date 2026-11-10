@@ -72,6 +72,87 @@ def test_no_tests_at_all_is_red() -> None:
     assert summary.total == summary.failed
 
 
+def test_a_dispatch_anomaly_exempts_a_skipped_gate() -> None:
+    summary = summarise(
+        {
+            "tests/test_dlp_evals.py::test_a": "passed",
+            "tests/test_egress_evals.py::test_c": "passed",
+            "tests/test_classifier_evals.py::test_d": "skipped",
+        },
+        started_at=STARTED,
+        finished_at=FINISHED,
+        git_sha="a" * 40,
+        run_id="run-exempt",
+        exempt_gates={"ClassifierGoldenGate": "dispatch_anomaly"},
+    )
+    assert summary.failed == 0
+    assert summary.metrics["ClassifierGoldenGate"] == 1.0
+    assert summary.exempt_gates == {"ClassifierGoldenGate": "dispatch_anomaly"}
+    assert summary.as_report()["exempt_gates"] == {"ClassifierGoldenGate": "dispatch_anomaly"}
+    assert EvalRunSummary.model_validate(summary.as_report()).status == "passed"
+
+
+def test_a_mixed_gate_records_the_exemption() -> None:
+    """The classifier module keeps model-free tests, so a pass and a skip mix.
+
+    The exemption must still be published — otherwise the report shows a full
+    green gate while the two ratio assertions never ran.
+    """
+    summary = summarise(
+        {
+            "tests/test_dlp_evals.py::test_a": "passed",
+            "tests/test_egress_evals.py::test_c": "passed",
+            "tests/test_classifier_evals.py::test_corpus": "passed",
+            "tests/test_classifier_evals.py::test_golden": "skipped",
+            "tests/test_classifier_evals.py::test_gaps": "skipped",
+        },
+        started_at=STARTED,
+        finished_at=FINISHED,
+        git_sha="a" * 40,
+        run_id="run-mixed",
+        exempt_gates={"ClassifierGoldenGate": "dispatch_anomaly"},
+    )
+    assert summary.failed == 0
+    assert summary.exempt_gates == {"ClassifierGoldenGate": "dispatch_anomaly"}
+
+
+def test_an_exemption_without_a_skip_is_not_recorded() -> None:
+    """The flag alone is not evidence: something must have skipped for it."""
+    summary = summarise(
+        {
+            "tests/test_dlp_evals.py::test_a": "passed",
+            "tests/test_egress_evals.py::test_c": "passed",
+            "tests/test_classifier_evals.py::test_d": "passed",
+        },
+        started_at=STARTED,
+        finished_at=FINISHED,
+        git_sha="a" * 40,
+        run_id="run-ignored",
+        exempt_gates={"ClassifierGoldenGate": "dispatch_anomaly"},
+    )
+    assert not summary.exempt_gates
+
+
+def test_the_exemption_never_covers_a_failed_row() -> None:
+    """A broken golden row fails the run even on a host that is exempted."""
+    summary = summarise(
+        {
+            "tests/test_dlp_evals.py::test_a": "passed",
+            "tests/test_egress_evals.py::test_c": "passed",
+            "tests/test_classifier_evals.py::test_d": "failed",
+            "tests/test_classifier_evals.py::test_e": "skipped",
+        },
+        started_at=STARTED,
+        finished_at=FINISHED,
+        git_sha="a" * 40,
+        run_id="run-failed",
+        exempt_gates={"ClassifierGoldenGate": "dispatch_anomaly"},
+    )
+    assert summary.failed == 1
+    assert summary.metrics["ClassifierGoldenGate"] == 0.0
+    assert not summary.exempt_gates
+
+
 def test_report_is_valid_and_replaced_atomically(tmp_path: Path) -> None:
     summary = _summary({"tests/test_dlp_evals.py::test_a": "passed"})
     path = write_report(tmp_path / "nested" / "latest.json", summary)

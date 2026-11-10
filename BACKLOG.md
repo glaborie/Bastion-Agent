@@ -314,7 +314,7 @@ class of text.
 - spec: ADR-011
 - created: 2026-11-10
 - updated: 2026-11-10
-- source: CI runs 42866889651 and 42870723135 on 2026-11-10
+- source: CI runs 42866889651, 42870723135 and 42882954274 on 2026-11-10
 
 **Problem**
 
@@ -327,6 +327,17 @@ as well. This is the ADR-011 consequence "the gate's numbers are CPU-dispatch
 dependent", now deterministic on that runner image rather than a one-off, so
 the recorded mitigation (log the host, the AVX-512 flags and one probe) explains
 the failure but does not unblock a merge: a re-run returns to the same image.
+
+The signature is now narrowed to the host's instruction set. Every failing run
+landed on an AMD EPYC 7763 — the only host seen so far with no AVX-512 at all,
+so `/proc/cpuinfo` reports no `avx512*` flags and ONNX Runtime selects the AVX2
+int8 kernels. Every passing run is on a host with `avx512_vnni`: Intel Xeon
+Platinum 8370C, AMD EPYC 9V45, and the calibration desktop (i7-11700KF). Run
+42882954274 (`e5e7c60`, telemetry only) reproduced 0.9243 and both failing tests
+on a 7763, while the two docs-only commits between the failures passed on the
+other hosts. Same wheels, same pinned digests, same tree: 3 of the last 8
+`master` runs failed and all three were 7763s, so the verdict is a property of
+the host rather than of the commit.
 
 **Outcome**
 

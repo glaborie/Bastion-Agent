@@ -12,14 +12,20 @@ the gate checks the coded defaults, not a developer's local ``.env``.
 
 from __future__ import annotations
 
+import os
+from dataclasses import replace
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 
 from agent.routing.classifier import (
     CATEGORY_REASONS,
+    Classification,
+    Sensitivity,
     SensitivityClassifier,
 )
+from agent.routing.dispatch import SENTINELS
 from settings import Settings
 from tests.goldens import Golden, load_goldens
 
@@ -131,15 +137,36 @@ def _asserted(golden: Golden) -> bool:
     return golden.expected_label is not None
 
 
-@pytest.mark.skipif(
-    not (INJECTION_GRAPH.is_file() and SAFETY_GRAPH.is_file()),
-    reason="ONNX classifier repositories not downloaded under models/",
-)
-def test_golden_labels_are_zero_tolerance() -> None:
-    """Every asserted label must match; one mismatch fails the gate."""
-    classifier = _real_classifier()
+class _Classifier(Protocol):
+    def classify(self, text: str) -> Classification: ...
+
+
+#: Set by ``scripts/run_evals.py`` from the dispatch verdict (ADR-011).
+DISPATCH_VERDICT_ENV = "CLASSIFIER_DISPATCH_VERDICT"
+
+
+def _skip_if_dispatch_anomaly() -> None:
+    """Exempt the ratio assertions only when the host cannot reproduce them.
+
+    The verdict is computed before pytest runs, from the same graphs and the
+    same decision table, and it is exempted only for the systemic AVX2-only
+    signature (see :mod:`agent.routing.dispatch`). A real mismatch is still a
+    skipped test only if the host is non-reference; a failed row is never
+    rewritten by this path.
+    """
+    if os.environ.get(DISPATCH_VERDICT_ENV) == "dispatch_anomaly":
+        pytest.skip(
+            "environment verdict: this host's int8 kernels do not reproduce the "
+            "calibration verdicts (ADR-011); the golden ratio assertions are exempt"
+        )
+
+
+def _label_failures(
+    classifier: _Classifier, goldens: list[Golden] | tuple[Golden, ...] = tuple(GOLDENS)
+) -> list[str]:
+    """Return every asserted label, reason or route the classifier got wrong."""
     failures: list[str] = []
-    for golden in GOLDENS:
+    for golden in goldens:
         if not _asserted(golden):
             continue
         result = classifier.classify(golden.prompt)
@@ -159,7 +186,46 @@ def test_golden_labels_are_zero_tolerance() -> None:
             failures.append(
                 f"{golden.ident}: expected route {golden.expected_route}, got {expected_route}"
             )
+    return failures
+
+
+@pytest.mark.skipif(
+    not (INJECTION_GRAPH.is_file() and SAFETY_GRAPH.is_file()),
+    reason="ONNX classifier repositories not downloaded under models/",
+)
+def test_golden_labels_are_zero_tolerance() -> None:
+    """Every asserted label must match; one mismatch fails the gate."""
+    _skip_if_dispatch_anomaly()
+    failures = _label_failures(_real_classifier())
     assert not failures, "golden classifier gate failed:\n" + "\n".join(failures)
+
+
+def test_a_broken_golden_row_fails_the_gate() -> None:
+    """A wrong expectation must fail even where the exemption could apply.
+
+    The exemption skips the assertions on a non-reference host; it never turns
+    a mismatch into a pass, so this needs no ONNX session.
+    """
+    haiku = next(golden for golden in GOLDENS if golden.ident == "public-haiku-048")
+    broken = replace(haiku, expected_label="CONFIDENTIAL", expected_route="local-llama")
+
+    class PublicClassifier:
+        def classify(self, text: str) -> Classification:
+            return Classification(Sensitivity.PUBLIC, 0.99, "stub", reason="public_content")
+
+    failures = _label_failures(PublicClassifier(), (broken,))
+    assert any("expected CONFIDENTIAL, got PUBLIC" in failure for failure in failures)
+    assert any("expected route local-llama" in failure for failure in failures)
+
+
+def test_dispatch_sentinels_match_the_corpus() -> None:
+    """``agent/`` copies the prompts; this pin keeps the two in step."""
+    by_id = {golden.ident: golden for golden in GOLDENS}
+    for sentinel in SENTINELS:
+        golden = by_id[sentinel.ident]
+        assert golden.prompt == sentinel.prompt, sentinel.ident
+        assert golden.expected_label == sentinel.expected_label, sentinel.ident
+        assert golden.expected_reason in (None, sentinel.expected_reason), sentinel.ident
 
 
 @pytest.mark.skipif(
@@ -168,6 +234,7 @@ def test_golden_labels_are_zero_tolerance() -> None:
 )
 def test_known_gaps_are_still_public() -> None:
     """Documented misses must stay visible: fix the case when this fails."""
+    _skip_if_dispatch_anomaly()
     classifier = _real_classifier()
     still_missed: list[str] = []
     unexpectedly_blocked: list[str] = []

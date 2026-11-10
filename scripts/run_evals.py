@@ -16,6 +16,10 @@ Semantics, deliberately strict:
   unverified gate is not a pass. On a host without the ONNX graphs the
   classifier routing test skips, so this report is red until the models are
   present — which is the honest result.
+* The one exception is an explicit dispatch verdict (ADR-011): a host whose int8
+  kernels do not reproduce the calibration verdicts has its classifier gate
+  skipped *and* exempted, published under ``exempt_gates``. A failed test is
+  never exempted.
 * The exit code is non-zero when pytest fails or any summary count is non-zero.
 
 The file is replaced with :func:`os.replace`, so a reader never observes a
@@ -66,7 +70,9 @@ class _Collector:
             return
         if report.failed:
             self.outcomes[node] = "failed"
-        elif report.when == "setup" and report.skipped:
+        elif report.skipped and self.outcomes.get(node) != "passed":
+            # Covers both ``skipif`` (setup) and ``pytest.skip()`` in the body
+            # (call), which is how the dispatch exemption skips.
             self.outcomes[node] = "skipped"
         elif report.when == "call" and report.passed:
             self.outcomes[node] = "passed"
@@ -82,6 +88,8 @@ class RunSummary:
     failed: int
     metrics: dict[str, float]
     git_sha: str | None
+    #: metric -> verdict for gates the host exempted (ADR-011); empty otherwise.
+    exempt_gates: dict[str, str] = field(default_factory=dict)
 
     def as_report(self) -> dict[str, Any]:
         return {
@@ -93,6 +101,7 @@ class RunSummary:
             "failed": self.failed,
             "metrics": self.metrics,
             "git_sha": self.git_sha,
+            "exempt_gates": self.exempt_gates,
         }
 
 
@@ -108,13 +117,17 @@ def summarise(
     git_sha: str | None,
     run_id: str | None = None,
     gates: Mapping[str, str] | None = None,
+    exempt_gates: Mapping[str, str] | None = None,
 ) -> RunSummary:
     """Turn per-test outcomes into the published summary.
 
     ``failed`` includes one synthetic failure per gate that did not execute a
-    single test, so an all-skipped run cannot report a green status.
+    single test, so an all-skipped run cannot report a green status — unless the
+    host's dispatch verdict exempts that gate, in which case the exemption is
+    published instead. A gate with a failed test is never exempted.
     """
     resolved_gates = GATES if gates is None else gates
+    resolved_exempt = dict(exempt_gates or {})
     per_gate: dict[str, list[Outcome]] = {module: [] for module in resolved_gates}
     for node_id, outcome in outcomes.items():
         module = _module_of(node_id)
@@ -126,13 +139,20 @@ def summarise(
     skipped = sum(1 for outcome in outcomes.values() if outcome == "skipped")
 
     metrics: dict[str, float] = {}
+    applied_exemptions: dict[str, str] = {}
     unverified_gates = 0
     for module, metric in resolved_gates.items():
         results = per_gate[module]
         executed = [outcome for outcome in results if outcome != "skipped"]
+        # An exemption is only recorded when the flag actually took effect (a
+        # test skipped) and nothing in the gate failed. The classifier module
+        # keeps model-free tests, so "all skipped" is not the usual shape.
+        exempted = metric in resolved_exempt and "skipped" in results and "failed" not in results
+        if exempted:
+            applied_exemptions[metric] = resolved_exempt[metric]
         ok = bool(executed) and all(outcome == "passed" for outcome in executed)
-        metrics[metric] = 1.0 if ok else 0.0
-        if not executed:
+        metrics[metric] = 1.0 if ok or exempted else 0.0
+        if not executed and not exempted:
             # No test ran for this gate: an unverified gate is not a pass.
             unverified_gates += 1
     if skipped:
@@ -154,6 +174,7 @@ def summarise(
         failed=failed,
         metrics=metrics,
         git_sha=git_sha,
+        exempt_gates=applied_exemptions,
     )
 
 
@@ -202,6 +223,12 @@ def main(argv: list[str] | None = None) -> int:
         default=os.getenv("EVAL_REPORT_PATH", str(DEFAULT_REPORT)),
         help="destination JSON summary (default: artifacts/evals/latest.json)",
     )
+    parser.add_argument(
+        "--dispatch-verdict",
+        choices=("reference", "dispatch_anomaly", "unknown"),
+        default=os.getenv("CLASSIFIER_DISPATCH_VERDICT", "reference"),
+        help="host verdict from scripts/check_classifier_dispatch.py",
+    )
     parser.add_argument("--json", action="store_true", help="print the summary as JSON")
     parser.add_argument(
         "pytest_args",
@@ -209,6 +236,13 @@ def main(argv: list[str] | None = None) -> int:
         help="extra pytest arguments, e.g. -k dlp",
     )
     args = parser.parse_args(argv)
+
+    exempt: dict[str, str] = {}
+    if args.dispatch_verdict == "dispatch_anomaly":
+        # The gate tests read this to skip their assertions; the summary then
+        # records the exemption instead of the skipped-only synthetic failure.
+        os.environ["CLASSIFIER_DISPATCH_VERDICT"] = "dispatch_anomaly"
+        exempt = {"ClassifierGoldenGate": "dispatch_anomaly"}
 
     collector = _Collector()
     started = datetime.now(UTC)
@@ -220,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         started_at=started,
         finished_at=finished,
         git_sha=git_sha(),
+        exempt_gates=exempt,
     )
     path = write_report(Path(args.report), summary)
 
@@ -229,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"evals: {summary.passed}/{summary.total} passed, {summary.failed} failed -> {path}")
         for metric, score in sorted(summary.metrics.items()):
             print(f"  {metric:<24} {score:.3f}")
+        for metric, verdict in sorted(summary.exempt_gates.items()):
+            print(f"  {metric:<24} exempt ({verdict})")
 
     ok = exit_code == 0 and summary.failed == 0
     return 0 if ok else 1

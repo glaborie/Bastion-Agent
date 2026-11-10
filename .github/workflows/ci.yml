@@ -195,39 +195,20 @@ jobs:
           echo "$INJECTION_SHA256  models/prompt-injection-guard-small/onnx/model_quantized.onnx" | sha256sum -c -
           echo "$SAFETY_SHA256  models/content-safety-guard-small/onnx/model_quantized.onnx" | sha256sum -c -
 
-      # One runner scored every benign row ~0.92 unsafe on 2026-11-10 while a
-      # re-run of the same commit scored ~0.02: same wheel, same digests, different
-      # int8 kernel path (ADR-011, Consequences). Recording the host and one fixed
-      # probe makes the next occurrence distinguishable from a corpus regression.
-      - name: Record the inference environment
-        run: |
-          grep -m1 'model name' /proc/cpuinfo
-          grep -o 'avx512[a-z_]*' /proc/cpuinfo | sort -u | tr '\n' ' ' || true
-          echo
-          uv run --no-sync python - <<'PY'
-          from agent.routing.classifier import SensitivityClassifier
-          from settings import Settings
+      # The pinned int8 graphs do not reproduce on every hosted CPU: a runner
+      # without AVX-512 marks every benign sentinel unsafe (ADR-011). The verdict
+      # is written to the job summary and only the systemic signature exempts the
+      # classifier gate; a failed row is never exempted.
+      - name: Check the inference environment
+        id: dispatch
+        run: uv run --no-sync python scripts/check_classifier_dispatch.py
 
-          settings = Settings(_env_file=None)
-          classifier = SensitivityClassifier(
-              injection_model_path="models/prompt-injection-guard-small/onnx/model_quantized.onnx",
-              safety_model_path="models/content-safety-guard-small/onnx/model_quantized.onnx",
-              injection_threshold=settings.injection_threshold,
-              safety_unsafe_threshold=settings.classifier_safety_unsafe_threshold,
-              safety_category_threshold=settings.classifier_safety_category_threshold,
-              rules_floor=settings.classifier_rules_floor,
-          )
-          result = classifier.classify("Write a haiku about the sea.")
-          print(
-              f"probe (golden public-haiku-048, expect PUBLIC): "
-              f"{result.label.value} reason={result.reason} model={result.model} "
-              f"confidence={result.confidence:.4f}"
-          )
-          PY
-
-      # Exits non-zero on any failure. A skipped gate counts as a failure.
+      # Exits non-zero on any failure. A skipped gate counts as a failure unless
+      # the dispatch verdict exempted it.
       - name: Run eval gates
-        run: uv run --no-sync python scripts/run_evals.py
+        run: |
+          uv run --no-sync python scripts/run_evals.py \
+            --dispatch-verdict "${{ steps.dispatch.outputs.verdict }}"
 
       - name: Upload eval report
         if: always()

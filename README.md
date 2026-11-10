@@ -635,6 +635,7 @@ check runs at startup.
 | `scripts/recalculate_dread.py` | Recompute DREAD totals and the risk-priority list; `--check` / `--write` |
 | `scripts/update_threat_intel.py` | Query OSV for every registry package in `uv.lock`; writes `artifacts/threat-intel/latest.json` |
 | `scripts/run_evals.py` | Run the three golden gates and atomically publish `artifacts/evals/latest.json` |
+| `scripts/check_classifier_dispatch.py` | Classify five sentinels and publish the host's `reference` / `dispatch_anomaly` verdict (ADR-011) |
 | `scripts/demo_egress.py` | Deterministic canary/leak/quarantine/fence demo against the live Redis |
 | `scripts/demo_model_canary.py` | Live `llama.cpp` extraction probe through the egress sanitizer (opt-in) |
 | `scripts/demo_tool_request.py` | Originate a guarded tool call for the demo (see `DEMO.md`) |
@@ -1033,3 +1034,15 @@ scored in-process, so the suite needs no provider credentials.
 `run_evals.py` writes the summary atomically and maps each module to its metric.
 A gate that executed no tests scores `0.0` and adds a synthetic failure: an
 unverified gate is never reported green.
+
+The one exception is the classifier's host verdict. The pinned int8 graphs do
+not reproduce on every x86 host — an AVX2-only CPU (AMD EPYC 7763) marks every
+benign row `CONFIDENTIAL` at 0.75–0.97 while hosts with `avx512_vnni` agree with
+the calibration values (ADR-011). `scripts/check_classifier_dispatch.py`
+classifies five golden sentinels before the gate and publishes `reference` or
+`dispatch_anomaly`; only for that exact systemic signature do the two ratio
+assertions skip and the report record `exempt_gates` instead of a synthetic
+failure. A failed row is never exempted, and a partial mismatch (one benign row,
+a lost positive) still falls through to the gate. Running the test file directly
+ignores the verdict and asserts everything, which is what a developer on a
+normal host wants.
