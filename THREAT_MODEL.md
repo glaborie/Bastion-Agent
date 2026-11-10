@@ -92,7 +92,8 @@ Two facts shape the model:
 | Dependency audit against OSV | PARTIAL | script exists, not run in CI |
 | Test and eval gate in CI | PLANNED | CI runs pylint with `--exit-zero` only |
 | Kill-switch tiers | PLANNED | ADR-009 only |
-| Per-principal rate limits and token budgets | PLANNED | none found |
+| Per-principal request rate limits (`dashboard` 60/min, `chat` 120/min) | LIVE | `gateway/rate_limit.py`, ADR-013 |
+| Per-principal token and cost budgets | PLANNED | none found |
 | Signed or re-derived identity on queued jobs | PLANNED | see T8 |
 | External anchoring of the audit chain | PLANNED | see T10 |
 | Langfuse and Phoenix exporters | PLANNED | collector ships with the `debug` exporter |
@@ -254,8 +255,9 @@ Two facts shape the model:
 - Controls:
   - LIVE: at most 64 messages, 32,768 characters per message, 65,536 in total, `max_tokens` at most 8192. A tool argument size cap applies.
   - LIVE: a quarantined session cannot continue to consume inference.
-  - PLANNED: per-principal rate limits and token or cost budgets. None are implemented.
-- Residual risk: fail-closed design is a deliberate trade. An outage of Presidio, Redis or the classifier denies service instead of degrading security.
+  - LIVE: a per-principal Redis token bucket bounds request rate — 60 requests per 60 s for the dashboard and its polling APIs, 120 per 60 s for chat — and refuses with `429` plus `Retry-After`. A limiter outage is `503`, never unlimited (ADR-013).
+  - PLANNED: per-principal token and cost budgets. A principal can still spend its full request allowance on expensive turns.
+- Residual risk: fail-closed design is a deliberate trade. An outage of Presidio, Redis or the classifier denies service instead of degrading security. Rate limiting bounds request rate, not spend, so the T12 score is unchanged until token and cost budgets exist.
 
 ## 6. Risk scoring
 
@@ -298,7 +300,7 @@ Scores are the author's estimates of residual risk with the controls as they exi
 
 1. Close T8: authenticate queued jobs and isolate Redis.
 2. Run `pytest` and `scripts/run_evals.py` in CI and fail the build below threshold. The README states that evals gate merges, and CI does not do that yet.
-3. Add per-principal rate limits and budgets (T12).
+3. Add per-principal token and cost budgets (T12); request-rate limiting is live (ADR-013).
 4. Anchor the audit-chain head outside the database (T10).
 5. Add Swiss identifier recognizers and grow the golden set beyond 83 cases (T1, T4).
 6. Wire the OSV script into CI and add an SBOM (T11).

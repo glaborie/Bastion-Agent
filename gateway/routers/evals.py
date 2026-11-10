@@ -9,10 +9,14 @@ from fastapi import APIRouter, Depends, Request
 from gateway.auth.rbac import AuthContext, require_roles
 from gateway.dashboard.templating import render
 from gateway.evals import EvalReport, load_latest_report
+from gateway.rate_limit import rate_limit
 from gateway.web import is_htmx
 from settings import get_settings
 
-router = APIRouter(tags=["evals"])
+router = APIRouter(
+    tags=["evals"],
+    dependencies=[Depends(rate_limit("dashboard"))],
+)
 
 
 @router.get("/api/evals/latest", summary="Latest DeepEval run summary")

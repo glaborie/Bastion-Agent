@@ -11,16 +11,18 @@ must not be edited by hand.
 
 - current-phase: v0.2
 - wip-limit: 3
-- next-id: IDEA-009
+- next-id: IDEA-012
 
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (3)
+### Inbox (5)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-007` P1 v0.2 agent - Route corporate-confidential documents without explicit markers to the local model
+- `IDEA-009` P2 v0.2 security - Author ADR-013 for observability and trace privacy
+- `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 
 ### Ready (2)
 
@@ -35,10 +37,11 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (2)
+### Done (3)
 
 - `IDEA-006` P3 v0.2 docs - Add a deterministic egress canary demo
 - `IDEA-008` P1 v0.2 evals - Make the eval gate bit-reproducible across hosted runners
+- `IDEA-011` P1 v0.2 docs - Reconcile the CONTROL.md dashboard rate-limit claim with the gateway
 
 _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 <!-- END BOARD -->
@@ -56,6 +59,9 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-006 | done | P3 | v0.2 | docs | Add a deterministic egress canary demo |
 | IDEA-007 | inbox | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
 | IDEA-008 | done | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
+| IDEA-009 | inbox | P2 | v0.2 | security | Author ADR-013 for observability and trace privacy |
+| IDEA-010 | inbox | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
+| IDEA-011 | done | P1 | v0.2 | docs | Reconcile the CONTROL.md dashboard rate-limit claim with the gateway |
 <!-- END INDEX -->
 
 ## Items
@@ -375,3 +381,128 @@ reproducible.
   `translate 0.7526 criminal_planning`, `code-review 0.7848`, injection still
   `0.9997`; `evals: 220/220 passed, 0 failed`, `ClassifierGoldenGate exempt
   (dispatch_anomaly)`, green without a re-run.
+
+### IDEA-009: Author ADR-013 for observability and trace privacy
+
+- status: inbox
+- priority: P2
+- phase: v0.2
+- area: security
+- tags: tracing, privacy, opentelemetry, config
+- depends-on: -
+- spec: -
+- created: 2026-11-10
+- updated: 2026-11-10
+- source: audit of docs/adr/ coverage against README.md section Telemetry, 2026-11-10
+
+**Problem**
+
+The trace pipeline exists in code but no Accepted ADR governs it: `telemetry.py`
+holds the span attributes, the GenAI conventions, the httpx instrumentation,
+`DEFAULT_EXCLUDED_URLS` and `OTEL_TRACES_SAMPLER_RATIO`; `config/otel/` holds
+four collector files whose second `--config` overlay is chosen by
+`OTEL_REMOTE_EXPORT_CONFIG`; and the rule that prompt/completion text, tool
+arguments and per-user identity are never exported lives only in README
+section Telemetry and in `annotate_span`'s docstring. ADR-011 mentions telemetry
+once, in passing, and is not a decision about traces. A reviewer therefore cannot
+tell which parts are deliberate policy and which are incidental, and a future
+edit can delete the exclusion list or add a payload attribute without contradicting
+any recorded decision.
+
+**Outcome**
+
+`docs/adr/ADR-013.md` (title "Observability & Trace Privacy", Status Accepted)
+records the trace architecture as decisions: the gateway/worker to OTLP collector
+topology and the overlay-plus-recreate procedure; the attribute allow-list and the
+fields that are never exported; the exclusion and sampling policy that keeps
+dashboard polling and the two worker cron sweeps untraced; and backend neutrality
+— OpenLit, Langfuse and Arize are interchangeable through a collector overlay, so
+switching backend is a config change, not a code change. The ADR is indexed in
+`docs/adr/ADR-Index.md` and no behaviour changes.
+
+**Acceptance**
+
+- [ ] `docs/adr/ADR-013.md` exists with `# ADR-013: ...`, the Status/Date/Last modified block, a two-paragraph `## Context`, a numbered `## Decision` and `## Consequences` with Pros and Cons
+- [ ] `uv run python scripts/check_adrs.py` passes with the new file and its `ADR-Index.md` row
+- [ ] The Decision section names `config/otel/otel-collector-config.yaml`, the overlay selected by `OTEL_REMOTE_EXPORT_CONFIG`, and the `docker compose up -d --force-recreate otel-collector` procedure
+- [ ] The Decision section states the never-exported fields (prompt and completion text, tool arguments, per-user identity) and the exclusions in `DEFAULT_EXCLUDED_URLS` plus the untraced cron sweeps
+- [ ] The Decision section states that OpenLit, Langfuse and Arize are selected by overlay only, and that the overlay in force is runtime configuration rather than architecture
+
+**Notes**
+
+- `spec: -` is deliberate: the gap is that no ADR governs the trace pipeline yet, so there is nothing to cite as the governing decision. ADR-011 mentions telemetry only in a Pros bullet; that is not a decision about tracing.
+- Classified `security` rather than `infra` because the load-bearing content is the trace-privacy invariant (what may never leave the host); the collector topology rides along with it.
+- Scope is documentation only. No code, config or compose change is part of this item; the live backend choice (self-hosted OpenLit while the Langfuse quota cools down) belongs in `.env`, which is gitignored, and must not be recorded as architecture.
+- Open question for triage: whether ADR-013 should also absorb the collector `filter/noise` drop rules for ASGI send/receive spans and 404s, or leave them as an infra detail owned by `config/otel/`.
+- 2026-11-10 numbering note: ADR-013 was taken by the per-principal rate-limiting decision (`docs/adr/ADR-013.md`, shipped in v0.2). When this item is worked, author **ADR-014** for observability instead; read every `ADR-013` in the Outcome and Acceptance above as `ADR-014`. The index row and `check_adrs.py` expectations are otherwise unchanged.
+
+### IDEA-010: Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
+
+- status: inbox
+- priority: P1
+- phase: v0.2
+- area: docs
+- tags: adr, evals, ci
+- depends-on: -
+- spec: ADR-006
+- created: 2026-11-10
+- updated: 2026-11-10
+- source: review of ADR-006 decision 5 against commit c7c8616 (eval gate dispatch exemption), 2026-11-10
+
+**Problem**
+
+`docs/adr/ADR-006.md` decision 5 still states one rule: "A gate with no executed tests scores `0.0` and counts a synthetic failure, so an all-skipped run is red rather than vacuously green." Commit `c7c8616` changed the gate underneath it: `scripts/check_classifier_dispatch.py` publishes a `reference` / `dispatch_anomaly` host verdict, `scripts/run_evals.py --dispatch-verdict` publishes `exempt_gates` instead of a synthetic failure, and the gate now passes when rows were SKIPPED (not only when every row was skipped) on a verified AVX2 dispatch anomaly. That exception is written down only in ADR-011's Consequences and in `README.md`, not in the ADR that owns the never-green rule. ADR-006's `Last modified` is already 2026-11-10, so the date was bumped without this text changing, which makes the contradiction look deliberate.
+
+**Outcome**
+
+ADR-006 decision 5 states the rule the code enforces: a gate is never green merely because no evidence was produced, except when a verified host verdict exempts the ratio assertions, and those exemptions are recorded under `exempt_gates` rather than converted into a synthetic failure. The text keeps the distinction intact — a failed row is never exempted and a partial mismatch still falls through to the gate — and points at ADR-011 decision 7 for the rationale and the accepted asymmetry. `Last modified` reflects the edit.
+
+**Acceptance**
+
+- [ ] `docs/adr/ADR-006.md` decision 5 names `scripts/check_classifier_dispatch.py`, the `reference` / `dispatch_anomaly` verdict, `--dispatch-verdict` and `exempt_gates`, and links ADR-011 instead of restating its rationale
+- [ ] The text keeps the never-green rule for missing evidence and says explicitly that a failed row is never exempted and a partial skip still fails the gate
+- [ ] ADR-006 `Last modified` is bumped to the edit date
+- [ ] `uv run python scripts/check_adrs.py` passes
+- [ ] No change to `scripts/run_evals.py`, `scripts/check_classifier_dispatch.py`, `agent/routing/dispatch.py` or any test in the same change
+
+**Notes**
+
+- Duplicate check: IDEA-008 (done) built the exemption itself and its acceptance ticked only "`docs/adr/ADR-011.md` records the choice"; no open or done backlog item mentions ADR-006, so this item is the ADR-006 documentation correction, not a second run at the gate work.
+- Classified P1 because an Accepted ADR that misstates a security-relevant gate rule is a governance defect, not cosmetic; triage may downgrade if it disagrees.
+- Related drift seen while checking: ADR-012 decision 6 repeats "an unverified gate is not a pass" for the same `scripts/run_evals.py` gates. Left out of this item's scope (ADR-006 owns the rule); it becomes a separate correction if triage wants the corpus consistent.
+
+### IDEA-011: Reconcile the CONTROL.md dashboard rate-limit claim with the gateway
+
+- status: done
+- priority: P1
+- phase: v0.2
+- area: docs
+- tags: rate-limiting, dashboard, adr, security
+- depends-on: -
+- spec: ADR-007
+- created: 2026-11-10
+- updated: 2026-11-10
+- source: review of CONTROL.md security considerations against gateway code, 2026-11-10
+
+**Problem**
+
+`CONTROL.md` line 253 lists "**Rate Limiting**: Dashboard API: 60 req/min per user (stricter than chat API)" among shipped security controls, but nothing enforces it: `gateway/main.py` registers only the `security_headers` middleware, `gateway/settings.py` has no rate-limit key, no router returns `429`, and neither `slowapi` nor `limits` is a dependency. ADR-007 decision 7 explicitly defers per-user dashboard rate limiting (60 req/min) to the Phase 1 dashboard features, ADR-008 puts rate limiting in v0.5, and `THREAT_MODEL.md` T12 marks per-principal limits "PLANNED ... None are implemented" — so CONTROL.md is the only document asserting the control exists.
+
+**Outcome**
+
+Either the control exists as CONTROL.md describes it, or CONTROL.md stops describing it as shipped and points at the deferral. Every document agrees on one state, and a reader of CONTROL.md can tell a live control from a planned one without reading the gateway source.
+
+**Acceptance**
+
+- [x] Either (a) the enforcing code exists — the scoped dashboard endpoints are named, the requests-per-window limit is read from a named settings key, an over-limit request produces `429`, and a test in `tests/` proves both the pass-under and fail-over cases — or (b) `CONTROL.md` marks dashboard rate limiting as planned/not implemented and cites ADR-007 decision 7, ADR-008 v0.5 and THREAT_MODEL T12, with no remaining sentence in CONTROL.md claiming the 60 req/min control is shipped
+- [x] `grep -rn "60 req/min" .` returns only lines that either qualify the claim as deferred/planned or name the settings key that enforces it
+- [x] `uv run python scripts/check_adrs.py` passes, and ADR-007 decision 7 is either left as the deferral or updated in the same change if the limiter shipped — no ADR claims a control that does not exist
+- [x] `THREAT_MODEL.md` T12 is consistent with the chosen state: it drops "None are implemented" only when the limiter is real
+
+**Notes**
+
+- `spec: ADR-007` chosen over `-`: decision 7 of the control-dashboard ADR is the recorded decision that owns this control's status (deferred to Phase 1), so the reconciliation is alignment with ADR-007 rather than a greenfield decision. ADR-008 v0.5 and T12 are cited as corroborating scope, not as the governing decision.
+- Deduplication: `BACKLOG.md` had no rate-limiting or CONTROL.md item; IDEA-009 (observability ADR) and IDEA-010 (ADR-006 drift) are unrelated and untouched. ADR-007/ADR-008/THREAT_MODEL mention the control only as deferred/planned.
+- No implementation and no CONTROL.md edit are part of this intake; this item only records the discrepancy. Triage may split it into "document the deferral" (docs) and "build the limiter" (gateway) if it prefers one state over the either/or acceptance.
+- Open question for triage: ADR-007 says Phase 1 dashboard features while ADR-008 lists rate limiting under v0.5; if the limiter is built, which phase owns it needs deciding before the phase field can be tightened.
+- 2026-11-10 resolution: took path (a), the limiter was built rather than the claim removed. `gateway/rate_limit.py` implements a Redis token bucket keyed on the JWT subject; the dashboard pages/partials/APIs share `RATE_LIMIT_DASHBOARD_PER_WINDOW` (60) and `POST /v1/chat` uses `RATE_LIMIT_CHAT_PER_WINDOW` (120), both over `RATE_LIMIT_WINDOW_SECONDS` (60). Refusals are `429` with `Retry-After`/`RateLimit-*`; a store outage is `503`. `tests/test_rate_limit.py` covers pass-under, fail-over, scope mapping, HTML rendering and fail-closed; `tests/test_rate_limit_redis.py` proves exhaustion, refill, isolation, concurrency and TTL against live Redis. ADR-013 records the decision, ADR-007 decision 7 and ADR-008 v0.5 were updated, and CONTROL.md/T12 now describe the live control. Phase question answered: it shipped in v0.2, ahead of the v0.5 roadmap line.

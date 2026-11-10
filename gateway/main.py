@@ -166,6 +166,22 @@ def create_app() -> FastAPI:
                 detail="This dashboard requires the operator or admin role.",
                 status_code=403,
             )
+        if exc.status_code == 429 and (path.startswith("/dashboard") or is_htmx(request)):
+            # A polling fragment that renders the JSON detail is unreadable in
+            # the dashboard; show the same page an operator can act on, with the
+            # Retry-After the limiter produced.
+            headers = dict(exc.headers or {})
+            retry_after = headers.get("Retry-After", "60")
+            return render_error(
+                request,
+                title="Too many requests",
+                detail=(
+                    "This account has used its request budget for the dashboard. "
+                    f"Try again in {retry_after} seconds."
+                ),
+                status_code=429,
+                headers=headers,
+            )
         return await default_http_exception_handler(request, exc)
 
     configure_tracing(settings)

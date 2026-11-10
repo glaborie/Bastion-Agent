@@ -54,6 +54,7 @@ from db.audit import append_audit_event
 from db.models import AuditEventType
 from db.session import get_db_session
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
+from gateway.rate_limit import rate_limit
 from telemetry import annotate_span, span_attributes
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,10 @@ _tracer = trace.get_tracer(__name__)
 _attributes = span_attributes
 _annotate = annotate_span
 
-router = APIRouter(tags=["chat"])
+router = APIRouter(
+    tags=["chat"],
+    dependencies=[Depends(rate_limit("chat"))],
+)
 
 MAX_MESSAGES: Final[int] = 64
 MAX_MESSAGE_CHARS: Final[int] = 32_768

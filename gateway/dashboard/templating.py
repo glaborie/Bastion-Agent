@@ -58,6 +58,7 @@ def render_error(
     title: str,
     detail: str,
     status_code: int,
+    headers: dict[str, str] | None = None,
 ) -> HTMLResponse:
     return render(
         request,
@@ -69,4 +70,5 @@ def render_error(
             "csrf_token": None,
         },
         status_code=status_code,
+        headers=headers,
     )

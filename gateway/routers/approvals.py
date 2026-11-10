@@ -25,13 +25,17 @@ from gateway.approvals import (
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 from gateway.dashboard.templating import render
 from gateway.queue import enqueue_tool_resume
+from gateway.rate_limit import rate_limit
 from gateway.web import is_htmx
 from settings import get_settings
 from telemetry import annotate_span
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["approvals"])
+router = APIRouter(
+    tags=["approvals"],
+    dependencies=[Depends(rate_limit("dashboard"))],
+)
 
 
 class ApprovalOut(BaseModel):

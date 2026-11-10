@@ -169,6 +169,36 @@ transaction, with a hash of the free-text reason (never the text itself).
 | GET | `/auth/login`, `/auth/callback`, `/auth/logout` | public flow / session |
 | GET | `/auth/me` | any authenticated identity |
 
+### Rate limiting
+
+Request rate is bounded per principal by a Redis token bucket (ADR-013), so the
+budget is shared by every gateway replica instead of multiplying with the
+process count. The bucket is keyed on the JWT `sub`; signing in again does not
+reset it.
+
+| Scope | Routes | Default budget |
+|-------|--------|----------------|
+| `dashboard` | pages, HTMX partials, `/api/approvals`, `/api/audit`, `/api/evals/latest`, `/api/incidents` | 60 requests / 60 s |
+| `chat` | `POST /v1/chat` | 120 requests / 60 s |
+
+Tune it with `RATE_LIMIT_ENABLED`, `RATE_LIMIT_WINDOW_SECONDS`,
+`RATE_LIMIT_DASHBOARD_PER_WINDOW` and `RATE_LIMIT_CHAT_PER_WINDOW` (see
+`.env.example`). Health probes, the OIDC login flow and static assets are
+exempt; Keycloak's brute-force protection owns failed-login throttling.
+
+A refusal is `429` with `Retry-After` and `RateLimit-Limit` /
+`RateLimit-Remaining` / `RateLimit-Reset`. JSON callers get the detail, while
+dashboard pages and HTMX fragments render the normal error page with the same
+header. A limiter outage is `503`, not an unlimited route: Redis already gates
+the vault and canary path, so degrading only this control would be the wrong
+failure direction.
+
+```bash
+# Prove the bucket against the local Redis (CI runs this as a gate).
+REDIS_TEST_URL=redis://localhost:56379/0 uv run pytest -m redis_integration \
+  tests/test_rate_limit_redis.py
+```
+
 ### Security incidents panel
 
 The dashboard polls `GET /api/incidents` every 15 seconds and renders the ten

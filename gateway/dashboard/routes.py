@@ -24,11 +24,16 @@ from gateway.audit_service import (
 from gateway.auth.rbac import AuthContext, require_roles
 from gateway.dashboard.templating import render, render_error
 from gateway.evals import load_latest_report
+from gateway.rate_limit import rate_limit
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["dashboard"], include_in_schema=False)
+router = APIRouter(
+    tags=["dashboard"],
+    include_in_schema=False,
+    dependencies=[Depends(rate_limit("dashboard"))],
+)
 
 #: Prompts that exercise one control each, shown on the chat page.
 CHAT_SUGGESTIONS: tuple[dict[str, str], ...] = (

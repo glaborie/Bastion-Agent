@@ -85,6 +85,24 @@ async def session_factory(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSes
 
 
 @pytest.fixture(autouse=True)
+def _disable_rate_limiting(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep the suite from spending the development Redis rate-limit budget.
+
+    The limiter has its own tests, which enable it explicitly and inject a
+    deterministic store. Every other test asserts application behaviour, not
+    request budgets, so a real bucket would make the suite order-dependent.
+    """
+    from settings import reset_settings_cache
+
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "false")
+    reset_settings_cache()
+    try:
+        yield
+    finally:
+        reset_settings_cache()
+
+
+@pytest.fixture(autouse=True)
 def _disable_tool_resume_enqueue(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep the suite from enqueueing ARQ jobs onto a live worker queue.
 

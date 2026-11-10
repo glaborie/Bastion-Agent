@@ -94,6 +94,17 @@ class Settings(BaseSettings):
     #: JSON summary written by the DeepEval harness (Milestone 6).
     eval_report_path: str = "artifacts/evals/latest.json"
 
+    # -- Per-principal rate limiting (ADR-013) -----------------------------
+    #: A limiter outage is a 503, never an unlimited route: Redis already holds
+    #: the vault and the canary registry, so it is already on the chat path.
+    rate_limit_enabled: bool = True
+    rate_limit_window_seconds: int = 60
+    #: Dashboard pages, HTMX fragments and the JSON APIs they poll share one
+    #: bucket per principal. Chat gets its own, larger budget because one turn
+    #: is deliberate operator work rather than a background poll.
+    rate_limit_dashboard_per_window: int = 60
+    rate_limit_chat_per_window: int = 120
+
     # -- DLP: reversible token vault --------------------------------------
     vault_master_key: SecretStr = SecretStr(DEV_VAULT_MASTER_KEY)
     vault_ttl_seconds: int = 1800  # 30 minutes, per specification
@@ -285,6 +296,9 @@ class Settings(BaseSettings):
         "tool_max_argument_bytes",
         "keycloak_jwks_cache_ttl_seconds",
         "egress_trip_ttl_seconds",
+        "rate_limit_window_seconds",
+        "rate_limit_dashboard_per_window",
+        "rate_limit_chat_per_window",
     )
     @classmethod
     def _validate_positive(cls, value: int) -> int:
