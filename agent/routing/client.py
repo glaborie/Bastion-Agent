@@ -25,6 +25,7 @@ from agent.routing.classifier import (
     get_classifier,
 )
 from settings import get_settings
+from telemetry import instrument_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,10 @@ class OmniRouteClient:
         self._backoff = max(0.0, retry_backoff_seconds)
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._owns_client = client is None
+        # The wire-level model call becomes a child of the ``chat <alias>``
+        # span, which is what makes retries and upstream latency visible
+        # separately from the application span around them.
+        instrument_http_client(self._client)
 
     async def chat_completion(
         self,

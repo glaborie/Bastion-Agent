@@ -9,16 +9,23 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
+import httpx
 from fastapi import FastAPI
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.trace import Span
 from opentelemetry.util.types import AttributeValue
+
+if TYPE_CHECKING:
+    from opentelemetry.instrumentation.httpx import RequestInfo
 
 from settings import Settings, get_settings
 
@@ -120,6 +127,44 @@ def instrument_app(app: FastAPI, *, excluded_urls: str = DEFAULT_EXCLUDED_URLS) 
     if not get_settings().otel_enabled:
         return
     FastAPIInstrumentor.instrument_app(app, excluded_urls=excluded_urls)
+
+
+async def _name_outbound_request(span: Span, request: RequestInfo) -> None:
+    """Name a client span after the endpoint, not just the HTTP verb.
+
+    The instrumentor names client spans ``POST``, which says nothing once the
+    trace also contains an inbound ``POST /v1/chat``. This hook runs before the
+    request, so the rename is exported with the span. It must never raise: an
+    exception here would fail the request it is only supposed to observe.
+    """
+    raw_method = request.method
+    method = raw_method.decode() if isinstance(raw_method, bytes) else str(raw_method)
+    path = getattr(request.url, "path", "")
+    span.update_name(f"{method.upper()} {path}".strip())
+
+
+def instrument_http_client(
+    client: httpx.AsyncClient,
+    *,
+    tracer_provider: TracerProvider | None = None,
+) -> None:
+    """Trace one outbound client's requests as children of the active span.
+
+    Scoped to a client rather than the ``httpx`` module: the gateway uses the
+    same library for Keycloak's JWKS and token endpoints, and tracing sign-ins
+    would put auth noise in every model turn — the ASGI span already shows a
+    rejected request. Only the model call is worth a wire-level span, and this
+    way nothing else needs an exclusion list to stay quiet.
+
+    ``tracer_provider`` is a test seam. Production leaves it unset: the tracer
+    resolves the global provider lazily, so instrumenting a client before
+    ``configure_tracing`` runs is safe.
+    """
+    HTTPXClientInstrumentor.instrument_client(
+        client,
+        tracer_provider=tracer_provider,
+        request_hook=_name_outbound_request,
+    )
 
 
 def shutdown_tracing() -> None:

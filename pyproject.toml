@@ -42,6 +42,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.28.0,<2.0.0",
     "opentelemetry-instrumentation-fastapi>=0.49b0,<1.0.0",
     "opentelemetry-instrumentation-asyncpg>=0.49b0,<1.0.0",
+    "opentelemetry-instrumentation-httpx>=0.49b0,<1.0.0",
 ]
 
 [dependency-groups]

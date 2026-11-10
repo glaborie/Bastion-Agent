@@ -759,9 +759,14 @@ dashboard — `gen_ai.system`, `gen_ai.request.model` (the alias's pinned target
 e.g. `gpt-4o-mini`), `gen_ai.response.model` (what actually answered),
 `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`,
 `gen_ai.usage.total_tokens` and `gen_ai.usage.cost` (USD, as reported by
-OmniRoute in `usage.cost`). The server span carries the guardrail evidence:
-`bastion.dlp.*`, `bastion.classification.*`, `bastion.route*`,
-`bastion.egress.*` and `gen_ai.conversation.id`.
+OmniRoute in `usage.cost`). Under it sits the instrumented HTTP span for the
+actual request — `POST /v1/chat/completions`, with the upstream status code and
+the time spent on the wire, so a retry appears as two child spans and a slow
+upstream is distinguishable from a slow local guardrail. Only the OmniRoute
+client is instrumented; the Keycloak JWKS and token calls are deliberately left
+untraced so sign-ins do not add noise to every model turn. The server span
+carries the guardrail evidence: `bastion.dlp.*`, `bastion.classification.*`,
+`bastion.route*`, `bastion.egress.*` and `gen_ai.conversation.id`.
 
 The alias itself is a routing label, never reported as a model: sending
 `cloud-primary` as `gen_ai.request.model` makes every trace look like an
