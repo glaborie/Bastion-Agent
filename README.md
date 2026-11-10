@@ -740,6 +740,11 @@ OTEL_REMOTE_EXPORT_CONFIG=otel-collector-export.yaml
 docker compose up -d --force-recreate otel-collector
 ```
 
+To freeze egress again — for example while a backend quota is exhausted — put
+the overlay back to `otel-collector-no-export.yaml` and run the same command.
+The remote exporters are then absent from the traces pipeline altogether, so
+nothing leaves the host and their credentials are never read.
+
 Health probes and the dashboard's polling endpoints (`/api/approvals` every 3 s,
 `/api/evals/latest` every 30 s) are excluded from tracing, so an open dashboard
 does not burn a backend quota; the four-eyes decision endpoint stays traced.
