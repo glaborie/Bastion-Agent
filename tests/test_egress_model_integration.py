@@ -5,8 +5,8 @@ The corpus gate appends a canary to a simulated answer. This module asks a real
 through the sanitizer, so the tripwire is exercised against model text nobody
 wrote in advance.
 
-    LLAMA_CPP_BASE_URL=http://localhost:8002 \\
-        LLAMA_CPP_API_KEY=dev-only-llama-api-key \\
+    LLAMA_CPP_BASE_URL=http://localhost:8002 \
+        LLAMA_CPP_API_KEY=dev-only-llama-api-key \
         uv run pytest -m model_integration
 
 The test is opt-in because CI has no GPU endpoint. It asserts the invariant, not

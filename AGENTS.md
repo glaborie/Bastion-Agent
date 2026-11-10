@@ -57,3 +57,20 @@ Your task is to build out the entire repository from scratch according to `HANDO
 - Strict type hints (`mypy` compatible).
 - Clean logging with structured context.
 - Zero mock shortcuts in core security validation—every guardrail must be active and tested.
+
+## Backlog & Idea Intake
+
+`BACKLOG.md` is the only work queue. `docs/adr/` records decisions;
+`HANDOVER_SPEC.md` records the design; `BACKLOG.md` records what someone wants
+and nobody has decided yet.
+
+- At session start, read `BACKLOG.md` and run `uv run python scripts/check_backlog.py --next`.
+- Work one `ready` item at a time. Never start an `inbox`, `blocked`, or
+  later-phase item on your own initiative.
+- A new idea goes through `/idea <text>` and is captured, not implemented. Never
+  implement an idea in the turn that produced it.
+- Finishing an item means: run the verification gates, tick every acceptance box,
+  set `status: done`, bump `updated`, then
+  `uv run python scripts/check_backlog.py --write`.
+- Never hand-edit the generated `## Board` or `## Index` sections.
+- Keep `- next-id:` in sync with the highest `IDEA-NNN` (the validator warns).
