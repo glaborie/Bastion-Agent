@@ -197,6 +197,12 @@ class Settings(BaseSettings):
     omniroute_retry_backoff_seconds: float = 0.25
     model_local_alias: str = "local-llama"
     model_cloud_alias: str = "cloud-primary"
+    #: First target of each OmniRoute combo, router prefix removed; mirrors
+    #: config/omniroute/config.yaml (tests/test_routing_client.py pins the pair).
+    #: Telemetry reports these as the requested model, so a trace never claims a
+    #: routing alias is a model id.
+    model_local_primary: str = "qwen2.5-7b-instruct-q4_k_m"
+    model_cloud_primary: str = "openai/gpt-4o-mini"
 
     # -- Observability -----------------------------------------------------
     otel_enabled: bool = True

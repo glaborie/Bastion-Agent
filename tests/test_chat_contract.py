@@ -31,7 +31,8 @@ def test_completion_attributes_split_provider_and_drop_unset_values() -> None:
             completion_tokens=76,
             total_tokens=339,
             cost_usd=0.0000851,
-        )
+        ),
+        requested="openai/gpt-4o-mini",
     )
     assert cloud["gen_ai.system"] == "openai"
     assert cloud["gen_ai.response.model"] == "gpt-4o-mini"
@@ -39,12 +40,26 @@ def test_completion_attributes_split_provider_and_drop_unset_values() -> None:
     assert cloud["gen_ai.usage.input_tokens"] == 263
     assert cloud["gen_ai.usage.output_tokens"] == 76
     assert cloud["gen_ai.usage.cost"] == pytest.approx(0.0000851)
+    assert cloud["bastion.model.swapped"] is False
 
-    local = _completion_attributes(ChatCompletion(content="hi", model="qwen2.5-7b-q4_k_m"))
+    local = _completion_attributes(
+        ChatCompletion(content="hi", model="qwen2.5-7b-q4_k_m"),
+        requested="qwen2.5-7b-q4_k_m",
+    )
     assert local["gen_ai.system"] == "local"
     assert local["gen_ai.response.model"] == "qwen2.5-7b-q4_k_m"
     assert "gen_ai.usage.input_tokens" not in local
     assert "gen_ai.response.finish_reasons" not in local
+    assert local["bastion.model.swapped"] is False
+
+
+def test_failover_to_another_model_is_marked_not_hidden() -> None:
+    """cloud-primary falls back to a second model; the trace must say so."""
+    attributes = _completion_attributes(
+        ChatCompletion(content="hi", model="openai/gpt-4o-mini"),
+        requested="openai/claude-haiku-4.5",
+    )
+    assert attributes["bastion.model.swapped"] is True
 
 
 def test_vault_sessions_are_actor_scoped() -> None:

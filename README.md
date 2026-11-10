@@ -755,12 +755,20 @@ does not burn a backend quota; the four-eyes decision endpoint stays traced.
 Each guarded turn is one trace: the `POST /v1/chat` server span plus a child
 `chat <alias>` span for the model call. The child carries the OpenTelemetry
 GenAI conventions a backend needs to show model, tokens and cost in its own
-dashboard — `gen_ai.system`, `gen_ai.request.model` (the alias),
-`gen_ai.response.model` (the concrete model), `gen_ai.usage.input_tokens`,
-`gen_ai.usage.output_tokens`, `gen_ai.usage.total_tokens` and
-`gen_ai.usage.cost` (USD, as reported by OmniRoute in `usage.cost`). The server
-span carries the guardrail evidence: `bastion.dlp.*`, `bastion.classification.*`,
-`bastion.route*`, `bastion.egress.*` and `gen_ai.conversation.id`.
+dashboard — `gen_ai.system`, `gen_ai.request.model` (the alias's pinned target,
+e.g. `gpt-4o-mini`), `gen_ai.response.model` (what actually answered),
+`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`,
+`gen_ai.usage.total_tokens` and `gen_ai.usage.cost` (USD, as reported by
+OmniRoute in `usage.cost`). The server span carries the guardrail evidence:
+`bastion.dlp.*`, `bastion.classification.*`, `bastion.route*`,
+`bastion.egress.*` and `gen_ai.conversation.id`.
+
+The alias itself is a routing label, never reported as a model: sending
+`cloud-primary` as `gen_ai.request.model` makes every trace look like an
+unintended provider swap. `MODEL_LOCAL_PRIMARY` / `MODEL_CLOUD_PRIMARY` mirror
+the first target of each OmniRoute combo (`config/omniroute/config.yaml`, pinned
+by `tests/test_routing_client.py`), and a genuine failover to the second target
+is recorded as `bastion.model.swapped=true` instead of being hidden.
 
 Prompt and completion text is never exported. That is deliberate: traces go to
 third parties, and a DLP product that ships the unredacted prompt into a trace

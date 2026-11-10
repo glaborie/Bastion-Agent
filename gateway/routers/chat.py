@@ -154,19 +154,38 @@ def _annotate(attributes: Mapping[str, AttributeValue | None]) -> None:
     trace.get_current_span().set_attributes(_attributes(attributes))
 
 
-def _completion_attributes(completion: ChatCompletion) -> dict[str, AttributeValue]:
+def _split_model(model: str) -> tuple[str, str]:
+    """Split ``provider/model`` into its parts; a bare id is assumed local.
+
+    OmniRoute answers ``openai/gpt-4o-mini`` and is configured with
+    ``openrouter/openai/gpt-4o-mini``, so the pinned setting drops the router
+    prefix and this split then yields the provider and the bare model id that
+    backends key their price tables on.
+    """
+    provider, _, bare = model.partition("/")
+    if not bare:
+        return "local", provider
+    return provider, bare
+
+
+def _completion_attributes(
+    completion: ChatCompletion, *, requested: str
+) -> dict[str, AttributeValue]:
     """GenAI semantic conventions OpenLit reads for model, tokens and cost.
 
-    OmniRoute answers with ``provider/model``: the provider becomes
-    ``gen_ai.system`` and the bare id is the key OpenLit's price table uses.
+    ``requested`` is the concrete model the alias is configured to use, not the
+    alias itself: an alias is a routing label, and reporting it as a model makes
+    every trace look like an unintended provider swap. When the router fails
+    over to another model the mismatch is recorded as ``bastion.model.swapped``
+    instead of being hidden.
     """
-    provider, _, bare = completion.model.partition("/")
-    if not bare:
-        provider, bare = "local", provider
+    provider, served = _split_model(completion.model)
+    _, pinned = _split_model(requested)
     return _attributes(
         {
             "gen_ai.system": provider,
-            "gen_ai.response.model": bare,
+            "gen_ai.response.model": served,
+            "bastion.model.swapped": served != pinned if pinned else None,
             "gen_ai.response.finish_reasons": (
                 [completion.finish_reason] if completion.finish_reason else None
             ),
@@ -335,7 +354,6 @@ async def chat(
     )
     _annotate(
         {
-            "gen_ai.request.model": decision.alias,
             "bastion.route": decision.alias,
             "bastion.route.local": decision.local,
             "bastion.classification": classification.label.value,
@@ -384,7 +402,9 @@ async def chat(
 
     # The LLM span carries the GenAI semantic conventions OpenLit turns into
     # token counts and cost. It is a child of the server span, so one turn is
-    # still one trace.
+    # still one trace. The requested model is the alias's pinned target, never
+    # the alias: see _completion_attributes.
+    requested_provider, requested_model = _split_model(decision.primary_model or decision.alias)
     with _tracer.start_as_current_span(
         f"chat {decision.alias}", kind=SpanKind.CLIENT
     ) as model_span:
@@ -393,9 +413,11 @@ async def chat(
                 {
                     "gen_ai.operation.name": "chat",
                     "gen_ai.conversation.id": conversation_id,
-                    "gen_ai.request.model": decision.alias,
+                    "gen_ai.system": requested_provider,
+                    "gen_ai.request.model": requested_model,
                     "gen_ai.request.temperature": request.temperature,
                     "gen_ai.request.max_tokens": request.max_tokens,
+                    "bastion.route": decision.alias,
                 }
             )
         )
@@ -410,7 +432,9 @@ async def chat(
             model_span.set_attribute("error.type", type(exc).__name__)
             logger.warning("Model completion failed", extra={"route": decision.alias})
             raise _blocked(status.HTTP_502_BAD_GATEWAY, "upstream model unavailable") from exc
-        model_span.set_attributes(_completion_attributes(completion))
+        model_span.set_attributes(
+            _completion_attributes(completion, requested=decision.primary_model or decision.alias)
+        )
 
     # -- stage 4: egress inspection ---------------------------------------
     try:

@@ -86,6 +86,8 @@ class RouteDecision:
     alias: str
     classification: Classification
     local: bool
+    #: Concrete model the alias is configured to use first (telemetry only).
+    primary_model: str | None = None
 
 
 class OmniRouteClient:
@@ -232,6 +234,8 @@ class ModelRouter:
         self._client = client
         self._local_alias = local_alias or settings.model_local_alias
         self._cloud_alias = cloud_alias or settings.model_cloud_alias
+        self._local_primary = settings.model_local_primary
+        self._cloud_primary = settings.model_cloud_primary
 
     @property
     def client(self) -> OmniRouteClient:
@@ -269,6 +273,7 @@ class ModelRouter:
             alias=self._local_alias if local else self._cloud_alias,
             classification=classification,
             local=local,
+            primary_model=self._local_primary if local else self._cloud_primary,
         )
 
 

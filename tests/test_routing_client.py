@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
 import pytest
+import yaml
 
 from agent.routing.classifier import Classification, Sensitivity, SensitivityClassifier
 from agent.routing.client import (
@@ -17,6 +19,7 @@ from agent.routing.client import (
     UpstreamError,
     UpstreamResponseError,
 )
+from settings import get_settings
 
 
 class StubClassifier:
@@ -103,6 +106,27 @@ async def test_public_prompts_route_to_the_cloud_alias() -> None:
         await http.aclose()
     assert decision.alias == "cloud-primary"
     assert decision.local is False
+
+
+def test_pinned_model_mirrors_the_omniroute_combos() -> None:
+    """Telemetry names a concrete model per alias; drift would mislabel traces.
+
+    The agent reports the first target of each OmniRoute combo as the requested
+    model (config/omniroute/config.yaml is the routing source of truth), so the
+    two must agree without anyone remembering to edit both.
+    """
+    config = yaml.safe_load(Path("config/omniroute/config.yaml").read_text(encoding="utf-8"))
+    combos = config["combos"]
+    settings = get_settings()
+
+    for alias, pinned in (
+        ("local-llama", settings.model_local_primary),
+        ("cloud-primary", settings.model_cloud_primary),
+    ):
+        first_target = combos[alias]["models"][0]
+        # OmniRoute prefixes the router node ("openrouter/", "llama/"); the
+        # setting stores the target with that prefix stripped.
+        assert first_target.split("/", 1)[1] == pinned, (alias, first_target, pinned)
 
 
 async def test_completion_payload_and_auth_header() -> None:
