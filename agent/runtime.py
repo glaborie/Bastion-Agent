@@ -42,6 +42,7 @@ from agent.tools.execution import (
     ApprovalExecutionError,
     approved_ticket_ids,
     expire_stale_approvals,
+    record_tool_refusal,
     request_tool_execution,
     resume_approved_tool,
 )
@@ -120,11 +121,13 @@ async def execute_tool_job(
                 context=context,
             )
     except ToolAuthorizationError as exc:
+        await _persist_refusal(tool_name, context, exc, arguments)
         return {"status": "denied", "tool": tool_name, "error": str(exc)}
     except ToolArgumentError as exc:
         return {"status": "invalid_arguments", "tool": tool_name, "error": str(exc)}
     except ToolNotInCatalogError as exc:
         # ADR-009 Gate 1: the same -32003 code as a name that does not exist.
+        await _persist_refusal(tool_name, context, exc, arguments)
         return {
             "status": "unknown_tool",
             "tool": tool_name,
@@ -132,6 +135,7 @@ async def execute_tool_job(
             "code": exc.code,
         }
     except ToolNotFoundError as exc:
+        await _persist_refusal(tool_name, context, exc, arguments)
         return {
             "status": "unknown_tool",
             "tool": tool_name,
@@ -139,10 +143,43 @@ async def execute_tool_job(
             "code": TOOL_NOT_IN_CATALOG_CODE,
         }
     except ToolCatalogUnavailableError as exc:
+        await _persist_refusal(tool_name, context, exc, arguments)
         return {"status": "error", "tool": tool_name, "error": str(exc)}
     except ToolError as exc:
         return {"status": "error", "tool": tool_name, "error": str(exc)}
     return result.to_payload()
+
+
+async def _persist_refusal(
+    tool_name: str,
+    context: AgentContext,
+    error: ToolError,
+    arguments: dict[str, Any] | None,
+) -> None:
+    """Commit a refusal in a fresh transaction.
+
+    The guarded request runs in ``session_scope``, which rolls back when the
+    guard raises — including the audit row the guard wrote. A refusal is exactly
+    the event an operator must be able to find later, so it is re-recorded here
+    in its own transaction. The first write never committed, so the ledger holds
+    one row, not two.
+    """
+    try:
+        async with session_scope() as session:
+            await record_tool_refusal(
+                session,
+                context=context,
+                tool_name=tool_name,
+                error=error,
+                arguments=arguments,
+            )
+    except Exception:  # pylint: disable=broad-exception-caught
+        # Losing the audit row must not turn a refusal into a failure open, but
+        # it is loud: the worker log is the fallback record.
+        logger.exception(
+            "Could not record a refused tool call",
+            extra={"tool": tool_name, "actor_id": context.actor_id},
+        )
 
 
 async def resume_tool_job(ctx: dict[str, Any], *, ticket_id: str) -> dict[str, Any]:

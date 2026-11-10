@@ -412,6 +412,101 @@ No ticket is created and no file is written. The denial is audited as
 `TOOL_REQUESTED` with `outcome: denied`. The script exits non-zero for a denied
 call, which is expected here.
 
+### 5.7 Gate 1 refuses a tool that is not in the allow-list
+
+`docs/tools/v1.json` is an allow-list, not a registry: a name the runtime does
+not know and a tool that is registered but not approved both return JSON-RPC
+code `-32003`.
+
+```bash
+uv run python scripts/demo_tool_request.py \
+  --tool read_ssh_keys \
+  --actor-sub "$ALICE_SUB" \
+  --role operator
+```
+
+```
+{
+  "status": "unknown_tool",
+  "tool": "read_ssh_keys",
+  "error": "unknown tool: 'read_ssh_keys'",
+  "code": -32003
+}
+```
+
+The stronger case is a tool that exists in code and was approved at startup.
+Only the worker's copy of the catalog is edited, because the worker is the
+process that executes tools:
+
+```bash
+docker compose exec -T worker python - <<'PY'
+import json, pathlib
+path = pathlib.Path("/app/docs/tools/v1.json")
+catalog = json.loads(path.read_text())
+del catalog["tools"]["execute_file_write"]
+path.write_text(json.dumps(catalog, indent=2) + "\n")
+print("allow-list now:", sorted(catalog["tools"]))
+PY
+# allow-list now: ['read_file', 'read_system_status']
+```
+
+Ask for the write again:
+
+```bash
+uv run python scripts/demo_tool_request.py \
+  --tool execute_file_write \
+  --actor-sub "$ALICE_SUB" \
+  --role operator \
+  --arg path=reports/q1.txt \
+  --arg 'content=Q1 revenue: 4.2M CHF'
+```
+
+```
+{
+  "status": "unknown_tool",
+  "tool": "execute_file_write",
+  "error": "tool 'execute_file_write' is not in the approved tool catalog",
+  "code": -32003
+}
+```
+
+Nothing was written and no ticket exists. The refusal is in the ledger — the
+worker commits it in its own transaction, because the guarded request
+transaction rolls back when the gate raises:
+
+```bash
+docker compose exec -T db psql -U bastion -d bastion -c \
+  "select actor_id, event_type, metadata_json->>'outcome' as outcome,
+          metadata_json->>'code' as code
+     from audit_logs where metadata_json->>'outcome' = 'not_in_catalog'
+     order by id desc limit 1;"
+```
+
+```
+   actor_id    |   event_type   |    outcome     |  code
+---------------+----------------+----------------+--------
+ <alice-sub>   | TOOL_REQUESTED | not_in_catalog | -32003
+(1 row)
+```
+
+Both script calls exit non-zero (`unknown_tool`), which is expected.
+
+Restore the allow-list and confirm the registry agrees again:
+
+```bash
+docker cp docs/tools/v1.json "$(docker compose ps -q worker):/app/docs/tools/v1.json"
+docker compose exec -T worker python -c \
+  "from agent.tools import verify_registry; print(sorted(verify_registry().names()))"
+# ['execute_file_write', 'read_file', 'read_system_status']
+```
+
+**Talking points:** Gate 1 is enforced per call, not only at boot, so a
+narrowed allow-list takes effect immediately (the catalog is re-read when the
+file changes). A restart re-reads the image copy, and startup refuses to boot
+when the registry and the catalog disagree — that is why the catalog is edited
+here rather than in the repository. No model reasoning can put a tool back into
+the list.
+
 ---
 
 ## 6. Act 4 — audit integrity
@@ -666,4 +761,5 @@ curl -s -X POST -H "Authorization: Bearer $BOB_TOKEN" \
 - [ ] Alice’s write suspends; Alice’s own approval is refused with `403`
 - [ ] Bob’s approval produces the file and four ledger events
 - [ ] The analyst write is denied by RBAC with no ticket
+- [ ] A tool removed from the worker’s allow-list is refused with `-32003` and the refusal is in the ledger
 - [ ] The audit chain verifies, and direct tampering is rejected by the database

@@ -576,7 +576,9 @@ by a lost job are recovered.
   validation, RBAC or ticket creation. Gateway and worker startup fail when the
   registry and catalog disagree, an unreadable catalog exposes no tools, and an
   approved ticket whose tool left the catalog is marked `FAILED` with a
-  `SECURITY_INCIDENT` instead of running.
+  `SECURITY_INCIDENT` instead of running. Refusals (catalog and RBAC) are
+  appended to the ledger; the worker commits them in a dedicated transaction,
+  because the guarded request transaction rolls back when the guard raises.
 - **Filesystem confinement**: built-in file tools resolve paths inside
   `TOOL_WORKSPACE_ROOT`, reject absolute/traversing paths and symlink escapes,
   cap read/write sizes, and write atomically at mode `0600`.

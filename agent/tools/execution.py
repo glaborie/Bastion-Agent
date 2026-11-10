@@ -66,12 +66,75 @@ _TERMINAL_RESULTS: Final[dict[ApprovalStatus, ToolStatus]] = {
 }
 
 
+#: ``outcome`` recorded on a ``TOOL_REQUESTED`` row for each refusal class.
+_FIXED_OUTCOMES: Final[tuple[tuple[type[ToolError], str], ...]] = (
+    (ToolAuthorizationError, "denied"),
+    (ToolNotFoundError, "not_registered"),
+    (ToolNotInCatalogError, "not_in_catalog"),
+    (ToolCatalogDriftError, "catalog_drift"),
+    (ToolCatalogUnavailableError, "catalog_unavailable"),
+)
+
+
 class ApprovalExecutionError(ToolError):
     """The ticket cannot be resumed in its current state."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def refusal_outcome(error: ToolError) -> str:
+    """The stable ledger outcome for a refused tool call."""
+    for error_type, outcome in _FIXED_OUTCOMES:
+        if isinstance(error, error_type):
+            return outcome
+    return "refused"
+
+
+async def record_tool_refusal(
+    session: AsyncSession,
+    *,
+    context: AgentContext,
+    tool_name: str,
+    error: ToolError,
+    arguments: dict[str, Any] | None = None,
+    moment: datetime | None = None,
+) -> None:
+    """Append one ``TOOL_REQUESTED`` row describing a refused call.
+
+    A refusal ends the unit of work, so the worker job calls this again in a
+    dedicated transaction: the guard writes the row inside the request
+    transaction (for callers that manage it), which is rolled back when the
+    guard raises. Recording the outcome twice is impossible — the first write
+    never commits.
+    """
+    metadata: dict[str, Any] = {
+        "tool": tool_name,
+        "outcome": refusal_outcome(error),
+    }
+    code = getattr(error, "code", None)
+    if code is not None:
+        metadata["code"] = code
+    required_role = getattr(error, "required_role", None)
+    if required_role:
+        metadata["required_role"] = required_role
+    if arguments is not None:
+        metadata["argument_keys"] = sorted(arguments)
+
+    payload: dict[str, Any] = {"tool": tool_name}
+    if arguments is not None:
+        payload["arguments"] = arguments
+    await append_audit_event(
+        session,
+        actor_id=context.actor_id,
+        event_type=AuditEventType.TOOL_REQUESTED,
+        session_id=context.session_id,
+        payload=payload,
+        metadata_json=metadata,
+        timestamp=moment or utcnow(),
+    )
+    await session.flush()
 
 
 async def request_tool_execution(
@@ -319,21 +382,15 @@ async def _deny_rbac(
     moment: datetime,
 ) -> NoReturn:
     """Record a role-denied call in the ledger, then raise."""
-    await append_audit_event(
+    error = ToolAuthorizationError(definition.name, definition.required_role or "")
+    await record_tool_refusal(
         session,
-        actor_id=context.actor_id,
-        event_type=AuditEventType.TOOL_REQUESTED,
-        session_id=context.session_id,
-        payload={"tool": definition.name, "arguments": arguments},
-        metadata_json={
-            "tool": definition.name,
-            "outcome": "denied",
-            "required_role": definition.required_role,
-            "argument_keys": sorted(arguments),
-        },
-        timestamp=moment,
+        context=context,
+        tool_name=definition.name,
+        error=error,
+        arguments=arguments,
+        moment=moment,
     )
-    await session.flush()
     logger.warning(
         "Tool call denied by RBAC",
         extra={
@@ -342,7 +399,7 @@ async def _deny_rbac(
             "required_role": definition.required_role,
         },
     )
-    raise ToolAuthorizationError(definition.name, definition.required_role or "")
+    raise error
 
 
 async def _authorize_resume(
@@ -405,34 +462,19 @@ async def _authorize_catalog(
     try:
         return get_tool_catalog().authorize(definition)
     except ToolError as exc:
-        if isinstance(exc, ToolNotInCatalogError):
-            outcome = "not_in_catalog"
-        elif isinstance(exc, ToolCatalogDriftError):
-            outcome = "catalog_drift"
-        elif isinstance(exc, ToolCatalogUnavailableError):
-            outcome = "catalog_unavailable"
-        else:  # pragma: no cover - authorize only raises the classes above
-            outcome = "catalog_rejected"
-        await append_audit_event(
+        await record_tool_refusal(
             session,
-            actor_id=context.actor_id,
-            event_type=AuditEventType.TOOL_REQUESTED,
-            session_id=context.session_id,
-            payload={"tool": definition.name},
-            metadata_json={
-                "tool": definition.name,
-                "outcome": outcome,
-                "code": getattr(exc, "code", None),
-            },
-            timestamp=moment,
+            context=context,
+            tool_name=definition.name,
+            error=exc,
+            moment=moment,
         )
-        await session.flush()
         logger.warning(
             "Tool call rejected by the catalog gate",
             extra={
                 "tool": definition.name,
                 "actor_id": context.actor_id,
-                "outcome": outcome,
+                "outcome": refusal_outcome(exc),
             },
         )
         raise

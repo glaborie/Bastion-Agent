@@ -8,10 +8,11 @@ from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent.tools.catalog import CatalogTool, get_tool_catalog, override_tool_catalog
 from agent.tools.decorator import (
+    TOOL_NOT_IN_CATALOG_CODE,
     AgentContext,
     ToolAuthorizationError,
     ToolNotInCatalogError,
@@ -88,6 +89,17 @@ def failing_tool():
 
 def context(actor: str = "alice", roles: tuple[str, ...] = ("operator",)) -> AgentContext:
     return AgentContext(actor_id=actor, roles=frozenset(roles), session_id="sess-tool")
+
+
+@pytest.fixture
+def worker_db(db_engine, monkeypatch):
+    """Point the worker's ``session_scope`` at the disposable test database."""
+    from db import session as db_session
+
+    monkeypatch.setattr(db_session, "_engine", db_engine)
+    monkeypatch.setattr(db_session, "_session_factory", None)
+    yield db_engine
+    monkeypatch.setattr(db_session, "_session_factory", None)
 
 
 async def events(session: AsyncSession) -> list[AuditLog]:
@@ -477,3 +489,56 @@ async def test_resume_refuses_a_tool_that_left_the_catalog(
     ]
     assert not (workspace / "reports/q3.txt").exists()
     assert (await verify_audit_chain(session)).ok
+
+
+async def test_worker_commits_a_catalog_refusal_after_the_request_rolls_back(
+    worker_db, workspace
+) -> None:
+    """Gate 1 must outlive the request transaction it aborts (ADR-009).
+
+    ``execute_tool_job`` runs the guard inside ``session_scope``, which rolls
+    back when the guard raises — taking the in-transaction audit row with it.
+    The worker re-records the refusal in its own transaction, so the ledger
+    always shows what was denied.
+    """
+    from agent.runtime import execute_tool_job
+
+    @tool(
+        name="test_rogue_write",
+        description="registered in code, never approved",
+        read_only=False,
+        required_role="operator",
+    )
+    async def rogue_write(path: str, context: AgentContext) -> None: ...
+
+    try:
+        result = await execute_tool_job(
+            {"job_id": "test-job"},
+            tool_name="test_rogue_write",
+            actor_id="alice",
+            roles=["operator"],
+            session_id="sess-gate1",
+            arguments={"path": "rogue.txt"},
+        )
+    finally:
+        unregister_tool("test_rogue_write")
+
+    assert result["status"] == "unknown_tool"
+    assert result["code"] == TOOL_NOT_IN_CATALOG_CODE == -32003
+
+    factory = async_sessionmaker(worker_db, expire_on_commit=False)
+    async with factory() as fresh:
+        records = list((await fresh.execute(select(AuditLog).order_by(AuditLog.id))).scalars())
+        tickets = list((await fresh.execute(select(PendingApproval))).scalars())
+        assert (await verify_audit_chain(fresh)).ok
+
+    assert not tickets
+    assert [record.event_type for record in records] == [AuditEventType.TOOL_REQUESTED]
+    assert records[0].actor_id == "alice"
+    assert records[0].session_id == "sess-gate1"
+    assert records[0].metadata_json == {
+        "tool": "test_rogue_write",
+        "outcome": "not_in_catalog",
+        "code": -32003,
+        "argument_keys": ["path"],
+    }
