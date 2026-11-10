@@ -1,0 +1,229 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Weekly, so new advisories are caught even when nobody pushes.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OTEL_ENABLED: "false"
+  PYTHONUNBUFFERED: "1"
+
+# Actions are pinned to full commit SHAs (tag in the trailing comment). Bump them
+# deliberately, and prefer releases that are at least two weeks old.
+
+jobs:
+  quality:
+    name: Lint, types, policy checks
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+
+      - name: Ruff lint
+        run: uv run --no-sync ruff check .
+
+      - name: Ruff format
+        run: uv run --no-sync ruff format --check .
+
+      - name: Mypy (strict)
+        run: uv run --no-sync mypy gateway agent db settings.py telemetry.py logging_setup.py
+
+      # Replaces the old pylint workflow, which ran with --exit-zero and could never fail.
+      - name: Pylint
+        run: uv run --no-sync pylint $(git ls-files '*.py')
+
+      - name: Repository policy checks
+        run: |
+          uv run --no-sync python scripts/check_adrs.py
+          uv run --no-sync python scripts/validate_tool_catalog.py --check
+          uv run --no-sync python scripts/validate_rbac.py
+          uv run --no-sync python scripts/recalculate_dread.py --check
+
+  tests:
+    name: Tests (Python ${{ matrix.python-version }}, PostgreSQL 16)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bastion
+          POSTGRES_PASSWORD: bastion
+          POSTGRES_DB: bastion_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bastion -d bastion_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The suite refuses to run destructive tests on a database whose name lacks "test".
+      TEST_DATABASE_URL: postgresql+asyncpg://bastion:bastion@localhost:5432/bastion_test
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+
+      - name: Run tests
+        run: uv run --no-sync pytest -ra --junitxml=pytest-report.xml
+
+      # Database tests skip silently when TEST_DATABASE_URL is missing. This job runs with a
+      # database, so the only acceptable skips are the ONNX-model tests (covered by `evals`).
+      - name: Fail on unexpected skips
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          allowed = "ONNX classifier repositories not downloaded"
+          unexpected = []
+          for case in ET.parse("pytest-report.xml").iter("testcase"):
+              for skipped in case.findall("skipped"):
+                  message = skipped.get("message") or ""
+                  if allowed not in message:
+                      unexpected.append(f"{case.get('classname')}::{case.get('name')}: {message}")
+          if unexpected:
+              print("\n".join(unexpected))
+              sys.exit("unexpected skipped tests")
+          PY
+
+  evals:
+    name: Zero-tolerance eval gates (real ONNX models)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Pinned in .env.example and ADR-011. Keep these in step with that file.
+      INJECTION_REPO: Horizon-Labs/prompt-injection-guard-small
+      INJECTION_REV: 2efc2ed5abecd21eb45c2506d231a65d6e392b85
+      INJECTION_SHA256: 61cd0741cdbfcc229e32e1de1392f352736d87d1e8b3c2b67ad9836bb7910d5d
+      SAFETY_REPO: onnx-community/content-safety-guard-small-ONNX
+      SAFETY_REV: 74e953e4b14199e152899135cb176a0998135baf
+      SAFETY_SHA256: 156b2b60eb1606d4f3c25913bb4dfc234b0be9b7bb85f29365cf29729f3ce2aa
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+
+      - name: Restore ONNX models
+        id: models
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: models
+          key: onnx-${{ env.INJECTION_REV }}-${{ env.SAFETY_REV }}
+
+      - name: Download ONNX models
+        if: steps.models.outputs.cache-hit != 'true'
+        run: |
+          uvx --from huggingface_hub==2.2.0 hf download "$INJECTION_REPO" \
+            onnx/model_quantized.onnx tokenizer.json config.json \
+            --revision "$INJECTION_REV" \
+            --local-dir models/prompt-injection-guard-small
+          uvx --from huggingface_hub==2.2.0 hf download "$SAFETY_REPO" \
+            onnx/model_quantized.onnx tokenizer.json config.json \
+            --revision "$SAFETY_REV" \
+            --local-dir models/content-safety-guard-small
+
+      # Runs on cache hits too, so a poisoned cache cannot swap the classifier.
+      - name: Verify model digests
+        run: |
+          echo "$INJECTION_SHA256  models/prompt-injection-guard-small/onnx/model_quantized.onnx" | sha256sum -c -
+          echo "$SAFETY_SHA256  models/content-safety-guard-small/onnx/model_quantized.onnx" | sha256sum -c -
+
+      # Exits non-zero on any failure. A skipped gate counts as a failure.
+      - name: Run eval gates
+        run: uv run --no-sync python scripts/run_evals.py
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: eval-report
+          path: artifacts/evals/latest.json
+          if-no-files-found: warn
+
+  supply-chain:
+    name: Dependency advisories (OSV)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+
+      # Exit 1: unignored advisories. Exit 2: the audit could not run.
+      - name: Audit uv.lock against OSV
+        run: uv run --no-sync python scripts/update_threat_intel.py
+
+      - name: Upload advisory report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: threat-intel-report
+          path: artifacts/threat-intel/latest.json
+          if-no-files-found: warn
+
+  # Single stable check name to require in branch protection.
+  ci-ok:
+    name: ci-ok
+    if: always() && github.event_name != 'schedule'
+    needs: [quality, tests, evals, supply-chain]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
