@@ -85,9 +85,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # The quarantine/canary tests assert real Redis TTL semantics, which
+      # fakeredis cannot. Provisioning it here turns those five tests from
+      # silent skips into gates.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       # The suite refuses to run destructive tests on a database whose name lacks "test".
       TEST_DATABASE_URL: postgresql+asyncpg://bastion:bastion@localhost:5432/bastion_test
+      REDIS_TEST_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -104,20 +117,27 @@ jobs:
       - name: Run tests
         run: uv run --no-sync pytest -ra --junitxml=pytest-report.xml
 
-      # Database tests skip silently when TEST_DATABASE_URL is missing. This job runs with a
-      # database, so the only acceptable skips are the ONNX-model tests (covered by `evals`).
+      # Database and Redis tests skip silently when their URLs are missing. This job runs
+      # with both, so the only acceptable skips are the ones below -- an external service
+      # this runner does not have. Refresh this list deliberately.
       - name: Fail on unexpected skips
         run: |
           python3 - <<'PY'
           import sys
           import xml.etree.ElementTree as ET
 
-          allowed = "ONNX classifier repositories not downloaded"
+          allowed = (
+              # The `evals` job downloads the ONNX models and gates on them.
+              "ONNX classifier repositories not downloaded",
+              # No GPU inference endpoint here; the model-integration canary is run
+              # manually against a live llama.cpp (DEMO.md, scripts/demo_model_canary.py).
+              "LLAMA_CPP_BASE_URL is not set",
+          )
           unexpected = []
           for case in ET.parse("pytest-report.xml").iter("testcase"):
               for skipped in case.findall("skipped"):
                   message = skipped.get("message") or ""
-                  if allowed not in message:
+                  if not any(reason in message for reason in allowed):
                       unexpected.append(f"{case.get('classname')}::{case.get('name')}: {message}")
           if unexpected:
               print("\n".join(unexpected))
