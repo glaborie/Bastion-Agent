@@ -77,6 +77,24 @@ def test_export_overlay_fans_out_to_both_backends() -> None:
     ]
 
 
+def test_pipeline_drops_caller_controlled_noise() -> None:
+    """ASGI event spans and 404s must not reach a metered backend.
+
+    A client polling an unimplemented route produced ~11,500 spans/day in the
+    Arize project on 2026-11-10 (40:1 noise against real traffic), and that
+    volume is caller-controlled. The filter is the only thing standing between
+    an unauthenticated path scanner and the export quota.
+    """
+    processors = load(BASE)["processors"]
+    rules = processors["filter/noise"]["traces"]["span"]
+    assert any("http (send|receive)" in rule for rule in rules), rules
+    assert any('"http.status_code"] == 404' in rule for rule in rules), rules
+    assert any('"http.response.status_code"] == 404' in rule for rule in rules), rules
+
+    pipeline = load(BASE)["service"]["pipelines"]["traces"]["processors"]
+    assert pipeline.index("filter/noise") < pipeline.index("batch"), pipeline
+
+
 def test_arize_endpoint_stays_a_base_url() -> None:
     """The exporter appends /v1/traces; a /v1 endpoint is a silent no-op.
 

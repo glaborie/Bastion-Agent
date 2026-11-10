@@ -48,6 +48,25 @@ processors:
   batch:
     send_batch_size: 512
     timeout: 5s
+  # Egress is metered, so drop the two span classes whose volume a caller
+  # controls and whose diagnostic value is nil:
+  #
+  #   * ASGI send/receive event spans ("GET /docs http send"): three per HTTP
+  #     request at ~0.03 ms each. The server span already carries the latency.
+  #   * Unmatched paths (404). On 2026-11-10 one client polling a route this
+  #     gateway does not implement sent ~11,500 spans/day to Arize and tripped
+  #     its volume limit; an unauthenticated caller can do the same on purpose.
+  #     Path scans belong at the proxy/firewall, not in a paid trace backend.
+  #
+  # Dropped spans are dropped for `debug` too: the filter sits in the single
+  # traces pipeline, so what the collector logs is what the backends receive.
+  filter/noise:
+    error_mode: ignore
+    traces:
+      span:
+        - 'IsMatch(name, ".* http (send|receive)$")'
+        - 'attributes["http.status_code"] == 404'
+        - 'attributes["http.response.status_code"] == 404'
 
 exporters:
   # Local visibility only (span-batch counters, not span bodies).
@@ -109,7 +128,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, resource, batch]
+      processors: [memory_limiter, resource, filter/noise, batch]
       # Fallback when no overlay is passed. The overlay mounted at
       # /etc/otelcol/export.yaml replaces this list (see the header).
       exporters: [debug]

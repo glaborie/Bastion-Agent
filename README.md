@@ -744,6 +744,25 @@ Health probes and the dashboard's polling endpoints (`/api/approvals` every 3 s,
 `/api/evals/latest` every 30 s) are excluded from tracing, so an open dashboard
 does not burn a backend quota; the four-eyes decision endpoint stays traced.
 
+### What is not exported
+
+Egress is metered, so the pipeline drops two span classes before any exporter
+(`filter/noise` in the base config, covered by `tests/test_otel_config.py`):
+
+| Dropped | Why |
+|---|---|
+| ASGI send/receive event spans (`GET /docs http send`) | Three per HTTP request at ~0.03 ms each; the server span already carries the latency. |
+| Unmatched paths (`http.status_code=404`) | The volume is caller-controlled. |
+
+The 404 rule is not hypothetical. On 2026-11-10 a local client polled
+`/v1/models` — a route this gateway does not implement — every 30 s, which is
+**~11,500 spans a day** against ~300 of real traffic, and it tripped Arize's
+volume limit while Langfuse looked fine. An unauthenticated scanner can do the
+same deliberately, so those spans now stop at the collector: a path scan is
+visible at the reverse proxy or firewall, which is the layer that owns that
+signal, not in a paid trace backend. Dropping them removed 75% of the remaining
+volume as well, since each real request previously carried three event spans.
+
 Configure in `.env`:
 
 ```dotenv
