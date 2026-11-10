@@ -7,6 +7,9 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -542,3 +545,135 @@ async def test_worker_commits_a_catalog_refusal_after_the_request_rolls_back(
         "code": -32003,
         "argument_keys": ["path"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Worker spans
+# ---------------------------------------------------------------------------
+
+
+def capture_worker_spans(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
+    """Give the worker tracer an in-memory exporter instead of an OTLP one."""
+    from agent import runtime
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(runtime, "_tracer", provider.get_tracer("test-worker"))
+    return exporter
+
+
+async def test_worker_span_records_the_suspension_ticket(
+    worker_db, workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worker half of four-eyes must be visible, and must not carry arguments.
+
+    The span is named after the tool and joined to the ledger by ticket id; the
+    argument values stay hashed in the audit row, because traces leave the host.
+    """
+    from agent.runtime import execute_tool_job
+
+    exporter = capture_worker_spans(monkeypatch)
+    result = await execute_tool_job(
+        {"job_id": "test-span-job"},
+        tool_name="execute_file_write",
+        actor_id="alice",
+        roles=["operator"],
+        session_id="sess-span",
+        arguments=dict(ARGUMENTS),
+    )
+
+    spans = exporter.get_finished_spans()
+    assert result["status"] == "approval_pending"
+    assert [span.name for span in spans] == ["tool.execute execute_file_write"]
+    attributes = dict(spans[0].attributes or {})
+    assert attributes["bastion.tool.name"] == "execute_file_write"
+    assert attributes["bastion.tool.status"] == "approval_pending"
+    assert attributes["bastion.audit.session_id"] == "sess-span"
+    assert attributes["bastion.approval.ticket_id"] == result["ticket_id"]
+    assert "reports/q3.txt" not in json.dumps(attributes)
+    assert "revenue" not in json.dumps(attributes)
+
+
+async def test_resume_span_records_the_executed_ticket(
+    worker_db, workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed ticket carries the same ticket id the gateway decision does."""
+    from agent.runtime import execute_tool_job, resume_tool_job
+
+    exporter = capture_worker_spans(monkeypatch)
+    pending = await execute_tool_job(
+        {"job_id": "test-span-job"},
+        tool_name="execute_file_write",
+        actor_id="alice",
+        roles=["operator"],
+        session_id="sess-span",
+        arguments=dict(ARGUMENTS),
+    )
+    assert pending["ticket_id"] is not None
+
+    factory = async_sessionmaker(worker_db, expire_on_commit=False)
+    async with factory() as approver:
+        await approve(approver, pending["ticket_id"])
+        await approver.commit()
+
+    exporter.clear()
+    result = await resume_tool_job({"job_id": "test-resume-job"}, ticket_id=pending["ticket_id"])
+
+    spans = exporter.get_finished_spans()
+    assert result["status"] == "executed"
+    assert [span.name for span in spans] == ["tool.resume"]
+    attributes = dict(spans[0].attributes or {})
+    assert attributes["bastion.approval.ticket_id"] == pending["ticket_id"]
+    assert attributes["bastion.tool.status"] == "executed"
+    assert (workspace / "reports/q3.txt").read_text() == "revenue"
+
+
+async def test_resume_span_marks_a_ticket_that_is_not_ready(
+    worker_db, workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal is a status, not a silent empty span."""
+    from agent.runtime import execute_tool_job, resume_tool_job
+
+    exporter = capture_worker_spans(monkeypatch)
+    pending = await execute_tool_job(
+        {"job_id": "test-span-job"},
+        tool_name="execute_file_write",
+        actor_id="alice",
+        roles=["operator"],
+        session_id="sess-span",
+        arguments=dict(ARGUMENTS),
+    )
+    exporter.clear()
+
+    result = await resume_tool_job({"job_id": "test-resume-job"}, ticket_id=pending["ticket_id"])
+
+    spans = exporter.get_finished_spans()
+    assert result["status"] == "not_approved"
+    attributes = dict(spans[0].attributes or {})
+    assert attributes["bastion.tool.status"] == "not_approved"
+    assert attributes["error.type"] == "ApprovalExecutionError"
+    assert not (workspace / "reports/q3.txt").exists()
+
+
+async def test_read_only_worker_span_has_no_ticket(
+    worker_db, workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No suspension means no approval attribute to misinterpret downstream."""
+    from agent.runtime import execute_tool_job
+
+    exporter = capture_worker_spans(monkeypatch)
+    result = await execute_tool_job(
+        {"job_id": "test-read-job"},
+        tool_name="read_system_status",
+        actor_id="alice",
+        roles=["operator"],
+        session_id="sess-read",
+        arguments={},
+    )
+
+    assert result["status"] == "executed"
+    attributes = dict(exporter.get_finished_spans()[0].attributes or {})
+    assert attributes["bastion.tool.status"] == "executed"
+    assert "bastion.approval.ticket_id" not in attributes
+    assert "bastion.tool.code" not in attributes

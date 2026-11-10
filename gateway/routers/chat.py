@@ -26,7 +26,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from collections.abc import Mapping
 from typing import Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -55,12 +54,18 @@ from db.audit import append_audit_event
 from db.models import AuditEventType
 from db.session import get_db_session
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
+from telemetry import annotate_span, span_attributes
 
 logger = logging.getLogger(__name__)
 
 #: Resolves to the provider's tracer once ``configure_tracing`` runs; the proxy
 #: is safe to grab at import time.
 _tracer = trace.get_tracer(__name__)
+
+#: Local names keep the guardrail call sites readable; the helpers live in
+#: ``telemetry`` so the ARQ worker annotates its spans the same way.
+_attributes = span_attributes
+_annotate = annotate_span
 
 router = APIRouter(tags=["chat"])
 
@@ -140,18 +145,6 @@ def _vault_session(actor_id: str, conversation_id: str) -> str:
     """
     digest = hashlib.sha256(f"{actor_id}\x00{conversation_id}".encode()).hexdigest()
     return f"chat:{digest}"
-
-
-def _attributes(
-    attributes: Mapping[str, AttributeValue | None],
-) -> dict[str, AttributeValue]:
-    """Drop unset values: OTel rejects ``None`` and warns once per attribute."""
-    return {key: value for key, value in attributes.items() if value is not None}
-
-
-def _annotate(attributes: Mapping[str, AttributeValue | None]) -> None:
-    """Attach machine metadata — never prompt text — to the active server span."""
-    trace.get_current_span().set_attributes(_attributes(attributes))
 
 
 def _split_model(model: str) -> tuple[str, str]:

@@ -8,6 +8,7 @@ image works with tracing on or off.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 from fastapi import FastAPI
 from opentelemetry import trace
@@ -17,6 +18,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.util.types import AttributeValue
 
 from settings import Settings, get_settings
 
@@ -35,6 +37,23 @@ SERVICE_VERSION = "0.1.0"
 DEFAULT_EXCLUDED_URLS = "/health,/health/ready,/metrics,api/approvals$,api/evals/latest$"
 
 _provider: TracerProvider | None = None
+
+
+def span_attributes(
+    attributes: Mapping[str, AttributeValue | None],
+) -> dict[str, AttributeValue]:
+    """Drop unset values: OTel rejects ``None`` and warns once per attribute."""
+    return {key: value for key, value in attributes.items() if value is not None}
+
+
+def annotate_span(attributes: Mapping[str, AttributeValue | None]) -> None:
+    """Attach machine metadata — never payload text — to the active span.
+
+    Callers pass identifiers and verdicts, not prompt or tool argument content:
+    traces leave the host, and a DLP product that exports payload text has moved
+    the leak rather than stopped it.
+    """
+    trace.get_current_span().set_attributes(span_attributes(attributes))
 
 
 def traces_endpoint(base_endpoint: str) -> str:

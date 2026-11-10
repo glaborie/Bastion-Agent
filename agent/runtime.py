@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any, ClassVar
 
 from arq import cron
 from arq.connections import RedisSettings
+from opentelemetry import trace
+from opentelemetry.util.types import AttributeValue
 
 from agent.routing.client import close_model_router
 from agent.tools.decorator import (
@@ -49,9 +52,13 @@ from agent.tools.execution import (
 from db.session import dispose_engine, init_models, session_scope
 from logging_setup import configure_logging
 from settings import get_settings
-from telemetry import configure_tracing, shutdown_tracing
+from telemetry import configure_tracing, shutdown_tracing, span_attributes
 
 logger = logging.getLogger(__name__)
+
+#: Resolves to the provider the worker installs at startup. Jobs are the only
+#: traced work: the two cron sweeps run every 30 s and would be pure noise.
+_tracer = trace.get_tracer(__name__)
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -76,6 +83,24 @@ async def worker_healthcheck(ctx: dict[str, Any]) -> dict[str, str]:
     return {"status": "ok", "queue": WorkerSettings.queue_name}
 
 
+def _outcome_attributes(payload: Mapping[str, Any]) -> dict[str, AttributeValue]:
+    """Status, ticket and refusal code of a finished job.
+
+    Arguments are deliberately absent: the ledger keeps the hash and the keys,
+    the trace keeps the verdict.
+    """
+    status = payload.get("status")
+    ticket_id = payload.get("ticket_id")
+    code = payload.get("code")
+    return span_attributes(
+        {
+            "bastion.tool.status": status if isinstance(status, str) else None,
+            "bastion.approval.ticket_id": str(ticket_id) if ticket_id is not None else None,
+            "bastion.tool.code": code if isinstance(code, int) else None,
+        }
+    )
+
+
 async def execute_tool_job(
     ctx: dict[str, Any],
     *,
@@ -89,7 +114,40 @@ async def execute_tool_job(
 
     ``actor_id`` must be the caller's OIDC subject (JWT ``sub``), because the
     approval decision compares it with the approver's subject.
+
+    One span per job, named after the tool, so the worker half of a four-eyes
+    decision is visible next to the gateway span that approved it.
     """
+    with _tracer.start_as_current_span(f"tool.execute {tool_name}") as span:
+        span.set_attributes(
+            span_attributes(
+                {
+                    "bastion.tool.name": tool_name,
+                    "bastion.audit.session_id": session_id,
+                }
+            )
+        )
+        result = await _run_tool_job(
+            ctx,
+            tool_name=tool_name,
+            actor_id=actor_id,
+            roles=roles,
+            session_id=session_id,
+            arguments=arguments,
+        )
+        span.set_attributes(_outcome_attributes(result))
+        return result
+
+
+async def _run_tool_job(
+    ctx: dict[str, Any],
+    *,
+    tool_name: str,
+    actor_id: str,
+    roles: list[str] | None,
+    session_id: str,
+    arguments: dict[str, Any] | None,
+) -> dict[str, Any]:
     settings = get_settings()
     try:
         encoded = json.dumps(arguments or {}, ensure_ascii=False).encode("utf-8")
@@ -183,21 +241,31 @@ async def _persist_refusal(
 
 
 async def resume_tool_job(ctx: dict[str, Any], *, ticket_id: str) -> dict[str, Any]:
-    """Execute an approved ticket; safe to call more than once."""
-    try:
-        async with session_scope() as session:
-            result = await resume_approved_tool(session, ticket_id=ticket_id)
-    except ApprovalExecutionError as exc:
-        logger.info(
-            "Ticket not resumable",
-            extra={"ticket_id": ticket_id, "code": exc.code},
-        )
-        return {"status": exc.code, "ticket_id": ticket_id, "error": str(exc)}
-    except ToolError as exc:  # pragma: no cover - defensive
-        return {"status": "error", "ticket_id": ticket_id, "error": str(exc)}
-    payload = result.to_payload()
-    payload["ticket_id"] = ticket_id
-    return payload
+    """Execute an approved ticket; safe to call more than once.
+
+    The span carries the ticket id, the same attribute the gateway puts on the
+    four-eyes decision, so the two traces join on the approval in the ledger.
+    """
+    with _tracer.start_as_current_span("tool.resume") as span:
+        span.set_attribute("bastion.approval.ticket_id", ticket_id)
+        try:
+            async with session_scope() as session:
+                result = await resume_approved_tool(session, ticket_id=ticket_id)
+        except ApprovalExecutionError as exc:
+            span.set_attribute("error.type", type(exc).__name__)
+            logger.info(
+                "Ticket not resumable",
+                extra={"ticket_id": ticket_id, "code": exc.code},
+            )
+            payload = {"status": exc.code, "ticket_id": ticket_id, "error": str(exc)}
+        except ToolError as exc:  # pragma: no cover - defensive
+            span.set_attribute("error.type", type(exc).__name__)
+            payload = {"status": "error", "ticket_id": ticket_id, "error": str(exc)}
+        else:
+            payload = result.to_payload()
+            payload["ticket_id"] = ticket_id
+        span.set_attributes(_outcome_attributes(payload))
+        return payload
 
 
 async def expire_stale_approvals_job(ctx: dict[str, Any]) -> dict[str, int]:

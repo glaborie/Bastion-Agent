@@ -27,6 +27,7 @@ from gateway.dashboard.templating import render
 from gateway.queue import enqueue_tool_resume
 from gateway.web import is_htmx
 from settings import get_settings
+from telemetry import annotate_span
 
 logger = logging.getLogger(__name__)
 
@@ -143,10 +144,28 @@ async def decide_approval(
             await session.commit()
             await enqueue_tool_resume(str(ticket.ticket_id))
     except ApprovalDecisionError as exc:
+        # A refused decision is a security event, not noise: keep the ticket
+        # join key and the refusal code even though the request failed.
+        annotate_span(
+            {
+                "bastion.approval.ticket_id": str(ticket_id),
+                "bastion.approval.refusal": exc.code,
+            }
+        )
         if is_htmx(request):
             approvals, recent = await _queue_view(session, context)
             return _render_approvals(request, context, approvals, recent, error=str(exc))
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    # Same attribute the worker puts on its resume span: the decision and the
+    # execution are two traces, and this is the join key.
+    annotate_span(
+        {
+            "bastion.approval.ticket_id": str(ticket.ticket_id),
+            "bastion.approval.action": decision,
+            "bastion.approval.status": ticket.status.value,
+        }
+    )
 
     if is_htmx(request):
         approvals, recent = await _queue_view(session, context)

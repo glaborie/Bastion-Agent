@@ -6,7 +6,15 @@ import pytest
 from opentelemetry.instrumentation.asgi import parse_excluded_urls
 
 from settings import Settings
-from telemetry import DEFAULT_EXCLUDED_URLS, configure_tracing, traces_endpoint
+from telemetry import DEFAULT_EXCLUDED_URLS, configure_tracing, span_attributes, traces_endpoint
+
+
+def test_span_attributes_drop_unset_values() -> None:
+    """OTel warns once per ``None`` attribute and shows null in the backend."""
+    assert span_attributes({"kept": 1, "dropped": None, "false": False}) == {
+        "kept": 1,
+        "false": False,
+    }
 
 
 def test_traces_endpoint_appends_the_signal_path() -> None:
