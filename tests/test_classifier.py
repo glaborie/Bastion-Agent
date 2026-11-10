@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+from agent.routing import classifier as classifier_module
 from agent.routing.classifier import (
     CATEGORY_REASONS,
     SAFETY_LABELS,
@@ -14,6 +16,7 @@ from agent.routing.classifier import (
     EnsembleThresholds,
     Sensitivity,
     SensitivityClassifier,
+    _execution_providers,
     _OnnxGraph,
     _sigmoid,
     _softmax,
@@ -440,3 +443,49 @@ def test_real_ensemble_separates_injection_privacy_and_public_prompts() -> None:
     public = classifier_.classify("Write a haiku about the sea.")
     assert public.label is Sensitivity.PUBLIC
     assert public.reason == "public_content"
+
+
+# -- execution provider ----------------------------------------------------
+class _FakeOrt:
+    """Just the provider probe ``_execution_providers`` needs."""
+
+    def __init__(self, *providers: str) -> None:
+        self._providers = list(providers)
+
+    def get_available_providers(self) -> list[str]:
+        return self._providers
+
+
+def _provider_settings(monkeypatch: pytest.MonkeyPatch, choice: str) -> None:
+    monkeypatch.setattr(
+        classifier_module,
+        "get_settings",
+        lambda: SimpleNamespace(classifier_execution_provider=choice),
+    )
+
+
+def test_cpu_is_the_default_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings(_env_file=None).classifier_execution_provider == "cpu"
+    _provider_settings(monkeypatch, "cpu")
+    providers = _execution_providers(_FakeOrt("CUDAExecutionProvider", "CPUExecutionProvider"))
+    assert providers == ["CPUExecutionProvider"]
+
+
+def test_cuda_provider_is_opt_in_and_fails_closed_without_the_wheel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _provider_settings(monkeypatch, "cuda")
+    with pytest.raises(ClassifierConfigurationError):
+        _execution_providers(_FakeOrt("CPUExecutionProvider"))
+
+    providers = _execution_providers(_FakeOrt("CUDAExecutionProvider", "CPUExecutionProvider"))
+    assert providers == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_auto_prefers_cuda_and_falls_back_to_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    _provider_settings(monkeypatch, "auto")
+    assert _execution_providers(_FakeOrt("CUDAExecutionProvider", "CPUExecutionProvider")) == [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+    assert _execution_providers(_FakeOrt("CPUExecutionProvider")) == ["CPUExecutionProvider"]

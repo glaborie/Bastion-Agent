@@ -312,6 +312,16 @@ model, `unsafe = 0.3` admits the prompt-injection explainer (0.364), and
 would have caught. ADR-011 records the measured gaps and the caveat that the
 corpus is a calibration set, not held-out evidence.
 
+Latency is measured, not assumed: `scripts/measure_classifier_latency.py`
+reports percentiles per prompt on the configured provider and samples GPU
+memory. On the 2026-11-10 run the ensemble costs 22–40 ms p50 (p95 ≤ 51 ms) on
+the CPU for prompt-sized input and ~1.6 s for a 1,000-token memo that is
+windowed; a CUDA session was 1.4–2× *slower*, because `MatMulInteger` and
+`DynamicQuantizeLinear` fall back to the CPU and the copies cost more than the
+matmuls they surround. `CLASSIFIER_EXECUTION_PROVIDER` therefore defaults to
+`cpu`; `cuda` is opt-in, needs `onnxruntime-gpu`, and fails closed without it
+(ADR-011 records the numbers and the 1.24 GiB VRAM peak).
+
 Demo the whole thing with:
 
 ```bash

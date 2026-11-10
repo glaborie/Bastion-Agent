@@ -319,12 +319,15 @@ class _OnnxGraph:
             ) from exc
 
         try:
+            providers = _execution_providers(onnxruntime)
             tokenizer = Tokenizer.from_file(str(tokenizer_path))
             tokenizer.no_truncation()
             session = onnxruntime.InferenceSession(
                 str(model_path),
-                providers=_execution_providers(onnxruntime),
+                providers=providers,
             )
+        except ClassifierConfigurationError:
+            raise
         except Exception as exc:
             raise ClassifierConfigurationError(
                 f"could not load {graph} artefacts from {model_path}"
@@ -721,12 +724,30 @@ def _windows(ids: list[int], window: int) -> list[list[int]]:
 
 
 def _execution_providers(onnxruntime: Any) -> list[str]:
-    """CUDA first, CPU fallback — the order ADR-011 specifies."""
+    """Resolve the execution provider order from ``CLASSIFIER_EXECUTION_PROVIDER``.
+
+    ADR-011 measured the int8 graphs on both providers: CPU is faster, because
+    ``MatMulInteger`` and ``DynamicQuantizeLinear`` have no CUDA kernel and the
+    device/CPU copies cost more than the matmuls they surround. ``cpu`` is
+    therefore the default. ``cuda`` is opt-in and fails closed when the
+    interpreter has no CUDA provider, so an operator never believes a graph is
+    on the device while it runs on the CPU. ``auto`` prefers CUDA when present.
+    """
     available = set(onnxruntime.get_available_providers())
-    ordered = [
-        name for name in ("CUDAExecutionProvider", "CPUExecutionProvider") if name in available
-    ]
-    return ordered or ["CPUExecutionProvider"]
+    if "CPUExecutionProvider" not in available:  # pragma: no cover - always present
+        raise ClassifierConfigurationError("onnxruntime has no CPU execution provider")
+
+    choice = get_settings().classifier_execution_provider
+    if choice == "cpu":
+        return ["CPUExecutionProvider"]
+    if "CUDAExecutionProvider" not in available:
+        if choice == "cuda":
+            raise ClassifierConfigurationError(
+                "CLASSIFIER_EXECUTION_PROVIDER=cuda but onnxruntime offers no CUDA "
+                "provider; install onnxruntime-gpu or set the provider to cpu"
+            )
+        return ["CPUExecutionProvider"]
+    return ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:

@@ -158,6 +158,13 @@ class Settings(BaseSettings):
     #: compensation), so disabling this lets explicitly marked material take the
     #: cloud path. It can only add CONFIDENTIAL decisions, never remove one.
     classifier_rules_floor: bool = True
+    #: Execution provider for the ensemble graphs. ``cpu`` is the default
+    #: because the shipped int8 graphs are measurably *faster* on the CPU: the
+    #: quantised matmuls have no CUDA kernel and shuttle their tensors over
+    #: PCIe (ADR-011, measured 2026-11-10). ``cuda`` requires the
+    #: ``onnxruntime-gpu`` wheel and fails closed without it; ``auto`` prefers
+    #: CUDA when the interpreter provides it.
+    classifier_execution_provider: Literal["cpu", "cuda", "auto"] = "cpu"
 
     # -- HITL approvals ----------------------------------------------------
     approval_hmac_secret: SecretStr = SecretStr(DEV_APPROVAL_HMAC_SECRET)
