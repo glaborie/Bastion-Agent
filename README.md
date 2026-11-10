@@ -880,13 +880,26 @@ rotated — a stale value makes the collector log `401 Unauthorized`):
 python -c "import base64;print(base64.b64encode(b'pk-lf-...:sk-lf-...').decode())"
 ```
 
-Verify end to end: make a request (`curl -s http://localhost:8000/docs >/dev/null`),
+Verify end to end: make a request (`uv run python scripts/demo_traffic.py` drives ten),
 then check three things — the collector shows no `Exporting failed` lines, the
-trace appears in Langfuse under `service.name=bastion-gateway`, and
-`POST https://api.arize.com/v2/spans` (Bearer API key, `project_id` from
-`GET https://api.arize.com/v2/projects?space_id=…`) returns the new spans. The
-collector log alone is a weak signal: Arize answers `200 ok` for a batch it
-discards.
+spans read back from Langfuse, and `POST https://api.arize.com/v2/spans` (Bearer
+API key, `project_id` from `GET https://api.arize.com/v2/projects?space_id=…`)
+returns them. The collector log alone is a weak signal: Arize answers `200 ok`
+for a batch it discards.
+
+```bash
+# Langfuse: read the spans back instead of trusting the UI.
+FROM=$(date -u -d '-15 min' +%Y-%m-%dT%H:%M:%SZ); TO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+curl -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
+  "$LANGFUSE_BASE_URL/api/public/v2/observations?fields=core,basic,usage,model&fromStartTime=$FROM&toStartTime=$TO" \
+  | jq -r '.data[] | "\(.name) \(.type) model=\(.model // "-") tokens=\(.usageDetails.total // "-") cost=\(.totalCost // "-")"'
+```
+
+A guarded turn reads `chat cloud-primary GENERATION model=gpt-4o-mini
+tokens=119 cost=2.74725e-05`, and `tool.resume` arrives as a `SPAN` row. Two
+traps in that API: `GET /api/public/traces` is deprecated and stops answering on
+2026-11-16, and asking for `fields=usage` returns `"usage": null` — the numbers
+live in `usageDetails` and `totalCost`.
 
 ---
 
