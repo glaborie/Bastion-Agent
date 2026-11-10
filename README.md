@@ -776,6 +776,31 @@ backend has moved the leak rather than stopped it. The vault markers, entity
 counts and routing verdict are the auditable evidence; the text stays in the
 audit ledger, hashed.
 
+### What a tool trace contains
+
+Tool execution lives in the worker (`arq`), so it is a second trace, exported as
+`service.name=bastion-worker`: `tool.execute <name>` when the runtime authorizes
+a call — `bastion.tool.name`, `bastion.audit.session_id`, `bastion.tool.status`,
+and `bastion.approval.ticket_id` when it suspends — and `tool.resume` when an
+approved ticket runs. The four-eyes decision span in the gateway carries the same
+`bastion.approval.ticket_id`, so the approval and the execution join on it. The
+two cron sweeps (expiry, approved-ticket resume) are deliberately untraced: they
+run every 30 s and would be noise. Tool arguments are hashed in the ledger and
+never exported.
+
+To fill the trace store and the ledger with realistic traffic before a demo:
+
+```bash
+uv run python scripts/demo_traffic.py
+uv run python scripts/demo_traffic.py --json | jq -c .
+```
+
+Ten turns across three principals: public prompts that may reach the cloud,
+prompts carrying identifiers (redaction and restore), two prompts confidential by
+content, an instruction-extraction probe, and a three-turn thread that keeps one
+conversation id. Each line reports the classification, route and confidence the
+classifier produced; the model's text is not printed, only its length.
+
 ### Local OpenLit instead of a cloud backend
 
 A self-hosted OpenLit is the unmetered option: traces never leave the host and

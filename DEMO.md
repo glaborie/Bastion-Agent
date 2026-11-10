@@ -215,8 +215,9 @@ deterministic while the models handle paraphrase and injection.
 
 ## 5. Act 3 — four-eyes tool execution (the centrepiece)
 
-There is no chat endpoint yet, so `scripts/demo_tool_request.py` plays the
-agent’s role: it enqueues the same `execute_tool_job` the agent will enqueue.
+The chat endpoint does not enqueue tool calls yet, so
+`scripts/demo_tool_request.py` plays the agent’s role: it enqueues the same
+`execute_tool_job` the agent will enqueue.
 Run the following in **one shell** so the variables persist.
 
 ### 5.1 Identities
@@ -673,6 +674,20 @@ docker compose exec -T db psql -U bastion -d bastion -c \
 Expected: the four lifecycle rows, with `EGRESS_FILTERED` showing
 `blocked = false`. A `SECURITY_INCIDENT` with `"stage": "egress"` is the live
 equivalent of step 2.
+
+To produce a whole session at once — and the traces that go with it — run the
+traffic driver instead of typing curls:
+
+```bash
+uv run python scripts/demo_traffic.py
+uv run python scripts/demo_traffic.py --json | jq -c .
+```
+
+Ten turns across alice, bob and carol: public prompts, prompts carrying
+identifiers, confidential-by-content prompts, an extraction probe and one
+three-turn thread. One line per turn shows the classification, route and
+confidence the classifier chose; see README → Observability for the spans this
+writes.
 
 ---
 
