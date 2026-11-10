@@ -354,8 +354,70 @@ uv run pytest -q tests/test_vault.py tests/test_dlp_presidio.py \
   tests/test_dlp_evals.py tests/test_routing_client.py
 ```
 
-The chat endpoint lands with the agent loop; the DLP, vault, classifier and
-router are exercised directly by the tests and the live smoke below.
+## Egress Sanitizer & Guarded Chat (Milestone 5)
+
+### Modules
+
+| Module | Responsibility |
+|--------|----------------|
+| `agent/egress/sanitizer.py` | session canary, untrusted-content fence, output scan, Redis quarantine |
+| `gateway/routers/chat.py` | `POST /v1/chat` from ingress audit to sanitized egress |
+
+### What the endpoint does
+
+`POST /v1/chat` is the only path to a model. It requires `operator`, `analyst`
+or `admin`, and session-cookie callers must also present the CSRF token. The
+stages run in a fixed order and each one is audited before the next starts:
+
+1. `INPUT_RECEIVED` — message count, roles and size; the request itself is
+   stored only as a SHA-256 hash.
+2. Presidio redaction → `DLP_REDACTION` with entity types and counts.
+3. Classification of the **raw** text → `ROUTING_DECISION`. Redaction must not
+   run first: a bare IBAN becomes `{{ENTITY:IBAN_CODE_1}}`, which weakens the
+   privacy signal (measured 0.582 → 0.201).
+4. Canary injection and fencing of `tool` messages as `<untrusted_content>`.
+5. Model call on the selected alias.
+6. `EGRESS_FILTERED` — canary scan, quarantine check and marker restoration.
+   A billed response also writes `SECURITY_INCIDENT` and returns `502` with no
+   model text; a quarantined session returns `403` before inference.
+
+Limits are 64 messages, 32,768 characters per message and 65,536 characters per
+conversation. `conversation_id` is optional; the response returns the generated
+one. The vault session is derived from `actor_id + conversation_id`, so another
+principal cannot reuse your id to decode your markers.
+
+```bash
+curl -sS http://localhost:8000/v1/chat \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"conversation_id":"demo-1","messages":[{"role":"user","content":"Summarise our Q3 board minutes"}]}'
+```
+
+### Canary and quarantine
+
+Every session gets one `CANARY-<uuid4>` in Redis (30-minute TTL) and the marker
+is appended to the system instructions with an explicit "never repeat this"
+rule. `inspect()` blocks on **any** token with the configured prefix, discards
+the response, and quarantines the session for `EGRESS_TRIP_TTL_SECONDS`
+(default 900 s). Quarantine is checked before inference on the next turn and is
+shared by every gateway replica. Redis is a hard dependency: if it is
+unreachable the endpoint returns `503` rather than delivering an unscanned
+answer.
+
+### Fencing and restoration
+
+Tool output is wrapped in `<untrusted_content source="…">`, with embedded fence
+tags and canary-shaped strings neutralised so a payload cannot close the fence.
+After the canary scan, `{{ENTITY:…}}` markers are restored only through the
+caller's vault session. A marker whose entry expired stays visible and is
+counted; it is never guessed.
+
+### Verification
+
+```bash
+uv run pytest -q tests/test_egress_sanitizer.py tests/test_egress_evals.py \
+  tests/test_chat.py tests/test_chat_contract.py
+```
 
 ## Guarded Tools & Four-Eyes HITL (Milestone 4)
 
@@ -471,6 +533,7 @@ uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
 | `scripts/validate_rbac.py` | Realm roles/users ↔ code roles ↔ tool requirements; proves four-eyes is possible |
 | `scripts/recalculate_dread.py` | Recompute DREAD totals and the risk-priority list; `--check` / `--write` |
 | `scripts/update_threat_intel.py` | Query OSV for every registry package in `uv.lock`; writes `artifacts/threat-intel/latest.json` |
+| `scripts/run_evals.py` | Run the three golden gates and atomically publish `artifacts/evals/latest.json` |
 | `scripts/demo_tool_request.py` | Originate a guarded tool call for the demo (see `DEMO.md`) |
 | `scripts/seed_demo_approval.py` | Seed a suspended ticket without a worker |
 | `scripts/omniroute_bootstrap.py` | Register OmniRoute provider aliases and the gateway key |
@@ -510,6 +573,7 @@ uv run ruff check .          # lint
 uv run mypy settings.py logging_setup.py db gateway agent scripts
 uv run pylint settings.py logging_setup.py telemetry.py db gateway agent tests scripts
 uv run python scripts/check_adrs.py
+uv run python scripts/run_evals.py
 uv run python scripts/validate_tool_catalog.py --check
 uv run python scripts/validate_rbac.py
 uv run python scripts/recalculate_dread.py --check
@@ -698,15 +762,19 @@ Alternatively reclaim the range from an elevated Windows prompt with
 ## Running DeepEval Regression Tests
 
 ```bash
-# Zero-tolerance golden gates: Presidio entity coverage + classifier labels
-uv run pytest tests/test_dlp_evals.py tests/test_classifier_evals.py -v
+# Zero-tolerance golden gates: DLP entity coverage, egress canaries, classifier labels
+uv run pytest tests/test_dlp_evals.py tests/test_egress_evals.py \
+  tests/test_classifier_evals.py -v
 
 # Reproduce the threshold sweep recorded in ADR-011
 uv run python scripts/tune_classifier.py
+
+# Run all gates and publish artifacts/evals/latest.json for GET /api/evals/latest
+uv run python scripts/run_evals.py
 ```
 
-`DLPRedactionMetric` is a real `deepeval.metrics.BaseMetric` scored in-process
-against `tests/data/goldens.jsonl`, so the gate needs no provider credentials.
-`EgressCanaryMetric` lands with the Milestone 5 sanitizer; a metric that
-asserts nothing would be worse than no metric. The run summary is not yet
-published to `GET /api/evals/latest`, which remains Milestone 6 work.
+`DLPRedactionMetric`, `EgressCanaryMetric` and the classifier gate are all
+scored in-process, so the suite needs no provider credentials.
+`run_evals.py` writes the summary atomically and maps each module to its metric.
+A gate that executed no tests scores `0.0` and adds a synthetic failure: an
+unverified gate is never reported green.

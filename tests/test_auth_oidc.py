@@ -250,6 +250,20 @@ async def test_unknown_kid_does_not_refetch_inside_the_rate_limit() -> None:
     assert attempts["count"] == 1
 
 
+async def test_first_fetch_is_not_gated_by_the_refresh_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A freshly booted host has a small monotonic clock, not zero."""
+    monkeypatch.setattr("gateway.auth.oidc.time.monotonic", lambda: 10.0)
+    validator, client, attempts = build_validator(min_refresh_seconds=3600)
+    try:
+        principal = await validator.validate_access_token(sign(claims()))
+    finally:
+        await client.aclose()
+    assert principal.subject == "user-123"
+    assert attempts["count"] == 1
+
+
 async def test_jwks_outage_without_cache_is_reported() -> None:
     def failing(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"error": "unavailable"})

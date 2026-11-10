@@ -195,7 +195,12 @@ class Settings(BaseSettings):
     otel_traces_sampler_ratio: float = 1.0
 
     # -- Egress sanitizer --------------------------------------------------
+    #: Marker prefix embedded in the system instructions and scanned for in
+    #: model output. A hit quarantines the session.
     canary_prefix: str = "CANARY-"
+    #: Quarantine window after a canary leak. Longer than one request and short
+    #: enough that a false positive does not lock a conversation out for long.
+    egress_trip_ttl_seconds: int = 900
 
     # ------------------------------------------------------------------
     # Validation
@@ -263,6 +268,7 @@ class Settings(BaseSettings):
         "tool_max_write_bytes",
         "tool_max_argument_bytes",
         "keycloak_jwks_cache_ttl_seconds",
+        "egress_trip_ttl_seconds",
     )
     @classmethod
     def _validate_positive(cls, value: int) -> int:

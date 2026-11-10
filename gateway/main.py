@@ -25,7 +25,7 @@ from gateway.auth.session import safe_next_path
 from gateway.dashboard.routes import router as dashboard_router
 from gateway.dashboard.templating import render_error
 from gateway.queue import close_arq_pool
-from gateway.routers import approvals, audit, auth, evals, health
+from gateway.routers import approvals, audit, auth, chat, evals, health
 from gateway.web import is_htmx
 from logging_setup import configure_logging
 from settings import get_settings
@@ -95,6 +95,7 @@ def create_app() -> FastAPI:
             {"name": "auth", "description": "OIDC login, session and identity endpoints."},
             {"name": "approvals", "description": "Four-eyes approval queue."},
             {"name": "audit", "description": "Hash-chained audit ledger."},
+            {"name": "chat", "description": "Guarded chat completion with DLP and egress."},
             {"name": "evals", "description": "DeepEval regression health."},
         ],
     )
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(approvals.router)
     app.include_router(audit.router)
+    app.include_router(chat.router)
     app.include_router(evals.router)
     app.include_router(dashboard_router)
 

@@ -192,10 +192,12 @@ class JWKSClient:
                 return self._keys[kid]
 
             # Refresh when the cache is empty/stale, or once the rate limit has
-            # elapsed for an unknown kid (key rotation without a restart).
-            if (
-                not fresh or kid not in self._keys
-            ) and now - self._last_attempt >= self._min_refresh:
+            # elapsed for an unknown kid (key rotation without a restart). An
+            # empty cache always fetches: ``time.monotonic()`` can be smaller
+            # than the refresh interval on a freshly booted host, and gating
+            # the first fetch there would reject every token.
+            should_refresh = not fresh or kid not in self._keys
+            if should_refresh and (not self._keys or now - self._last_attempt >= self._min_refresh):
                 self._last_attempt = now
                 try:
                     await self._fetch()

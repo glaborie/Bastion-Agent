@@ -2,16 +2,19 @@
 
 **Audience:** security, platform and compliance reviewers evaluating the harness.
 **Duration:** 10–15 minutes (plus model download on first run).
-**Scope:** everything implemented through **Milestone 4** — SSO/RBAC, the
-command-control dashboard, the DLP vault, confidentiality routing, the
-hash-chained ledger, and guarded tool execution with four-eyes approval.
+**Scope:** everything implemented through **Milestone 5** — SSO/RBAC, the
+command-control dashboard, the DLP vault, confidentiality routing, egress
+canary tripwires with untrusted-content fencing, the hash-chained ledger,
+guarded tool execution with four-eyes approval, and the offline golden gates.
 
-> **What this demo does *not* cover.** There is no chat endpoint or agent loop
-> yet, and egress canaries (Milestone 5) and the DeepEval golden gate
-> (Milestone 6) are not implemented. `SECURITY.md`, `THREAT_MODEL.md` and
-> `COMPLIANCE.md` describe the full target architecture; this document only
-> demonstrates behaviour that is live in the repository today. The evaluation
-> card on the dashboard correctly shows “not run yet”.
+> **What this demo does *not* cover.** The runtime enforcement of
+> `docs/tools/v1.json` (ADR-009 Gate 1), the Langfuse/Arize exporters (the
+> collector ships with the `debug` exporter) and GPU sizing measurements are
+> still open. `SECURITY.md`, `THREAT_MODEL.md` and `COMPLIANCE.md` describe the
+> full target architecture; this document only demonstrates behaviour that is
+> live in the repository today. The evaluation card is populated by
+> `uv run python scripts/run_evals.py`; until that runs, it correctly shows
+> “not run yet”.
 
 ---
 
@@ -451,7 +454,7 @@ Signed in as `breakglass`:
 
 | Page | What to show |
 |---|---|
-| `/dashboard` | Pending approvals, recent decisions with full ticket ids, the four-eyes rule, evaluation card (“not run yet”) |
+| `/dashboard` | Pending approvals, recent decisions with full ticket ids, the four-eyes rule, evaluation card (“not run yet” until `scripts/run_evals.py` runs) |
 | `/dashboard/audit` | Filter by event type, actor, session; verify the chain in place |
 | `/dashboard/sessions/<SESSION>` | The whole request lifecycle for the demo session |
 
