@@ -11,16 +11,17 @@ must not be edited by hand.
 
 - current-phase: v0.2
 - wip-limit: 3
-- next-id: IDEA-008
+- next-id: IDEA-009
 
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (3)
+### Inbox (4)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-007` P1 v0.2 agent - Route corporate-confidential documents without explicit markers to the local model
+- `IDEA-008` P1 v0.2 evals - Make the eval gate bit-reproducible across hosted runners
 
 ### Ready (2)
 
@@ -54,6 +55,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-005 | ready | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
 | IDEA-006 | done | P3 | v0.2 | docs | Add a deterministic egress canary demo |
 | IDEA-007 | inbox | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
+| IDEA-008 | inbox | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
 <!-- END INDEX -->
 
 ## Items
@@ -300,3 +302,52 @@ class of text.
 - This is documented policy, not a crash: the `_RULES` comment pins the 0.50 outcome deliberately and `test_a_single_codename_is_borderline_and_stays_public` enforces the same threshold for `codename`, so the fix is a decision with a false-positive budget attached, not an inline edit.
 - Options seen so far: raise `commercial` to 3.0 (a lone forecast marker then scores 0.60), add a contract/legal rule set, or train a corporate-secrecy head. Weight tuning alone cannot cover the indemnity case, which matches nothing.
 - Spotted while reviewing trace telemetry from a realistic traffic run: the misroute appeared as a PUBLIC `cloud-primary` turn in OpenLit. Related to IDEA-003 (classifier latency) through the same ADR-011 operating point.
+
+### IDEA-008: Make the eval gate bit-reproducible across hosted runners
+
+- status: inbox
+- priority: P1
+- phase: v0.2
+- area: evals
+- tags: ci, onnx, int8, calibration, golden-set
+- depends-on: -
+- spec: ADR-011
+- created: 2026-11-10
+- updated: 2026-11-10
+- source: CI runs 42866889651 and 42870723135 on 2026-11-10
+
+**Problem**
+
+`Zero-tolerance eval gates (real ONNX models)` is red on `master` for two
+consecutive commits even though one of them (`af91390`) only touches
+`BACKLOG.md`. Both runs and a re-run land on an AMD EPYC 7763 runner and score
+the benign golden rows `CONFIDENTIAL`/`unsafe_content` at 0.75–0.97
+(`public-haiku-048` probe: 0.9243); the four documented misses flip to blocked
+as well. This is the ADR-011 consequence "the gate's numbers are CPU-dispatch
+dependent", now deterministic on that runner image rather than a one-off, so
+the recorded mitigation (log the host, the AVX-512 flags and one probe) explains
+the failure but does not unblock a merge: a re-run returns to the same image.
+
+**Outcome**
+
+The gate is green on every hosted runner for the same commit, or it fails with
+an explicit environment verdict instead of a false "regression". A false
+`CONFIDENTIAL` on a haiku stops blocking unrelated changes, and the golden
+corpus keeps its zero-tolerance meaning on hosts where the graph is
+reproducible.
+
+**Acceptance**
+
+- [ ] The eval job either pins a CPU class / container image where the int8 graphs reproduce, or gates the fp32 graph, or records the dispatch anomaly and skips the ratio assertions with a non-green-but-explicit verdict
+- [ ] `docs/adr/ADR-011.md` records the choice and replaces the "not done" note in Consequences
+- [ ] A run on the offending AMD EPYC image is reproducible evidence: the probe verdict, the host and the flags appear in the job summary, not only in a log line
+- [ ] `uv run python scripts/run_evals.py` still exits non-zero on a genuine corpus regression, proven by a deliberately broken golden row in a test
+- [ ] CI is green on `master` without a manual re-run
+
+**Notes**
+
+- The evidence needed for the fix is already collected by the "Record the
+  inference environment" step; what is missing is a decision about what to do
+  with it.
+- Not caused by the telemetry or demo work in `bb02cf0` / `9bdb5bf`: the same
+  failure appears on the docs-only commit that precedes them.
