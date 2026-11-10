@@ -6,6 +6,7 @@
       "description": "Write UTF-8 text to a file in the tool workspace, creating parent directories as needed. Mutating: suspends until a second operator approves.",
       "read_only": false,
       "required_role": "operator",
+      "require_approval": true,
       "arguments": {
         "path": {
           "type": "string",
@@ -21,6 +22,7 @@
       "description": "Read a UTF-8 text file from the tool workspace. Paths are relative to the workspace root; traversal outside it is rejected. Read-only.",
       "read_only": true,
       "required_role": null,
+      "require_approval": false,
       "arguments": {
         "path": {
           "type": "string",
@@ -32,6 +34,7 @@
       "description": "Read-only host and runtime status: platform, Python version, UTC time, workspace root and process id. Safe to call without approval.",
       "read_only": true,
       "required_role": null,
+      "require_approval": false,
       "arguments": {}
     }
   }

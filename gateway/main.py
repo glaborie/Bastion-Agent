@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from agent.routing.client import close_model_router
+from agent.tools.decorator import verify_registry
 from db.session import dispose_engine, init_models
 from gateway.auth.rbac import shutdown_auth
 from gateway.auth.session import safe_next_path
@@ -64,6 +65,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "database_url": get_settings().redacted_database_url,
         },
     )
+    # ADR-009 Gate 1: a registered tool that the catalog has not approved stops
+    # the gateway instead of being silently reachable. The check runs before the
+    # database so a misconfigured deployment fails fast.
+    verify_registry()
     await init_models()
     try:
         yield

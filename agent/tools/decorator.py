@@ -37,6 +37,20 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Final, TypeAlias, get_type_hints
 
+from agent.tools.catalog import ToolCatalog, compare_catalog, get_tool_catalog
+from agent.tools.errors import (
+    TOOL_NOT_IN_CATALOG_CODE,
+    ToolArgumentError,
+    ToolAuthorizationError,
+    ToolCatalogDriftError,
+    ToolCatalogError,
+    ToolCatalogUnavailableError,
+    ToolDefinitionError,
+    ToolError,
+    ToolInvocationError,
+    ToolNotFoundError,
+    ToolNotInCatalogError,
+)
 from gateway.auth.roles import ROLE_NAMES, is_satisfied, normalise_roles
 
 logger = logging.getLogger(__name__)
@@ -54,40 +68,6 @@ _JSON_TYPES: Final[dict[type, str]] = {
     float: "number",
     bool: "boolean",
 }
-
-
-class ToolError(RuntimeError):
-    """Base class for guard failures."""
-
-
-class ToolDefinitionError(ToolError):
-    """A ``@tool`` declaration is invalid (raised at import time)."""
-
-
-class ToolNotFoundError(ToolError):
-    """No tool with the requested name is registered."""
-
-
-class ToolArgumentError(ToolError):
-    """Caller-supplied arguments do not match the declaration."""
-
-
-class ToolAuthorizationError(ToolError):
-    """The caller's roles do not satisfy the tool's ``required_role``."""
-
-    def __init__(self, tool_name: str, required_role: str) -> None:
-        super().__init__(f"role {required_role!r} is required to call tool {tool_name!r}")
-        self.tool_name = tool_name
-        self.required_role = required_role
-
-
-class ToolInvocationError(ToolError):
-    """The tool handler raised while executing."""
-
-    def __init__(self, tool_name: str, error_type: str) -> None:
-        super().__init__(f"tool {tool_name!r} failed ({error_type})")
-        self.tool_name = tool_name
-        self.error_type = error_type
 
 
 class ToolStatus(StrEnum):
@@ -256,6 +236,11 @@ def _matches_json_type(value: Any, expected: str) -> bool:
     return False
 
 
+def is_valid_tool_name(name: str) -> bool:
+    """True when ``name`` matches the ``@tool`` name grammar."""
+    return bool(_TOOL_NAME_PATTERN.match(name))
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -284,10 +269,54 @@ def list_tools() -> tuple[ToolDefinition, ...]:
 def available_tools(roles: frozenset[str] | set[str]) -> tuple[ToolDefinition, ...]:
     """Tools the caller may invoke, ordered by name.
 
+    This is the model-facing list, so it is the ADR-009 Gate 1 boundary: a tool
+    must be registered, present in the approved catalog and permitted by the
+    caller's roles. A definition that drifts from its catalog entry (or a
+    catalog that cannot be read) is hidden rather than exposed — Gate 1 fails
+    closed and logs the reason.
+
     Role-denied tools are filtered out of the model-facing tool list rather than
     rejected at call time (ADR-003).
     """
-    return tuple(definition for definition in list_tools() if definition.permits(roles))
+    try:
+        catalog = get_tool_catalog()
+    except ToolCatalogUnavailableError as exc:
+        logger.error("Tool catalog unavailable; exposing no tools", extra={"error": str(exc)})
+        return ()
+
+    exposed: list[ToolDefinition] = []
+    for definition in list_tools():
+        if not definition.permits(roles):
+            continue
+        try:
+            catalog.authorize(definition)
+        except ToolError as exc:
+            logger.warning(
+                "Hiding tool that Gate 1 does not approve",
+                extra={"tool": definition.name, "reason": str(exc)},
+            )
+            continue
+        exposed.append(definition)
+    return tuple(exposed)
+
+
+def verify_registry(catalog: ToolCatalog | None = None) -> ToolCatalog:
+    """Return the catalog only if it matches the live registry, else raise.
+
+    Called from gateway and worker startup: a registered-but-unapproved tool
+    stops the process instead of being silently reachable.
+    """
+    current = catalog if catalog is not None else get_tool_catalog()
+    problems = compare_catalog(current, list_tools())
+    if problems:
+        raise ToolCatalogDriftError(
+            f"tool catalog {current.source} does not match the registry: " + "; ".join(problems)
+        )
+    logger.info(
+        "Tool catalog verified",
+        extra={"catalog": current.source, "version": current.version, "tools": len(current.tools)},
+    )
+    return current
 
 
 def unregister_tool(name: str) -> ToolDefinition | None:
@@ -420,3 +449,35 @@ def definitions_for(handlers: Iterable[ToolHandler]) -> tuple[ToolDefinition, ..
             )
         definitions.append(definition)
     return tuple(definitions)
+
+
+__all__ = [
+    "TOOL_NOT_IN_CATALOG_CODE",
+    "AgentContext",
+    "ToolArgumentError",
+    "ToolAuthorizationError",
+    "ToolCatalog",
+    "ToolCatalogDriftError",
+    "ToolCatalogError",
+    "ToolCatalogUnavailableError",
+    "ToolDefinition",
+    "ToolDefinitionError",
+    "ToolError",
+    "ToolExecutionResult",
+    "ToolHandler",
+    "ToolInvocationError",
+    "ToolNotFoundError",
+    "ToolNotInCatalogError",
+    "ToolStatus",
+    "available_tools",
+    "compare_catalog",
+    "definitions_for",
+    "get_tool",
+    "get_tool_catalog",
+    "is_valid_tool_name",
+    "list_tools",
+    "tool",
+    "tool_registry",
+    "unregister_tool",
+    "verify_registry",
+]

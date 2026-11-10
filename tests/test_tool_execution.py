@@ -10,9 +10,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.tools.catalog import CatalogTool, get_tool_catalog, override_tool_catalog
 from agent.tools.decorator import (
     AgentContext,
     ToolAuthorizationError,
+    ToolNotInCatalogError,
     ToolStatus,
     get_tool,
     tool,
@@ -67,8 +69,19 @@ def failing_tool():
     async def failing_write(path: str, context: AgentContext) -> dict[str, str]:
         raise RuntimeError("tool exploded")
 
+    entry = CatalogTool(
+        name="test_failing_write",
+        description="Always fails (test fixture).",
+        read_only=False,
+        required_role="operator",
+        require_approval=True,
+        arguments={"path": {"type": "string", "required": True}},
+    )
     try:
-        yield get_tool("test_failing_write")
+        # Gate 1 is enforced in the execution state machine, so a fixture tool
+        # must also be approved by the catalog it runs under.
+        with override_tool_catalog(extra={entry.name: entry}):
+            yield get_tool("test_failing_write")
     finally:
         unregister_tool("test_failing_write")
 
@@ -368,3 +381,99 @@ async def test_unknown_and_malformed_tickets_are_rejected(session: AsyncSession)
     with pytest.raises(ApprovalExecutionError) as malformed:
         await resume_approved_tool(session, ticket_id="not-a-uuid")
     assert malformed.value.code == "invalid_ticket"
+
+
+# ---------------------------------------------------------------------------
+# Gate 1: the approved tool catalog
+# ---------------------------------------------------------------------------
+
+
+async def test_unapproved_tool_is_rejected_before_a_ticket(
+    session: AsyncSession, workspace
+) -> None:
+    @tool(
+        name="test_rogue_write",
+        description="registered in code, never approved",
+        read_only=False,
+        required_role="operator",
+    )
+    async def rogue_write(path: str, context: AgentContext) -> None: ...
+
+    try:
+        with pytest.raises(ToolNotInCatalogError) as info:
+            await request_tool_execution(
+                session,
+                tool_name="test_rogue_write",
+                arguments={"path": "rogue.txt"},
+                context=context(),
+            )
+        assert info.value.code == -32003
+
+        assert not list((await session.execute(select(PendingApproval))).scalars())
+        records = await events(session)
+        assert [record.event_type for record in records] == [AuditEventType.TOOL_REQUESTED]
+        assert records[0].metadata_json["outcome"] == "not_in_catalog"
+        assert records[0].metadata_json["code"] == -32003
+        assert (await verify_audit_chain(session)).ok
+    finally:
+        unregister_tool("test_rogue_write")
+
+
+async def test_catalog_can_require_approval_for_a_read_only_tool(
+    session: AsyncSession, workspace
+) -> None:
+    @tool(
+        name="test_readonly_report",
+        description="read-only but gated by the catalog",
+        read_only=True,
+        required_role="operator",
+    )
+    async def readonly_report(context: AgentContext) -> dict[str, str]:
+        return {"status": "ok"}
+
+    entry = CatalogTool(
+        name="test_readonly_report",
+        description="read-only but gated by the catalog",
+        read_only=True,
+        required_role="operator",
+        require_approval=True,
+        arguments={},
+    )
+    try:
+        with override_tool_catalog(extra={entry.name: entry}):
+            pending = await request_tool_execution(
+                session,
+                tool_name="test_readonly_report",
+                arguments={},
+                context=context(),
+            )
+            assert pending.status is ToolStatus.APPROVAL_PENDING
+            assert pending.ticket_id is not None
+            await approve(session, pending.ticket_id)
+            result = await resume_approved_tool(session, ticket_id=pending.ticket_id)
+        assert result.status is ToolStatus.EXECUTED
+        assert result.output == {"status": "ok"}
+    finally:
+        unregister_tool("test_readonly_report")
+
+
+async def test_resume_refuses_a_tool_that_left_the_catalog(
+    session: AsyncSession, workspace
+) -> None:
+    pending = await request_write(session)
+    assert pending.ticket_id is not None
+    await approve(session, pending.ticket_id)
+
+    catalog = get_tool_catalog()
+    with override_tool_catalog(catalog.without("execute_file_write")):
+        result = await resume_approved_tool(session, ticket_id=pending.ticket_id)
+
+    assert result.status is ToolStatus.FAILED
+    assert result.error == "tool_not_approved"
+    ticket = await session.get(PendingApproval, uuid.UUID(pending.ticket_id))
+    assert ticket is not None and ticket.status is ApprovalStatus.FAILED
+    assert AuditEventType.SECURITY_INCIDENT in [
+        record.event_type for record in await events(session)
+    ]
+    assert not (workspace / "reports/q3.txt").exists()
+    assert (await verify_audit_chain(session)).ok

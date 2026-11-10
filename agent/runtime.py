@@ -27,12 +27,16 @@ from arq.connections import RedisSettings
 
 from agent.routing.client import close_model_router
 from agent.tools.decorator import (
+    TOOL_NOT_IN_CATALOG_CODE,
     AgentContext,
     ToolArgumentError,
     ToolAuthorizationError,
+    ToolCatalogUnavailableError,
     ToolError,
     ToolNotFoundError,
+    ToolNotInCatalogError,
     ToolStatus,
+    verify_registry,
 )
 from agent.tools.execution import (
     ApprovalExecutionError,
@@ -54,6 +58,8 @@ async def startup(ctx: dict[str, Any]) -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
     configure_tracing(settings)
+    # Gate 1: refuse to run with a registered tool the catalog has not approved.
+    verify_registry()
     await init_models()
     logger.info(
         "Bastion-Agent worker ready",
@@ -117,8 +123,23 @@ async def execute_tool_job(
         return {"status": "denied", "tool": tool_name, "error": str(exc)}
     except ToolArgumentError as exc:
         return {"status": "invalid_arguments", "tool": tool_name, "error": str(exc)}
+    except ToolNotInCatalogError as exc:
+        # ADR-009 Gate 1: the same -32003 code as a name that does not exist.
+        return {
+            "status": "unknown_tool",
+            "tool": tool_name,
+            "error": str(exc),
+            "code": exc.code,
+        }
     except ToolNotFoundError as exc:
-        return {"status": "unknown_tool", "tool": tool_name, "error": str(exc)}
+        return {
+            "status": "unknown_tool",
+            "tool": tool_name,
+            "error": str(exc),
+            "code": TOOL_NOT_IN_CATALOG_CODE,
+        }
+    except ToolCatalogUnavailableError as exc:
+        return {"status": "error", "tool": tool_name, "error": str(exc)}
     except ToolError as exc:
         return {"status": "error", "tool": tool_name, "error": str(exc)}
     return result.to_payload()

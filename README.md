@@ -570,6 +570,13 @@ by a lost job are recovered.
 - **Audit in the same transaction**: `TOOL_REQUESTED` (accepted/denied),
   `APPROVAL_REQUESTED`, `TOOL_EXECUTED` (ok/failed) and `SECURITY_INCIDENT`.
   Metadata stores argument *keys* and hashes, never values.
+- **Catalog allow-list (ADR-009 Gate 1)**: `docs/tools/v1.json` is the approved
+  capability set. A registered tool that is absent from it is hidden from
+  `available_tools()` and rejected with JSON-RPC code `-32003` before argument
+  validation, RBAC or ticket creation. Gateway and worker startup fail when the
+  registry and catalog disagree, an unreadable catalog exposes no tools, and an
+  approved ticket whose tool left the catalog is marked `FAILED` with a
+  `SECURITY_INCIDENT` instead of running.
 - **Filesystem confinement**: built-in file tools resolve paths inside
   `TOOL_WORKSPACE_ROOT`, reject absolute/traversing paths and symlink escapes,
   cap read/write sizes, and write atomically at mode `0600`.
@@ -578,6 +585,7 @@ by a lost job are recovered.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `TOOL_CATALOG_PATH` | `docs/tools/v1.json` | Versioned Gate 1 allow-list |
 | `TOOL_WORKSPACE_ROOT` | `/tmp/bastion-workspace` | Confinement root for file tools |
 | `TOOL_MAX_READ_BYTES` | `262144` | Read cap |
 | `TOOL_MAX_WRITE_BYTES` | `1048576` | Write cap |
@@ -588,8 +596,15 @@ by a lost job are recovered.
 ### Verification
 
 ```bash
-uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
+uv run python scripts/validate_tool_catalog.py --check
+uv run pytest -q tests/test_tool_catalog.py tests/test_tool_decorator.py tests/test_tool_execution.py
 ```
+
+Adding a tool is a two-step review: implement it, run
+`uv run python scripts/validate_tool_catalog.py --write`, then read the diff —
+the catalog change *is* the approval record. `--check` fails when a registered
+tool is unapproved or a catalog entry drifted from its definition, and the same
+check runs at startup.
 
 ---
 
@@ -598,7 +613,7 @@ uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
 | Script | Purpose |
 |--------|---------|
 | `scripts/verify_audit_chain.py` | Recompute the audit hash chain (exit `1` on tamper, `2` if it cannot run) |
-| `scripts/validate_tool_catalog.py` | Registry ↔ `docs/tools/v1.json` allow-list; `--write` approves the current set |
+| `scripts/validate_tool_catalog.py` | Registry ↔ `docs/tools/v1.json` allow-list; `--write` approves the current set; the same check runs at startup |
 | `scripts/validate_rbac.py` | Realm roles/users ↔ code roles ↔ tool requirements; proves four-eyes is possible |
 | `scripts/recalculate_dread.py` | Recompute DREAD totals and the risk-priority list; `--check` / `--write` |
 | `scripts/update_threat_intel.py` | Query OSV for every registry package in `uv.lock`; writes `artifacts/threat-intel/latest.json` |

@@ -21,18 +21,22 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Final
+from typing import Any, Final, NoReturn
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.tools.catalog import CatalogTool, get_tool_catalog
 from agent.tools.decorator import (
     AgentContext,
     ToolAuthorizationError,
+    ToolCatalogDriftError,
+    ToolCatalogUnavailableError,
     ToolDefinition,
     ToolError,
     ToolExecutionResult,
     ToolNotFoundError,
+    ToolNotInCatalogError,
     ToolStatus,
     get_tool,
 )
@@ -86,52 +90,18 @@ async def request_tool_execution(
     """
     definition = get_tool(tool_name)
     moment = now or utcnow()
+
+    # Gate 1: the tool must be in the approved catalog before its arguments are
+    # parsed, before RBAC is consulted and before a ticket could be created.
+    entry = await _authorize_catalog(session, definition, context, moment)
     cleaned = definition.validate_arguments(arguments)
 
     if not definition.permits(context.roles):
-        await append_audit_event(
-            session,
-            actor_id=context.actor_id,
-            event_type=AuditEventType.TOOL_REQUESTED,
-            session_id=context.session_id,
-            payload={"tool": definition.name, "arguments": cleaned},
-            metadata_json={
-                "tool": definition.name,
-                "outcome": "denied",
-                "required_role": definition.required_role,
-                "argument_keys": sorted(cleaned),
-            },
-            timestamp=moment,
-        )
-        await session.flush()
-        logger.warning(
-            "Tool call denied by RBAC",
-            extra={
-                "tool": definition.name,
-                "actor_id": context.actor_id,
-                "required_role": definition.required_role,
-            },
-        )
-        raise ToolAuthorizationError(definition.name, definition.required_role or "")
+        await _deny_rbac(session, definition, cleaned, context, moment)
 
-    await append_audit_event(
-        session,
-        actor_id=context.actor_id,
-        event_type=AuditEventType.TOOL_REQUESTED,
-        session_id=context.session_id,
-        payload={"tool": definition.name, "arguments": cleaned},
-        metadata_json={
-            "tool": definition.name,
-            "outcome": "accepted",
-            "read_only": definition.read_only,
-            "required_role": definition.required_role,
-            "argument_keys": sorted(cleaned),
-        },
-        timestamp=moment,
-    )
-    await session.flush()
+    await _record_accepted(session, definition, cleaned, context, moment)
 
-    if definition.read_only:
+    if definition.read_only and not entry.require_approval:
         return await _execute_now(session, definition, cleaned, context, moment)
 
     return await _suspend(session, definition, cleaned, context, moment)
@@ -199,6 +169,14 @@ async def resume_approved_tool(
         await _mark_failed(session, ticket, moment)
         return ToolExecutionResult(
             status=ToolStatus.FAILED, tool_name=ticket.tool_name, error="tool_not_registered"
+        )
+
+    # Gate 1 is re-checked at execution time: approval does not outlive the
+    # catalog. A tool removed from (or changed in) the allow-list after the
+    # ticket was approved must not run.
+    if (failure := await _authorize_resume(session, ticket, definition, moment)) is not None:
+        return ToolExecutionResult(
+            status=ToolStatus.FAILED, tool_name=ticket.tool_name, error=failure
         )
 
     context = AgentContext(
@@ -331,6 +309,133 @@ def verify_ticket_token(ticket: PendingApproval, token: str) -> bool:
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+async def _deny_rbac(
+    session: AsyncSession,
+    definition: ToolDefinition,
+    arguments: dict[str, Any],
+    context: AgentContext,
+    moment: datetime,
+) -> NoReturn:
+    """Record a role-denied call in the ledger, then raise."""
+    await append_audit_event(
+        session,
+        actor_id=context.actor_id,
+        event_type=AuditEventType.TOOL_REQUESTED,
+        session_id=context.session_id,
+        payload={"tool": definition.name, "arguments": arguments},
+        metadata_json={
+            "tool": definition.name,
+            "outcome": "denied",
+            "required_role": definition.required_role,
+            "argument_keys": sorted(arguments),
+        },
+        timestamp=moment,
+    )
+    await session.flush()
+    logger.warning(
+        "Tool call denied by RBAC",
+        extra={
+            "tool": definition.name,
+            "actor_id": context.actor_id,
+            "required_role": definition.required_role,
+        },
+    )
+    raise ToolAuthorizationError(definition.name, definition.required_role or "")
+
+
+async def _authorize_resume(
+    session: AsyncSession,
+    ticket: PendingApproval,
+    definition: ToolDefinition,
+    moment: datetime,
+) -> str | None:
+    """Re-check Gate 1 for an approved ticket; return a failure code or None."""
+    try:
+        entry = get_tool_catalog().authorize(definition)
+    except ToolError:
+        await _record_incident(session, ticket, "tool_no_longer_approved")
+        await _mark_failed(session, ticket, moment)
+        return "tool_not_approved"
+    if entry.required_role != ticket.required_role:
+        await _record_incident(session, ticket, "required_role_changed")
+        await _mark_failed(session, ticket, moment)
+        return "policy_changed"
+    return None
+
+
+async def _record_accepted(
+    session: AsyncSession,
+    definition: ToolDefinition,
+    arguments: dict[str, Any],
+    context: AgentContext,
+    moment: datetime,
+) -> None:
+    """Record an accepted Gate 1/RBAC decision before it executes."""
+    await append_audit_event(
+        session,
+        actor_id=context.actor_id,
+        event_type=AuditEventType.TOOL_REQUESTED,
+        session_id=context.session_id,
+        payload={"tool": definition.name, "arguments": arguments},
+        metadata_json={
+            "tool": definition.name,
+            "outcome": "accepted",
+            "read_only": definition.read_only,
+            "required_role": definition.required_role,
+            "argument_keys": sorted(arguments),
+        },
+        timestamp=moment,
+    )
+    await session.flush()
+
+
+async def _authorize_catalog(
+    session: AsyncSession,
+    definition: ToolDefinition,
+    context: AgentContext,
+    moment: datetime,
+) -> CatalogTool:
+    """Gate 1: return the catalog entry or audit the refusal and re-raise.
+
+    A rejection is stored in the same hash chain as every other tool event. The
+    arguments have not been validated yet, so only the tool name is recorded.
+    """
+    try:
+        return get_tool_catalog().authorize(definition)
+    except ToolError as exc:
+        if isinstance(exc, ToolNotInCatalogError):
+            outcome = "not_in_catalog"
+        elif isinstance(exc, ToolCatalogDriftError):
+            outcome = "catalog_drift"
+        elif isinstance(exc, ToolCatalogUnavailableError):
+            outcome = "catalog_unavailable"
+        else:  # pragma: no cover - authorize only raises the classes above
+            outcome = "catalog_rejected"
+        await append_audit_event(
+            session,
+            actor_id=context.actor_id,
+            event_type=AuditEventType.TOOL_REQUESTED,
+            session_id=context.session_id,
+            payload={"tool": definition.name},
+            metadata_json={
+                "tool": definition.name,
+                "outcome": outcome,
+                "code": getattr(exc, "code", None),
+            },
+            timestamp=moment,
+        )
+        await session.flush()
+        logger.warning(
+            "Tool call rejected by the catalog gate",
+            extra={
+                "tool": definition.name,
+                "actor_id": context.actor_id,
+                "outcome": outcome,
+            },
+        )
+        raise
 
 
 async def _execute_now(

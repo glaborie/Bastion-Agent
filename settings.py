@@ -164,6 +164,9 @@ class Settings(BaseSettings):
     approval_ttl_seconds: int = 900
 
     # -- Guarded tools (four-eyes execution) ------------------------------
+    #: ADR-009 Gate 1 allow-list. Relative to the working directory in local
+    #: development and to ``/app`` in the container (``docs/`` is copied in).
+    tool_catalog_path: str = "docs/tools/v1.json"
     #: Root the built-in file tools are confined to. It is created on demand
     #: with owner-only permissions; absolute and traversing paths are rejected.
     tool_workspace_root: str = "/tmp/bastion-workspace"  # noqa: S108 - sandboxed, owner-only

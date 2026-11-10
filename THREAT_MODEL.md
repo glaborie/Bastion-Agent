@@ -88,7 +88,7 @@ Two facts shape the model:
 | Canary tripwire, quarantine, untrusted-content fencing | LIVE | `agent/egress/sanitizer.py` |
 | Hash-chained audit ledger and verification | LIVE | `db/audit.py`, `/api/audit/verify` |
 | Four-eyes approval state machine | LIVE | `agent/tools/execution.py` |
-| Tool catalog allow-list (`docs/tools/v1.json`) | PARTIAL | build-time check only, no runtime filtering |
+| Tool catalog allow-list (`docs/tools/v1.json`) | LIVE | runtime filtering, startup drift check, `-32003` |
 | Dependency audit against OSV | PARTIAL | script exists, not run in CI |
 | Test and eval gate in CI | PLANNED | CI runs pylint with `--exit-zero` only |
 | Kill-switch tiers | PLANNED | ADR-009 only |
@@ -189,10 +189,19 @@ Two facts shape the model:
   - LIVE: RBAC is checked per call. Denials are written to the ledger.
   - LIVE: mutating tools suspend into a `PendingApproval` bound to the exact arguments (see T9).
   - LIVE: built-in file tools reject absolute paths, `..` traversal and symlink escapes, cap reads and writes, and write atomically.
-  - PARTIAL: Gate 1 catalog. An unregistered tool name is rejected at runtime. The versioned `docs/tools/v1.json` is compared with the registry only by `scripts/validate_tool_catalog.py --check`. Runtime filtering of the model-facing tool list is not wired.
+  - LIVE: Gate 1 catalog. `available_tools()` — the model-facing list — returns
+    only definitions approved by `docs/tools/v1.json`; `request_tool_execution()`
+    re-checks the catalog before argument validation, RBAC or ticket creation and
+    rejects anything else with `-32003`. An unreadable catalog exposes no tools,
+    gateway and worker startup fail on registry drift, and an approved ticket
+    whose tool left the catalog is marked `FAILED` with a `SECURITY_INCIDENT`.
   - PLANNED: kill-switch tiers and autonomy budgets (ADR-009).
-- Residual risk: when an agent loop is added, the model becomes a source of tool requests. The loop must carry the end user's identity into `AgentContext`, not a service identity, and Gate 1 must be enforced at runtime before that change ships.
-- Verification: `tests/test_tool_decorator.py`, `tests/test_tool_execution.py`, `tests/test_rbac.py`, `scripts/validate_tool_catalog.py --check`.
+- Residual risk: when an agent loop is added, the model becomes a source of tool
+  requests. The loop must carry the end user's identity into `AgentContext`, not
+  a service identity; Gate 1 is already enforced at the execution boundary.
+- Verification: `tests/test_tool_catalog.py`, `tests/test_tool_decorator.py`,
+  `tests/test_tool_execution.py`, `tests/test_rbac.py`,
+  `scripts/validate_tool_catalog.py --check`.
 
 ### T8. The job queue as an unauthenticated trust boundary
 
@@ -287,12 +296,11 @@ Scores are the author's estimates of residual risk with the controls as they exi
 
 1. Close T8: authenticate queued jobs and isolate Redis.
 2. Run `pytest` and `scripts/run_evals.py` in CI and fail the build below threshold. The README states that evals gate merges, and CI does not do that yet.
-3. Wire runtime enforcement of the tool catalog (T7) before adding any agent loop.
-4. Add per-principal rate limits and budgets (T12).
-5. Anchor the audit-chain head outside the database (T10).
-6. Add Swiss identifier recognizers and grow the golden set beyond 75 cases (T1, T4).
-7. Wire the OSV script into CI and add an SBOM (T11).
-8. Replace development secrets with a secret-manager integration (T4, T6).
+3. Add per-principal rate limits and budgets (T12).
+4. Anchor the audit-chain head outside the database (T10).
+5. Add Swiss identifier recognizers and grow the golden set beyond 75 cases (T1, T4).
+6. Wire the OSV script into CI and add an SBOM (T11).
+7. Replace development secrets with a secret-manager integration (T4, T6).
 
 ## 8. Verification
 

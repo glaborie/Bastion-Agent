@@ -3,15 +3,17 @@
 
 ADR-009 Gate 1 requires an immutable allow-list: a tool that is registered in
 code but absent from the catalog is an unapproved capability and must not ship.
-This script is the CI gate for that invariant.
+This script is the CI gate for that invariant; the gateway and the ARQ worker
+run :func:`agent.tools.catalog.verify_registry` at startup, so the same drift
+also stops a deployment.
 
     uv run python scripts/validate_tool_catalog.py --check
     uv run python scripts/validate_tool_catalog.py --write   # approve the current set
 
 ``--write`` regenerates the catalog from the registry. Treat that as the review
-step: the diff is the approval record. Runtime enforcement of the catalog
-(filtering the model-facing tool list) is not wired yet; this check fails the
-build when code and catalog disagree.
+step: the diff is the approval record. A read-only tool that the current catalog
+marks ``require_approval`` keeps that flag, so regeneration cannot silently
+loosen four-eyes.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from agent.tools import list_tools
+from agent.tools.catalog import compare_catalog, load_catalog
+from agent.tools.decorator import ToolCatalogError
 
 DEFAULT_CATALOG = Path("docs/tools/v1.json")
 
@@ -50,13 +54,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def registered_tools() -> dict[str, dict[str, Any]]:
+def preserved_approvals(path: Path) -> dict[str, bool]:
+    """``require_approval`` flags from the current catalog, when it parses."""
+    if not path.is_file():
+        return {}
+    try:
+        catalog = load_catalog(path)
+    except ToolCatalogError:
+        return {}
+    return {name: entry.require_approval for name, entry in catalog.tools.items()}
+
+
+def registered_tools(path: Path) -> dict[str, dict[str, Any]]:
     """Snapshot the live registry in catalog form (sorted, JSON-safe)."""
+    forced = preserved_approvals(path)
     return {
         definition.name: {
             "description": definition.description,
             "read_only": definition.read_only,
             "required_role": definition.required_role,
+            "require_approval": (
+                True if not definition.read_only else forced.get(definition.name, False)
+            ),
             "arguments": definition.arguments_schema,
         }
         for definition in list_tools()
@@ -67,45 +86,12 @@ def build_catalog(path: Path) -> dict[str, Any]:
     return {
         "version": path.stem,
         "generated_by": "scripts/validate_tool_catalog.py --write",
-        "tools": registered_tools(),
+        "tools": registered_tools(path),
     }
-
-
-def load_catalog(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        raise FileNotFoundError(f"catalog not found: {path} (run --write to create it)")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or not isinstance(payload.get("tools"), dict):
-        raise ValueError(f"{path} is not a catalog document with a 'tools' object")
-    return payload
-
-
-def compare(catalog: dict[str, Any], registered: dict[str, dict[str, Any]]) -> list[str]:
-    """Return human-readable problems; an empty list means the set is in sync."""
-    problems: list[str] = []
-    approved = catalog["tools"]
-    for name in sorted(set(registered) - set(approved)):
-        problems.append(f"registered tool {name!r} is not in the catalog (unapproved)")
-    for name in sorted(set(approved) - set(registered)):
-        problems.append(f"catalog tool {name!r} is no longer registered (stale allow-list)")
-    for name in sorted(set(approved) & set(registered)):
-        expected = registered[name]
-        actual = approved[name]
-        for field in ("read_only", "required_role"):
-            if actual.get(field) != expected[field]:
-                problems.append(
-                    f"{name}.{field}: catalog={actual.get(field)!r} registry={expected[field]!r}"
-                )
-        if actual.get("arguments") != expected["arguments"]:
-            problems.append(f"{name}.arguments differs from the registry")
-        if actual.get("description") != expected["description"]:
-            problems.append(f"{name}.description differs from the registry")
-    return problems
 
 
 def main() -> int:
     args = parse_args()
-    registered = registered_tools()
 
     if args.write:
         args.catalog.parent.mkdir(parents=True, exist_ok=True)
@@ -113,20 +99,19 @@ def main() -> int:
         args.catalog.write_text(
             json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8"
         )
-        print(f"wrote {args.catalog} ({len(registered)} tool(s))")
+        print(f"wrote {args.catalog} ({len(payload['tools'])} tool(s))")
         return 0
 
+    registered = registered_tools(args.catalog)
     try:
         catalog = load_catalog(args.catalog)
-    except (OSError, ValueError) as exc:
+    except ToolCatalogError as exc:
         print(f"catalog error: {exc}", file=sys.stderr)
         return 1
 
-    problems = compare(catalog, registered)
-    if catalog.get("version") != args.catalog.stem:
-        problems.append(
-            f"catalog version {catalog.get('version')!r} does not match {args.catalog.name}"
-        )
+    problems = compare_catalog(catalog, list_tools())
+    if catalog.version != args.catalog.stem:
+        problems.append(f"catalog version {catalog.version!r} does not match {args.catalog.name}")
 
     if args.json:
         print(

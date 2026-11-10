@@ -36,6 +36,9 @@ COPY --chown=bastion:bastion pyproject.toml README.md settings.py logging_setup.
 COPY --chown=bastion:bastion db ./db
 COPY --chown=bastion:bastion gateway ./gateway
 COPY --chown=bastion:bastion agent ./agent
+# ADR-009 Gate 1: the image carries the approved tool allow-list, and startup
+# refuses to run if the registry and this catalog disagree.
+COPY --chown=bastion:bastion docs ./docs
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
