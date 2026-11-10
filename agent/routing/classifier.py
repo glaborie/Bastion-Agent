@@ -261,7 +261,22 @@ _RULES: Final[tuple[_Rule, ...]] = (
         "sensitive_personal",
         3.0,
         re.compile(
-            r"\b(?:passport|social security|bank account|medical record|diagnosis)\b",
+            r"\b(?:passport|social security|bank account|medical record|diagnos\w*)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    _Rule(
+        # IBANs formatted as ``CH93 0076 2011 6238 5295 7`` or unspaced.
+        # Presidio redacts them, but a single trailing period can drop the
+        # privacy model below threshold, so the format is also a deterministic
+        # floor. The lookahead requires at least 11 characters after the check
+        # digits (the shortest real BBAN, Norway), which keeps short coupon or
+        # product codes from matching.
+        "financial_identifier",
+        4.0,
+        re.compile(
+            r"\b[A-Z]{2}\d{2}(?=(?:[ ]?[A-Z0-9]){11,30}\b)"
+            r"(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b",
             re.IGNORECASE,
         ),
     ),
@@ -511,12 +526,23 @@ class SensitivityClassifier:
         return self._model_path.name if self._model_path is not None else _RULE_MODEL
 
     # -- ensemble ---------------------------------------------------------
+    def ensemble_scores(self, text: str) -> tuple[float, Mapping[str, float]]:
+        """Return the raw ensemble scores for evaluation and threshold tuning.
+
+        Routing must use :meth:`classify` so the decision table and the
+        deterministic rules floor still apply; this method deliberately skips
+        both. It raises :class:`ClassifierConfigurationError` when the ensemble
+        is not configured.
+        """
+        if self._injection is None or self._safety is None:
+            raise ClassifierConfigurationError("ensemble is not configured")
+        return self._injection.predict(text), self._safety.predict(text)
+
     def _classify_ensemble(self, text: str) -> Classification:
         if self._injection is None or self._safety is None:  # pragma: no cover - guarded above
             raise ClassifierConfigurationError("ensemble is not fully configured")
         try:
-            injection_probability = self._injection.predict(text)
-            safety_scores = self._safety.predict(text)
+            injection_probability, safety_scores = self.ensemble_scores(text)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # Fail closed: a broken gate must never allow egress. The exception
             # type is logged, never the prompt text.

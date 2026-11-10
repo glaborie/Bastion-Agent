@@ -284,6 +284,23 @@ explicit markings, board/HR/finance material, technical IP and customer data
 are `CONFIDENTIAL` even though a content-safety model scores them as harmless.
 The floor is evaluated after the model verdict and can only add `CONFIDENTIAL`
 decisions; `CLASSIFIER_RULES_FLOOR=false` disables it for evaluation runs.
+Two floor families are deliberate: `diagnos*` covers medical-condition text
+(Presidio has no entity for it) and IBAN shapes are `financial_identifier`
+(a trailing period once moved the privacy score from 0.582 to 0.201).
+
+The gate is tuned against the ADR-006 corpus, and the sweep is reproducible:
+
+```bash
+uv run pytest -q tests/test_classifier_evals.py tests/test_dlp_evals.py
+uv run python scripts/tune_classifier.py
+```
+
+The 2026-11-10 sweep retained `0.662 / 0.5 / 0.3`: lowering injection to the
+model card's `0.5` routes the security-training translation (0.614) to the local
+model, `unsafe = 0.3` admits the prompt-injection explainer (0.364), and
+`category = 0.2` gains nothing once the `diagnos*` floor blocks the one case it
+would have caught. ADR-011 records the measured gaps and the caveat that the
+corpus is a calibration set, not held-out evidence.
 
 Demo the whole thing with:
 
@@ -333,7 +350,8 @@ completion = await router.complete(
 
 ```bash
 uv run pytest -q tests/test_vault.py tests/test_dlp_presidio.py \
-  tests/test_classifier.py tests/test_routing_client.py
+  tests/test_classifier.py tests/test_classifier_evals.py \
+  tests/test_dlp_evals.py tests/test_routing_client.py
 ```
 
 The chat endpoint lands with the agent loop; the DLP, vault, classifier and
@@ -680,7 +698,15 @@ Alternatively reclaim the range from an elevated Windows prompt with
 ## Running DeepEval Regression Tests
 
 ```bash
-uv run pytest tests/test_dlp_evals.py -v
-# Open local eval results viewer:
-uv run deepeval view
+# Zero-tolerance golden gates: Presidio entity coverage + classifier labels
+uv run pytest tests/test_dlp_evals.py tests/test_classifier_evals.py -v
+
+# Reproduce the threshold sweep recorded in ADR-011
+uv run python scripts/tune_classifier.py
 ```
+
+`DLPRedactionMetric` is a real `deepeval.metrics.BaseMetric` scored in-process
+against `tests/data/goldens.jsonl`, so the gate needs no provider credentials.
+`EgressCanaryMetric` lands with the Milestone 5 sanitizer; a metric that
+asserts nothing would be worse than no metric. The run summary is not yet
+published to `GET /api/evals/latest`, which remains Milestone 6 work.

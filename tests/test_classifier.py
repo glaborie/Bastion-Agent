@@ -112,6 +112,44 @@ def test_confidential_domains_are_detected(prompt: str) -> None:
     assert classifier().classify(prompt).label is Sensitivity.CONFIDENTIAL
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "IBAN CH93 0076 2011 6238 5295 7",
+        "IBAN CH93 0076 2011 6238 5295 7.",
+        "The customer's bank account is CH93 0076 2011 6238 5295 7.",
+        "CH9300762011623852957",
+    ],
+)
+def test_iban_formats_are_a_deterministic_floor(prompt: str) -> None:
+    """A trailing period once flipped the privacy model from 0.582 to 0.201."""
+    result = classifier().classify(prompt)
+    assert result.label is Sensitivity.CONFIDENTIAL
+    assert "financial_identifier" in result.matched
+
+
+def test_iban_questions_without_a_literal_stay_public() -> None:
+    assert classifier().classify("How does an IBAN checksum work?").label is Sensitivity.PUBLIC
+
+
+def test_short_uppercase_codes_are_not_ibans() -> None:
+    assert classifier().classify("Coupon AB12 CDEF GHIJ.").label is Sensitivity.PUBLIC
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Patient #4471 was diagnosed with HIV.",
+        "The diagnosis is stage 3 cancer.",
+        "She was diagnosed last week.",
+    ],
+)
+def test_medical_conditions_are_sensitive_personal(prompt: str) -> None:
+    result = classifier().classify(prompt)
+    assert result.label is Sensitivity.CONFIDENTIAL
+    assert "sensitive_personal" in result.matched
+
+
 def test_empty_prompt_is_public() -> None:
     result = classifier().classify("   ")
     assert result.label is Sensitivity.PUBLIC
