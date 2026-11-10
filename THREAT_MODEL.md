@@ -2,9 +2,9 @@
 
 Bastion-Agent threat model
 
-- Version: 2.0
+- Version: 2.1
 - Last updated: 2026-11-10
-- Reviewed against: commit `f7cb5f2`
+- Reviewed against: commit `fa655d6`
 - Author: Guillaume Laborie
 - Status: working document for a portfolio project. It is not a compliance attestation and has not been independently reviewed.
 
@@ -265,8 +265,8 @@ Scores are the author's estimates of residual risk with the controls as they exi
 
 | Threat | Damage Potential | Reproducibility | Exploitability | Affected Users | Discoverability | **Total Score** |
 |--------|------------------|-----------------|----------------|----------------|----------------|-----------------|
-| **T1 Direct prompt injection** | 6 | 8 | 7 | 5 | 8 | **34** |
-| **T2 Indirect prompt injection** | 6 | 7 | 6 | 5 | 6 | **30** |
+| **T1 Direct prompt injection** | 5 | 7 | 6 | 5 | 8 | **31** |
+| **T2 Indirect prompt injection** | 5 | 6 | 5 | 5 | 6 | **27** |
 | **T3 Hidden-context extraction** | 3 | 6 | 6 | 4 | 7 | **26** |
 | **T4 Sensitive data disclosure** | 8 | 6 | 5 | 7 | 6 | **32** |
 | **T5 Cross-session vault decoding** | 7 | 3 | 3 | 4 | 3 | **20** |
@@ -279,12 +279,12 @@ Scores are the author's estimates of residual risk with the controls as they exi
 | **T12 Resource exhaustion** | 5 | 8 | 7 | 5 | 6 | **31** |
 
 **Risk Priority:**
-1. T1 Direct prompt injection - 34
-2. T8 Job queue trust boundary - 34
-3. T4 Sensitive data disclosure - 32
+1. T8 Job queue trust boundary - 34
+2. T4 Sensitive data disclosure - 32
+3. T1 Direct prompt injection - 31
 4. T12 Resource exhaustion - 31
-5. T2 Indirect prompt injection - 30
-6. T6 Gateway identity and privilege abuse - 28
+5. T6 Gateway identity and privilege abuse - 28
+6. T2 Indirect prompt injection - 27
 7. T11 Supply chain and model artifacts - 27
 8. T3 Hidden-context extraction - 26
 9. T10 Audit tampering - 25
@@ -292,13 +292,15 @@ Scores are the author's estimates of residual risk with the controls as they exi
 11. T7 Tool misuse and unauthorized change - 23
 12. T5 Cross-session vault decoding - 20
 
+**Re-scored 2026-11-10 once the tuned ADR-011 gate was live.** Only T1 and T2 moved. The injection guard scores 10/10 on the corpus' injection positives with 1/32 benign false positives at `0.662`, and the joint gate blocks 28/32 model-resolved must-block rows (`scripts/tune_classifier.py`). Every detected payload routes to `local-llama`, so it cannot reach a cloud provider, trigger a state change or influence an authorization decision. That lowers T1 to 31 (damage 6→5, reproducibility 8→7, exploitability 7→6) and T2 to 27 (damage 6→5, reproducibility 7→6, exploitability 6→5). The scores stay high because the corpus is a calibration set, not held-out recall; the four documented model gaps still route public; an evading injection is still answered by the local model, with only verbatim leakage caught by the canary and quarantined; and indirect payloads depend on a caller-labelled `tool` turn. The other ten rows are unchanged: Gate 1 rejects an *unregistered* tool, while T7's residual risk is misuse of an approved tool, which RBAC and the four-eyes gate already bound.
+
 ## 7. Known gaps, in priority order
 
 1. Close T8: authenticate queued jobs and isolate Redis.
 2. Run `pytest` and `scripts/run_evals.py` in CI and fail the build below threshold. The README states that evals gate merges, and CI does not do that yet.
 3. Add per-principal rate limits and budgets (T12).
 4. Anchor the audit-chain head outside the database (T10).
-5. Add Swiss identifier recognizers and grow the golden set beyond 75 cases (T1, T4).
+5. Add Swiss identifier recognizers and grow the golden set beyond 83 cases (T1, T4).
 6. Wire the OSV script into CI and add an SBOM (T11).
 7. Replace development secrets with a secret-manager integration (T4, T6).
 
