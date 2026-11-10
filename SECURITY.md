@@ -161,7 +161,7 @@ CREATE TABLE audit_logs (
 
 ### OpenTelemetry Exporters
 - **Langfuse Cloud**: `https://cloud.langfuse.com/api/public/otel` (EU region)
-- **Arize Phoenix**: `https://otlp.arize.com/v1`
+- **Arize AX**: `https://otlp.arize.com` (base URL; the exporter appends `/v1/traces`)
 - **Better Stack**: OTLP/HTTP endpoint
 
 ### Data Minimization

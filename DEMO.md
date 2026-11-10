@@ -7,11 +7,14 @@ command-control dashboard, the DLP vault, confidentiality routing, egress
 canary tripwires with untrusted-content fencing, the hash-chained ledger,
 guarded tool execution with four-eyes approval, and the offline golden gates.
 
-> **What this demo does *not* cover.** The Langfuse/Arize exporters (the
-> collector ships with the `debug` exporter) and GPU sizing measurements are
-> still open. `SECURITY.md`, `THREAT_MODEL.md` and `COMPLIANCE.md` describe the
-> full target architecture; this document only demonstrates behaviour that is
-> live in the repository today. The evaluation card is populated by
+> **Scope note.** Remote telemetry fan-out to Langfuse/Arize is opt-in
+> (`OTEL_REMOTE_EXPORT_CONFIG`) and off by default, so this demo runs with the
+> collector's local `debug` exporter; the README's Observability section shows
+> how to enable and verify both backends. GPU sizing numbers live in ADR-011,
+> and the demo itself needs no GPU beyond `llama.cpp`. `SECURITY.md`,
+> `THREAT_MODEL.md` and `COMPLIANCE.md` describe the broader target
+> architecture; this document only demonstrates behaviour that is live in the
+> repository today. The evaluation card is populated by
 > `uv run python scripts/run_evals.py`; until that runs, it correctly shows
 > “not run yet”.
 

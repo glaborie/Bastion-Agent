@@ -1,0 +1,16 @@
+# =============================================================================
+# Overlay: local debug only (the default)
+# -----------------------------------------------------------------------------
+# The collector is started with two --config flags. Maps merge, but a list in a
+# later file replaces the same path in an earlier one, so this overlay decides
+# the traces pipeline's exporter list without copying the rest of the config.
+#
+# docker-compose.yml mounts the file named by OTEL_REMOTE_EXPORT_CONFIG here;
+# this one is the default, so a clean `docker compose up` never posts to a
+# backend that has no credentials.
+# =============================================================================
+
+service:
+  pipelines:
+    traces:
+      exporters: [debug]

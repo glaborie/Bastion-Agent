@@ -238,6 +238,7 @@ dev = [
     { name = "pylint" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -277,6 +278,7 @@ dev = [
     { name = "pylint", specifier = ">=4.0.9,<5.0.0" },
     { name = "pytest", specifier = ">=9.0.3,<10.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0,<2.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.2,<7.0.0" },
     { name = "ruff", specifier = ">=0.8.0,<1.0.0" },
 ]
 

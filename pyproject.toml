@@ -53,6 +53,9 @@ dev = [
     "mypy>=1.13.0,<2.0.0",
     "ruff>=0.8.0,<1.0.0",
     "pylint>=4.0.9,<5.0.0",
+    # Arrives transitively via presidio, but tests/test_otel_config.py parses the
+    # collector YAML, so the dependency is declared rather than assumed.
+    "pyyaml>=6.0.2,<7.0.0",
 ]
 
 [build-system]

@@ -481,7 +481,8 @@ uv run pytest -q tests/test_egress_sanitizer.py tests/test_egress_evals.py \
   tests/test_chat.py tests/test_chat_contract.py
 ```
 
-Two rollout checks are opt-in because they need an external endpoint:
+Two rollout checks need an external service. The Redis one runs as a gate in CI
+(a Redis 7 service is provisioned); locally:
 
 ```bash
 # Redis TTL expiry, shared canary and quarantine keys (Redis 7)
@@ -493,6 +494,10 @@ LLAMA_CPP_BASE_URL=http://localhost:8002 \
   LLAMA_CPP_API_KEY=dev-only-llama-api-key \
   uv run pytest -m model_integration
 ```
+
+The model test is the one skip CI allows: there is no GPU inference endpoint on
+the runner, so it is run manually as above (and by
+`scripts/demo_model_canary.py`).
 
 The model test asserts the invariant, not the model's politeness: a refusal
 passes, while a raw marker in the answer must be blocked with `canary_leak`,
@@ -712,17 +717,32 @@ combo. It requires `OPENROUTER_API_KEY` in `.env`.
 
 ## Observability (Langfuse Cloud + Arize AX)
 
-The gateway and worker export OTLP/HTTP spans to `otel-collector`, which fans
-them out to Langfuse Cloud and Arize AX (and mirrors batch counters to the
-collector log). Health probes and the dashboard's polling endpoints
-(`/api/approvals` every 3 s, `/api/evals/latest` every 30 s) are excluded from
-tracing, so an open dashboard does not burn a backend quota; the four-eyes
-decision endpoint stays traced.
+The gateway and worker export OTLP/HTTP spans to `otel-collector`. The base
+config (`config/otel/otel-collector-config.yaml`) owns the receiver,
+processors, both backends, their headers and the retry policy; a second, small
+overlay decides which exporters the traces pipeline actually uses. Maps merge
+across the two `--config` files while a list replaces the same path, so every
+setting lives in one place.
 
-Remote export is **currently paused** — the collector's `traces` pipeline
-exports to `debug` only. Re-add `otlphttp/langfuse` and/or `otlphttp/arize` to
-the pipeline's `exporters` list in `config/otel/otel-collector-config.yaml` to
-resume fan-out.
+| Overlay (`OTEL_REMOTE_EXPORT_CONFIG`) | Egress |
+|---|---|
+| `otel-collector-no-export.yaml` (default) | collector log only |
+| `otel-collector-export.yaml` | collector log + Langfuse + Arize |
+
+Local-only is the default so a checkout without backend credentials never posts
+401s. Enable fan-out by setting it in `.env`, then recreating the collector:
+
+```dotenv
+OTEL_REMOTE_EXPORT_CONFIG=otel-collector-export.yaml
+```
+
+```bash
+docker compose up -d --force-recreate otel-collector
+```
+
+Health probes and the dashboard's polling endpoints (`/api/approvals` every 3 s,
+`/api/evals/latest` every 30 s) are excluded from tracing, so an open dashboard
+does not burn a backend quota; the four-eyes decision endpoint stays traced.
 
 Configure in `.env`:
 
@@ -732,11 +752,24 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel  # EU; us./jp./hipaa. for other regions
 LANGFUSE_OTLP_AUTH=<base64 of "public_key:secret_key">
 
-ARIZE_OTLP_ENDPOINT=https://otlp.arize.com/v1
+ARIZE_OTLP_ENDPOINT=https://otlp.arize.com
 ARIZE_SPACE_ID=<space id>
 ARIZE_API_KEY=<arize api key>
 ARIZE_PROJECT_NAME=bastion-agent        # x-project-name routing header
 ```
+
+Both endpoints are **base** URLs: the exporter appends `/v1/traces` itself.
+Arize punishes the alternative silently, and both traps below were hit here:
+
+- `ARIZE_OTLP_ENDPOINT=https://otlp.arize.com/v1` produces `/v1/v1/traces`,
+  which answers `200 ok` and drops the batch — the collector log stays clean.
+- Arize's ingest parses JSON but does not gunzip, so the exporter's default gzip
+  compression answers `400 … invalid character '\x1f' looking for beginning of
+  value` on every batch. The exporter therefore runs with `encoding: json` and
+  `compression: none`.
+
+`tests/test_otel_config.py` pins the base URL and those two settings so neither
+regression can come back quietly.
 
 Build the Langfuse Basic credential (must be regenerated whenever a key is
 rotated — a stale value makes the collector log `401 Unauthorized`):
@@ -746,8 +779,12 @@ python -c "import base64;print(base64.b64encode(b'pk-lf-...:sk-lf-...').decode()
 ```
 
 Verify end to end: make a request (`curl -s http://localhost:8000/docs >/dev/null`),
-then confirm the collector shows no `Exporting failed` lines and the trace
-appears in Langfuse under `service.name=bastion-gateway`.
+then check three things — the collector shows no `Exporting failed` lines, the
+trace appears in Langfuse under `service.name=bastion-gateway`, and
+`POST https://api.arize.com/v2/spans` (Bearer API key, `project_id` from
+`GET https://api.arize.com/v2/projects?space_id=…`) returns the new spans. The
+collector log alone is a weak signal: Arize answers `200 ok` for a batch it
+discards.
 
 ---
 

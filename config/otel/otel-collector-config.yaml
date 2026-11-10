@@ -6,11 +6,18 @@
 #   • Arize AX (OTLP/HTTP)
 #   • local debug logs
 #
-# Egress is currently local debug only: both remote exporters are defined below
-# but are not wired into the traces pipeline. The Langfuse free tier was
-# exhausted by dashboard polling, and telemetry.py now excludes those poll URLs
-# so that a re-enabled export carries real traffic instead of poll noise. To
-# resume export, add the exporter back to the pipeline's `exporters` list.
+# Egress is decided by an overlay file, not by this one. docker-compose.yml
+# passes this file as the first --config and one of
+# otel-collector-no-export.yaml (default: local debug only) or
+# otel-collector-export.yaml (debug + Langfuse + Arize) as the second. Maps
+# merge across files, but a list replaces the same path, so the overlay owns
+# the traces pipeline's `exporters` list while everything below stays in one
+# copy. Select it with OTEL_REMOTE_EXPORT_CONFIG in .env.
+#
+# The Langfuse free tier was once exhausted by dashboard polling; telemetry.py
+# now excludes those poll URLs, so remote export carries real traffic. The
+# `exporters: [debug]` line at the bottom of this file is only the fallback used
+# if the collector is started without an overlay.
 #
 # Every ${env:...} variable below is supplied by docker-compose.yml with a
 # non-empty default, because the collector's env provider does not implement
@@ -63,13 +70,20 @@ exporters:
       enabled: true
       queue_size: 1000
 
-  # Arize AX over OTLP/HTTP. Arize documents the endpoint as
-  # https://otlp.arize.com/v1 (verified: without `/v1` their ingest returns 400).
+  # Arize AX over OTLP/HTTP. Two things bite and both are silent-at-install:
+  #
+  #   1. ARIZE_OTLP_ENDPOINT is the *base* host: the exporter appends
+  #      /v1/traces itself. Including Arize's documented /v1 signal path yields
+  #      /v1/v1/traces, which answers 200 "ok" and drops the batch.
+  #   2. Their ingest parses JSON but does not gunzip, so the exporter's default
+  #      gzip compression answers 400 on every batch ("invalid character '\x1f'
+  #      looking for beginning of value"). Protobuf fails the same way.
+  #
   # `x-project-name` routes the traces into a specific Arize project.
   otlphttp/arize:
     endpoint: ${env:ARIZE_OTLP_ENDPOINT}
-    # Arize's OTLP/HTTP ingest expects JSON, not the exporter's default protobuf.
     encoding: json
+    compression: none
     headers:
       space_id: ${env:ARIZE_SPACE_ID}
       api_key: ${env:ARIZE_API_KEY}
@@ -96,6 +110,6 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      # Remote egress paused (see the header). Re-add otlphttp/arize and/or
-      # otlphttp/langfuse here to resume fan-out.
+      # Fallback when no overlay is passed. The overlay mounted at
+      # /etc/otelcol/export.yaml replaces this list (see the header).
       exporters: [debug]

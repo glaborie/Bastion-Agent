@@ -407,19 +407,26 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029
     container_name: bastion-otel-collector
-    command: ["--config=/etc/otelcol/config.yaml"]
+    # Two configs: the base (receivers, processors, exporters, retry policy) and
+    # an overlay that decides the traces pipeline's exporter list. The overlay
+    # is the only thing that changes between local debug and remote fan-out, so
+    # there is one copy of every setting.
+    command: ["--config=/etc/otelcol/config.yaml", "--config=/etc/otelcol/export.yaml"]
     environment:
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-local}
       # Langfuse Cloud (EU). Use us./jp./hipaa. subdomains for other regions.
       LANGFUSE_OTLP_ENDPOINT: ${LANGFUSE_OTLP_ENDPOINT:-https://cloud.langfuse.com/api/public/otel}
       LANGFUSE_OTLP_AUTH: ${LANGFUSE_OTLP_AUTH:-}
-      # Arize AX OTLP/HTTP endpoint (Arize's documented form includes /v1).
-      ARIZE_OTLP_ENDPOINT: ${ARIZE_OTLP_ENDPOINT:-https://otlp.arize.com/v1}
+      # Arize AX OTLP/HTTP base endpoint; the collector appends /v1/traces.
+      ARIZE_OTLP_ENDPOINT: ${ARIZE_OTLP_ENDPOINT:-https://otlp.arize.com}
       ARIZE_API_KEY: ${ARIZE_API_KEY:-}
       ARIZE_SPACE_ID: ${ARIZE_SPACE_ID:-}
       ARIZE_PROJECT_NAME: ${ARIZE_PROJECT_NAME:-bastion-agent}
     volumes:
       - ./config/otel/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+      # Choose the pipeline overlay. `otel-collector-no-export.yaml` (default)
+      # keeps egress local; `otel-collector-export.yaml` adds Langfuse and Arize.
+      - ./config/otel/${OTEL_REMOTE_EXPORT_CONFIG:-otel-collector-no-export.yaml}:/etc/otelcol/export.yaml:ro
     ports:
       - "127.0.0.1:4317:4317"
       - "127.0.0.1:4318:4318"

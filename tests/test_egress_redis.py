@@ -7,9 +7,11 @@ TTL semantics. This module runs the same lifecycle against a live Redis 7:
 
     REDIS_TEST_URL=redis://localhost:56379/0 uv run pytest -m redis_integration
 
-It is opt-in because CI does not ship a Redis service. Every test uses a random
-session id and deletes only keys under that id, so pointing it at a development
-instance cannot erase another subsystem's data.
+It is opt-in locally: the module skips unless ``REDIS_TEST_URL`` is set. CI
+provisions Redis 7 and sets that variable, so these run as gates there rather
+than as skips. Every test uses a random session id and deletes only keys under
+that id, so pointing it at a development instance cannot erase another
+subsystem's data.
 """
 
 from __future__ import annotations
