@@ -155,6 +155,7 @@ transaction, with a hash of the free-text reason (never the text itself).
 | Method | Path | Access |
 |--------|------|--------|
 | GET | `/dashboard` | operator or admin |
+| GET | `/dashboard/chat` | operator or admin (guarded chat UI, CSRF on send) |
 | GET | `/dashboard/audit` | operator or admin (filter + cursor paging) |
 | GET | `/dashboard/sessions/{id}` | operator or admin (audit timeline) |
 | GET | `/api/approvals` | operator or admin; JSON, or HTML with `HX-Request: true` |
@@ -392,6 +393,14 @@ curl -sS http://localhost:8000/v1/chat \
   -H "Content-Type: application/json" \
   -d '{"conversation_id":"demo-1","messages":[{"role":"user","content":"Summarise our Q3 board minutes"}]}'
 ```
+
+The browser path is **`/dashboard/chat`** (operator/admin): it uses the session
+cookie, sends the page's CSRF token, offers four suggested prompts, shows
+route/classification badges and restored-marker counts, and links each
+conversation to its audit timeline. Each page load gets a fresh conversation id;
+`New conversation` rotates it, which is what starts a new vault/canary scope.
+Omitting `conversation_id` from the API request also makes the server generate
+one.
 
 ### Canary and quarantine
 

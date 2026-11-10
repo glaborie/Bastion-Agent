@@ -144,3 +144,77 @@ pre {
 .htmx-request.htmx-indicator {
   display: inline;
 }
+
+/* Guarded chat (ADR-012) */
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+
+.suggestions .suggestion {
+  margin: 0;
+  max-width: 24rem;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.suggestions .suggestion small {
+  display: block;
+  color: var(--pico-muted-color);
+}
+
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 28rem;
+  margin-block: 1rem;
+  overflow-y: auto;
+}
+
+.chat-turn {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--bastion-radius);
+}
+
+.chat-user {
+  background: color-mix(in srgb, var(--pico-primary) 8%, transparent);
+}
+
+.chat-assistant {
+  background: var(--pico-card-background-color);
+}
+
+.chat-role {
+  color: var(--pico-muted-color);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chat-text {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+}
+
+.chat-status {
+  min-height: 1.4rem;
+}
+
+.chat-status.error {
+  color: #a4161a;
+}
+
+.chat-status.ok {
+  color: #1b7f4b;
+}
+
+.chat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  min-height: 1.6rem;
+}

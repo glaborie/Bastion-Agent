@@ -26,6 +26,10 @@
             <a href="/dashboard/audit"
                {% if request.url.path.startswith("/dashboard/audit") %}aria-current="page"{% endif %}>Audit</a>
           </li>
+          <li>
+            <a href="/dashboard/chat"
+               {% if request.url.path.startswith("/dashboard/chat") %}aria-current="page"{% endif %}>Chat</a>
+          </li>
         </ul>
       </nav>
       {% if principal %}

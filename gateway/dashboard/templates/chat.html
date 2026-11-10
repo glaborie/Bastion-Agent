@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Guarded chat{% endblock %}
+
+{% block head_extra %}
+  <meta name="csrf-token" content="{{ csrf_token or '' }}">
+{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Guarded chat</h1>
+    <p>
+      One turn through DLP, confidentiality routing, a session canary and the
+      egress filter. The answer is shown only after the canary scan.
+    </p>
+  </hgroup>
+
+  <noscript>
+    <article class="alert" role="alert">
+      This page sends requests with a first-party script. Enable JavaScript to
+      use the guarded chat; the API at <code>POST /v1/chat</code> works without it.
+    </article>
+  </noscript>
+
+  <article id="chat-app"
+           data-endpoint="/v1/chat"
+           data-csrf="{{ csrf_token or '' }}"
+           data-conversation-id="{{ conversation_id }}">
+    <header class="row-between">
+      <strong>Conversation</strong>
+      <button type="button" class="secondary outline" id="chat-reset">
+        New conversation
+      </button>
+    </header>
+    <p>
+      <small>
+        conversation id <code id="chat-conversation">{{ conversation_id }}</code>
+        · scoped to your principal for the vault and canary
+      </small>
+    </p>
+
+    <div class="suggestions" aria-label="Suggested prompts">
+      {% for suggestion in suggestions %}
+        <button type="button" class="outline suggestion" data-prompt="{{ suggestion['prompt'] }}">
+          <span>{{ suggestion['prompt'] }}</span>
+          <small>{{ suggestion['hint'] }}</small>
+        </button>
+      {% endfor %}
+    </div>
+
+    <form id="chat-form">
+      <label for="chat-input">Message</label>
+      <textarea id="chat-input"
+                name="message"
+                rows="3"
+                maxlength="32768"
+                placeholder="Ask something, or choose a suggested prompt above."
+                required></textarea>
+      <button type="submit" id="chat-send">Send</button>
+    </form>
+
+    <div id="chat-status" class="chat-status" aria-live="polite"></div>
+    <div id="chat-meta" class="chat-meta" aria-live="polite"></div>
+    <div id="chat-log" class="chat-log" aria-live="polite"></div>
+
+    <footer>
+      <small>
+        A canary leak cannot be triggered on demand from this page; run
+        <code>scripts/demo_egress.py</code> for the deterministic block.
+        <a id="chat-audit" href="#" hidden>Open this conversation in the audit ledger</a>
+      </small>
+    </footer>
+  </article>
+
+  <script src="/static/chat.js" defer></script>
+{% endblock %}
