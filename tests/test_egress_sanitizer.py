@@ -155,6 +155,20 @@ def test_with_canary_keeps_the_existing_prompt(
     assert standalone.startswith("Security marker CANARY-abc12345")
 
 
+async def test_clear_removes_the_canary_and_quarantine(
+    env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis],
+) -> None:
+    sanitizer, _vault, _redis = env
+    first = await sanitizer.canary_for("session-a")
+    await sanitizer.trip("session-a", "canary_leak")
+    assert await sanitizer.is_tripped("session-a") is True
+
+    await sanitizer.clear("session-a")
+
+    assert await sanitizer.is_tripped("session-a") is False
+    assert await sanitizer.canary_for("session-a") != first
+
+
 async def test_redis_failure_raises_instead_of_passing(
     env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis],
 ) -> None:

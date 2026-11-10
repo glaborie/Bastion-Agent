@@ -463,7 +463,58 @@ Signed in as `breakglass`:
 
 ---
 
-## 8. Optional: watch a ticket expire
+## 8. Act 6 — egress canary and quarantine
+
+The canary is deterministic, so this act does not depend on the model
+misbehaving: asking a model to leak its system marker may succeed, refuse or
+paraphrase. The script runs the real sanitizer, Redis keys and vault, and feeds
+it the exact completion text the egress stage would inspect.
+
+```bash
+uv run python scripts/demo_egress.py
+# or inside the app image, against the same Redis and vault key
+docker compose exec -T gateway python - < scripts/demo_egress.py
+```
+
+Point out, in order:
+
+1. **One marker per session.** `CANARY-<uuid4>` is stable across turns and
+   different for a second session. The session key is derived from
+   `actor_id + conversation_id`, never chosen by the caller.
+2. **Leak block.** The output repeats the marker: the delivered text is empty,
+   `reason=canary_leak`, and the session is quarantined. Nothing from the
+   completion reaches the client.
+3. **Quarantine.** The next turn is rejected with `circuit_open` before any
+   model call. There is no in-request override; it expires after
+   `EGRESS_TRIP_TTL_SECONDS`.
+4. **Scoped restore.** A clean completion containing
+   `{{ENTITY:EMAIL_ADDRESS_1}}` is delivered as `alice@example.com` for the same
+   vault session; the plaintext never left the gateway.
+5. **Fence.** A tool payload that closes `</untrusted_content>` is neutralised
+   and a canary-shaped string inside it is removed.
+
+The script deletes its keys, so Redis keeps nothing from the demo.
+
+To show the same stage in the live ledger, make one real request (section 5.1
+has the `token_for` helper) and read the four lifecycle records:
+
+```bash
+TOKEN=$(token_for breakglass)
+curl -s -X POST localhost:8000/v1/chat \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"conversation_id":"live-1","messages":[{"role":"user","content":"Write a haiku about the sea."}]}' | jq
+
+docker compose exec -T db psql -U bastion -d bastion -c \
+  "select event_type, metadata_json from audit_logs where session_id = 'live-1' order by id;"
+```
+
+Expected: `INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION`,
+`EGRESS_FILTERED` with `"blocked": false`. A `SECURITY_INCIDENT` with
+`"stage": "egress"` is the live equivalent of step 2.
+
+---
+
+## 9. Optional: watch a ticket expire
 
 ```bash
 # .env
@@ -477,7 +528,7 @@ stays in the ledger. Restore `APPROVAL_TTL_SECONDS=900` afterwards.
 
 ---
 
-## 9. Reset
+## 10. Reset
 
 ```bash
 # remove demo files from the worker sandbox
@@ -492,7 +543,7 @@ docker compose down -v
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -509,7 +560,7 @@ docker compose down -v
 
 ---
 
-## 11. Cheat sheet
+## 12. Cheat sheet
 
 ```bash
 # stack
@@ -530,6 +581,9 @@ uv run python scripts/demo_tool_request.py --tool execute_file_write \
 curl -s -X POST -H "Authorization: Bearer $BOB_TOKEN" \
   -d action=approve localhost:8000/api/approvals/$TICKET/action | jq
 
+# egress canary (deterministic, no model)
+uv run python scripts/demo_egress.py
+
 # evidence
 docker compose exec -T worker cat /tmp/bastion-workspace/reports/q1.txt
 curl -s -X POST -H "Authorization: Bearer $BOB_TOKEN" \
@@ -543,6 +597,7 @@ curl -s -X POST -H "Authorization: Bearer $BOB_TOKEN" \
 - [ ] `/health/ready` returns `ready` and `/dashboard` lists live tickets
 - [ ] DLP replaces every entity and restores the exact original; Redis has no plaintext
 - [ ] Confidential prompt routes to `local-llama`; a completion returns
+- [ ] The egress demo blocks a canary leak, quarantines the session and restores a marker
 - [ ] Alice’s write suspends; Alice’s own approval is refused with `403`
 - [ ] Bob’s approval produces the file and four ledger events
 - [ ] The analyst write is denied by RBAC with no ticket

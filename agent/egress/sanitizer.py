@@ -148,6 +148,17 @@ class EgressSanitizer:
             return
         logger.warning("Egress circuit tripped", extra={"reason": reason})
 
+    async def clear(self, session_id: str) -> None:
+        """Delete the canary and quarantine keys for a session.
+
+        Used by the demo and by incident response. The next turn issues a new
+        marker, so clearing is a deliberate reset, not a silent bypass.
+        """
+        try:
+            await self._redis.delete(self._key("canary", session_id), self._key("trip", session_id))
+        except RedisError as exc:
+            raise EgressUnavailableError("canary registry is unreachable") from exc
+
     # -- prompt construction ----------------------------------------------
     @staticmethod
     def with_canary(system_prompt: str, canary: str) -> str:

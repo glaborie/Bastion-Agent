@@ -412,6 +412,22 @@ After the canary scan, `{{ENTITY:…}}` markers are restored only through the
 caller's vault session. A marker whose entry expired stays visible and is
 counted; it is never guessed.
 
+### Demo
+
+The canary is deterministic, so the demo feeds the sanitizer the exact text the
+egress stage would inspect instead of hoping the model leaks on command:
+
+```bash
+uv run python scripts/demo_egress.py
+# or inside the app image, against the same Redis and vault key
+docker compose exec -T gateway python - < scripts/demo_egress.py
+```
+
+It shows the stable per-session marker, a leak blocked with empty delivered text
+and the session quarantined, the next turn rejected before inference, a scoped
+marker restored, and a tool payload that cannot close its fence. It deletes its
+keys afterwards.
+
 ### Verification
 
 ```bash
@@ -534,6 +550,7 @@ uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
 | `scripts/recalculate_dread.py` | Recompute DREAD totals and the risk-priority list; `--check` / `--write` |
 | `scripts/update_threat_intel.py` | Query OSV for every registry package in `uv.lock`; writes `artifacts/threat-intel/latest.json` |
 | `scripts/run_evals.py` | Run the three golden gates and atomically publish `artifacts/evals/latest.json` |
+| `scripts/demo_egress.py` | Deterministic canary/leak/quarantine/fence demo against the live Redis |
 | `scripts/demo_tool_request.py` | Originate a guarded tool call for the demo (see `DEMO.md`) |
 | `scripts/seed_demo_approval.py` | Seed a suspended ticket without a worker |
 | `scripts/omniroute_bootstrap.py` | Register OmniRoute provider aliases and the gateway key |
