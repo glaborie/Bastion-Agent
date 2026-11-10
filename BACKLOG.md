@@ -11,12 +11,12 @@ must not be edited by hand.
 
 - current-phase: v0.2
 - wip-limit: 3
-- next-id: IDEA-013
+- next-id: IDEA-014
 
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (6)
+### Inbox (7)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -24,6 +24,7 @@ must not be edited by hand.
 - `IDEA-009` P2 v0.2 security - Author ADR-014 for observability and trace privacy
 - `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-012` P2 v0.3 gateway - Add a dashboard demo console that runs the demo scenarios
+- `IDEA-013` P2 v0.3 agent - Add a Presidio recognizer for Swiss AHV/AVS numbers
 
 ### Ready (2)
 
@@ -64,6 +65,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-010 | inbox | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
 | IDEA-011 | done | P1 | v0.2 | docs | Reconcile the CONTROL.md dashboard rate-limit claim with the gateway |
 | IDEA-012 | inbox | P2 | v0.3 | gateway | Add a dashboard demo console that runs the demo scenarios |
+| IDEA-013 | inbox | P2 | v0.3 | agent | Add a Presidio recognizer for Swiss AHV/AVS numbers |
 <!-- END INDEX -->
 
 ## Items
@@ -547,3 +549,40 @@ One dashboard page lists every demo scenario with the control it exercises and t
 - Deduplication: IDEA-002 (WebSocket approvals) is dashboard transport, not a demo page; IDEA-006 (done) built the deterministic egress script itself and its acceptance names no UI; IDEA-011 (done) reconciled the rate-limit claim. No ADR in `docs/adr/` mentions a demo console or a scenario runner, and ADR-007 decision 2 enumerates the current three dashboard pages plus chat.
 - Classification: `P2`/`v0.3` because ADR-008 decision 5 freezes new features inside a phase and no ADR-008 phase scope names a demo console; triage may downgrade to `P3` or pull it into v0.2 if the demo is treated as part of the current definition of done.
 - Open questions for triage: whether runs execute in the gateway process, the ARQ worker or a dedicated compose service; and whether a run should write a new audit event type (an event-vocabulary change, like the one ADR-007 decision 7 defers for views) or structured logs only.
+
+### IDEA-013: Add a Presidio recognizer for Swiss AHV/AVS numbers
+
+- status: inbox
+- priority: P2
+- phase: v0.3
+- area: agent
+- tags: presidio, dlp, pii, swiss
+- depends-on: -
+- spec: ADR-002
+- created: 2026-11-10
+- updated: 2026-11-10
+- source: THREAT_MODEL.md T4 residual risk and tests/data/goldens.jsonl row pii-social-security-009, 2026-11-10
+
+**Problem**
+
+The deterministic DLP stage has no recognizer for the Swiss AHV/AVS number. The default entity list in `settings.py` (`dlp_entities`, line 113) and `.env.example` line 127 names eight entities, and `get_analyzer()` in `agent/dlp/presidio.py` registers exactly one custom recognizer, `_api_key_recognizer()` (line 119), so a number such as `756.1234.5678.90` is never replaced with a vault marker. The gap is already recorded rather than guessed: `THREAT_MODEL.md` T4 says "The default entity list has no Swiss-specific identifiers (for example the AHV/AVS number). Add custom recognizers before a Swiss deployment." Routing may still keep such a prompt local through the classifier's `sensitive_personal` floor, but that is a confidentiality verdict, not redaction — the identifier enters the model context in plaintext, can be echoed back through the egress stage, and leaves no reversible marker for an authorised recipient. The corpus encodes the gap: row `pii-social-security-009` carries `expected_redactions: []` with the note "Presidio has no Swiss AHV recogniser; the sensitive_personal floor covers it", so the DLP metric never asserts this class. `README-SWISS.md` line 70 presents the entity list as the Swiss-market answer without qualifying it.
+
+**Outcome**
+
+An AHV/AVS number is detected as its own entity type, replaced with a stable `{{ENTITY:...}}` vault marker like any other PII, and restored only for its own session. The recognizer is checksum-aware so the 13-digit format is not confused with arbitrary numbers, the default entity list ships with it, and every document that enumerates the DLP entity set names it.
+
+**Acceptance**
+
+- [ ] `uv run pytest tests/test_dlp_presidio.py tests/test_dlp_evals.py -q` passes with a new case: checksum-valid `756.1234.5678.90` is redacted as `AHV_NUMBER` and appears in `result.entity_types`, while the same digits with a wrong check digit are not redacted
+- [ ] `agent/dlp/presidio.py` registers the recognizer beside `_api_key_recognizer()`, the regex and the EAN-13 check-digit rule are named in a module comment, and a dotted, a space-separated and a bare 13-digit spelling are covered by tests
+- [ ] `settings.py` `dlp_entities` default and `.env.example` line 127 include the new entity, and a deployment that pins `DLP_ENTITIES` in `.env` still starts and still redacts only the entities it names
+- [ ] `tests/data/goldens.jsonl` row `pii-social-security-009` gains `expected_redactions: ["AHV_NUMBER"]` with no existing assertion removed, and `uv run python scripts/run_evals.py` stays green
+- [ ] `docs/adr/ADR-002.md` decision 1 names the recognizer, its pattern, checksum rule and score, `THREAT_MODEL.md` T4 drops the "no Swiss-specific identifiers" residual risk, and `README-SWISS.md` line 70 lists the added entity
+
+**Notes**
+
+- Deduplication: `BACKLOG.md` had no item mentioning recognizers, entity coverage, PII, Presidio or Swiss identifiers before this capture; the only Swiss hits were prose about the market. `THREAT_MODEL.md` T4 and golden row `pii-social-security-009` both document the gap as residual risk, not as planned work, and no ADR decision implements it. `spec: ADR-002` is right rather than `-` because decision 1 of the DLP ADR fixes the entity set, so widening it edits a governing decision ("covered by an ADR but not built") and the item includes that edit.
+- Classification: `P2`/`v0.3` because this is new capability and ADR-008 decision 5 freezes features inside a phase. No ADR-008 phase bullet names Swiss identifiers; the nearest is v0.6 "custom DLP adapters", and v0.3 is the phase that already touches Presidio. Triage may move it to v0.6 if recognizers are treated as the adapter work, or pull it into v0.2 if the Swiss-market reference architecture is judged part of the current definition of done.
+- Scope is one recognizer. Deliberately out: the Swiss UID/CHE company number, postal account numbers and other country identifiers; those shape "recognizer catalog" work rather than this item. Also out: migrating `DLP_ENTITIES` to a versioned catalog, and any change to the classifier floor that currently routes such prompts.
+- Open questions for triage: whether the entity type should be `AHV_NUMBER` (the name used above) or a Swiss-prefixed form such as `CH_AHV`; and whether the recognizer's pattern score should sit above `DLP_SCORE_THRESHOLD` (0.35) unconditionally or below it unless the checksum validates, since a 13-digit identifier that is only format-matching risks over-redacting order and account references.
+- Acceptance assumes the checksum rule is part of the recognizer; if Presidio's `PatternRecognizer` cannot express it, the implementation needs a small custom `EntityRecognizer` subclass, which is a larger change than the pattern-only recognizers shipped today and should be decided before coding.
