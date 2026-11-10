@@ -422,10 +422,18 @@ services:
       ARIZE_API_KEY: ${ARIZE_API_KEY:-}
       ARIZE_SPACE_ID: ${ARIZE_SPACE_ID:-}
       ARIZE_PROJECT_NAME: ${ARIZE_PROJECT_NAME:-bastion-agent}
+      # OpenLit, self-hosted on the host: the exporter appends /v1/traces.
+      OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-http://host.docker.internal:4320}
+      OPENLIT_OTLP_AUTH: ${OPENLIT_OTLP_AUTH:-}
+    # host.docker.internal is a Docker Desktop name; on Linux it must be mapped
+    # explicitly for the collector to reach OpenLit's host-published OTLP port.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./config/otel/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
       # Choose the pipeline overlay. `otel-collector-no-export.yaml` (default)
-      # keeps egress local; `otel-collector-export.yaml` adds Langfuse and Arize.
+      # keeps egress local; `otel-collector-openlit.yaml` adds the self-hosted
+      # OpenLit collector; `otel-collector-export.yaml` adds Langfuse and Arize.
       - ./config/otel/${OTEL_REMOTE_EXPORT_CONFIG:-otel-collector-no-export.yaml}:/etc/otelcol/export.yaml:ro
     ports:
       - "127.0.0.1:4317:4317"

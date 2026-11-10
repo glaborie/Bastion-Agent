@@ -116,6 +116,15 @@ exporters:
       enabled: true
       queue_size: 1000
 
+  # OpenLit (self-hosted): a local OTLP/HTTP collector with a UI, so traces stay
+  # on the host while remaining queryable. The endpoint is the base URL — the
+  # exporter appends /v1/traces — and it points at host.docker.internal because
+  # OpenLit publishes 4320 on the host, not on this container network.
+  otlphttp/openlit:
+    endpoint: ${env:OPENLIT_OTLP_ENDPOINT}
+    headers:
+      x-openlit-api-key: ${env:OPENLIT_OTLP_AUTH}
+
 extensions:
   health_check:
     endpoint: 0.0.0.0:13133

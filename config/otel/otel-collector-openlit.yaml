@@ -1,0 +1,22 @@
+# =============================================================================
+# Overlay: fan traces out to a self-hosted OpenLit (local, unmetered)
+# -----------------------------------------------------------------------------
+# Enable with OTEL_REMOTE_EXPORT_CONFIG=otel-collector-openlit.yaml in .env, then
+# recreate the collector:
+#
+#     docker compose up -d --force-recreate otel-collector
+#
+# It replaces only the traces pipeline's exporter list; the receiver, the
+# processors and the endpoint/header settings all stay in
+# otel-collector-config.yaml, which is passed as the first --config.
+#
+# Traces stay on the host, so this needs no quota and no cloud credentials: only
+# OPENLIT_OTLP_ENDPOINT and OPENLIT_OTLP_AUTH from .env, plus the
+# host.docker.internal mapping that docker-compose.yml adds to the collector.
+# Switch back to otel-collector-no-export.yaml to stop the export entirely.
+# =============================================================================
+
+service:
+  pipelines:
+    traces:
+      exporters: [debug, otlphttp/openlit]

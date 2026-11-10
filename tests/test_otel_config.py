@@ -20,6 +20,7 @@ OTEL_DIR: Final[Path] = Path("config/otel")
 BASE: Final[Path] = OTEL_DIR / "otel-collector-config.yaml"
 EXPORT: Final[Path] = OTEL_DIR / "otel-collector-export.yaml"
 NO_EXPORT: Final[Path] = OTEL_DIR / "otel-collector-no-export.yaml"
+OPENLIT: Final[Path] = OTEL_DIR / "otel-collector-openlit.yaml"
 COMPOSE: Final[Path] = Path("docker-compose.yml")
 
 
@@ -38,7 +39,7 @@ def pipeline_exporters(document: dict[str, Any]) -> list[str]:
 def test_base_definition_owns_the_remote_exporter_settings() -> None:
     """The overlays only choose *which* exporters run; the base defines them."""
     exporters = load(BASE)["exporters"]
-    assert set(exporters) >= {"debug", "otlphttp/langfuse", "otlphttp/arize"}
+    assert set(exporters) >= {"debug", "otlphttp/langfuse", "otlphttp/arize", "otlphttp/openlit"}
 
     langfuse = exporters["otlphttp/langfuse"]
     assert langfuse["endpoint"] == "${env:LANGFUSE_OTLP_ENDPOINT}"
@@ -53,8 +54,28 @@ def test_base_definition_owns_the_remote_exporter_settings() -> None:
     assert arize["compression"] == "none"
     assert arize["headers"]["x-project-name"] == "${env:ARIZE_PROJECT_NAME}"
 
+    # OpenLit is a real OTLP collector, so it takes the exporter defaults
+    # (protobuf, gzip) — only the endpoint and API-key header are set here.
+    openlit = exporters["otlphttp/openlit"]
+    assert openlit["endpoint"] == "${env:OPENLIT_OTLP_ENDPOINT}"
+    assert openlit["headers"]["x-openlit-api-key"] == "${env:OPENLIT_OTLP_AUTH}"
 
-@pytest.mark.parametrize("overlay", [EXPORT, NO_EXPORT], ids=["export", "no-export"])
+
+def test_openlit_overlay_stays_on_the_host() -> None:
+    """The local fan-out must be selectable without touching the cloud files."""
+    assert pipeline_exporters(load(OPENLIT)) == ["debug", "otlphttp/openlit"]
+
+    text = COMPOSE.read_text(encoding="utf-8")
+    # OpenLit is published on the host, so the collector needs the mapping.
+    assert '"host.docker.internal:host-gateway"' in text
+    assert "OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-http://host.docker.internal:4320}" in (
+        text
+    )
+
+
+@pytest.mark.parametrize(
+    "overlay", [EXPORT, NO_EXPORT, OPENLIT], ids=["export", "no-export", "openlit"]
+)
 def test_overlays_only_name_exporters_the_base_defines(overlay: Path) -> None:
     defined = set(load(BASE)["exporters"])
     named = set(pipeline_exporters(load(overlay)))

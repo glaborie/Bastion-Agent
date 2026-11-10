@@ -715,7 +715,7 @@ combo. It requires `OPENROUTER_API_KEY` in `.env`.
 
 ---
 
-## Observability (Langfuse Cloud + Arize AX)
+## Observability (Langfuse Cloud + Arize AX + local OpenLit)
 
 The gateway and worker export OTLP/HTTP spans to `otel-collector`. The base
 config (`config/otel/otel-collector-config.yaml`) owns the receiver,
@@ -727,6 +727,7 @@ setting lives in one place.
 | Overlay (`OTEL_REMOTE_EXPORT_CONFIG`) | Egress |
 |---|---|
 | `otel-collector-no-export.yaml` (default) | collector log only |
+| `otel-collector-openlit.yaml` | collector log + self-hosted OpenLit |
 | `otel-collector-export.yaml` | collector log + Langfuse + Arize |
 
 Local-only is the default so a checkout without backend credentials never posts
@@ -748,6 +749,32 @@ nothing leaves the host and their credentials are never read.
 Health probes and the dashboard's polling endpoints (`/api/approvals` every 3 s,
 `/api/evals/latest` every 30 s) are excluded from tracing, so an open dashboard
 does not burn a backend quota; the four-eyes decision endpoint stays traced.
+
+### Local OpenLit instead of a cloud backend
+
+A self-hosted OpenLit is the unmetered option: traces never leave the host and
+its UI stays queryable. Point the collector at the OpenLit OTLP/HTTP port with
+`OPENLIT_OTLP_ENDPOINT` / `OPENLIT_OTLP_AUTH` in `.env`, select the OpenLit
+overlay, and recreate the collector:
+
+```dotenv
+OTEL_REMOTE_EXPORT_CONFIG=otel-collector-openlit.yaml
+OPENLIT_OTLP_ENDPOINT=http://host.docker.internal:4320   # OpenLit 4320 -> 4318
+OPENLIT_OTLP_AUTH=<OpenLit API key, sent as x-openlit-api-key>
+```
+
+```bash
+docker compose up -d --force-recreate otel-collector
+```
+
+Two things are easy to get wrong. The collector runs in a container while
+OpenLit publishes its OTLP port on the host, so the endpoint is
+`host.docker.internal`, which `docker-compose.yml` maps explicitly for Linux
+(`extra_hosts: host-gateway`). And these variables must not reuse the
+`OTEL_EXPORTER_*` names: the app reads `OTEL_EXPORTER_OTLP_ENDPOINT` itself, so a
+second definition of it would win for host-run processes and bypass the
+collector. OpenLit is a real OTLP collector, so it takes the exporter defaults
+(protobuf, gzip) — no `encoding: json` workaround like Arize needs.
 
 ### What is not exported
 
