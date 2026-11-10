@@ -454,7 +454,7 @@ Signed in as `breakglass`:
 
 | Page | What to show |
 |---|---|
-| `/dashboard` | Pending approvals, recent decisions with full ticket ids, the four-eyes rule, evaluation card (“not run yet” until `scripts/run_evals.py` runs) |
+| `/dashboard` | Pending approvals, the live security-incident panel (last 10 `SECURITY_INCIDENT` rows, refreshed every 15 s), recent decisions with full ticket ids, the four-eyes rule, evaluation card (“not run yet” until `scripts/run_evals.py` runs) |
 | `/dashboard/audit` | Filter by event type, actor, session; verify the chain in place |
 | `/dashboard/sessions/<SESSION>` | The whole request lifecycle for the demo session |
 
@@ -518,7 +518,9 @@ Point out, in order:
    completion reaches the client.
 3. **Quarantine.** The next turn is rejected with `circuit_open` before any
    model call. There is no in-request override; it expires after
-   `EGRESS_TRIP_TTL_SECONDS`.
+   `EGRESS_TRIP_TTL_SECONDS`. The dashboard's **Security incidents** panel shows
+   the corresponding `SECURITY_INCIDENT` within 15 s for a live `/v1/chat`
+   block; the offline script does not write ledger rows.
 4. **Scoped restore.** A clean completion containing
    `{{ENTITY:EMAIL_ADDRESS_1}}` is delivered as `alice@example.com` for the same
    vault session; the plaintext never left the gateway.

@@ -18,6 +18,7 @@ from gateway.audit_service import (
     event_type_choices,
     list_records,
     next_page_url,
+    recent_security_incidents,
     session_timeline,
 )
 from gateway.auth.rbac import AuthContext, require_roles
@@ -73,6 +74,7 @@ async def dashboard_page(
         viewer_roles=context.principal.roles,
         limit=settings.approval_page_size,
     )
+    incidents = await recent_security_incidents(session)
     return render(
         request,
         "dashboard.html",
@@ -81,7 +83,27 @@ async def dashboard_page(
             "csrf_token": context.csrf_token,
             "approvals": approvals,
             "pending_count": len(approvals),
+            "incidents": incidents,
             "report": load_latest_report(settings.eval_report_path),
+        },
+    )
+
+
+@router.get("/api/incidents", response_class=HTMLResponse)
+async def incidents_panel(
+    request: Request,
+    context: AuthContext = Depends(require_roles("operator", "admin")),
+    session: AsyncSession = Depends(get_db_session),
+) -> HTMLResponse:
+    """Live ``SECURITY_INCIDENT`` panel fragment polled by the dashboard (ADR-012)."""
+    incidents = await recent_security_incidents(session)
+    return render(
+        request,
+        "partials/incident_panel.html",
+        context={
+            "principal": context.principal,
+            "csrf_token": context.csrf_token,
+            "incidents": incidents,
         },
     )
 

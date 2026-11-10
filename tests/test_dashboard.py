@@ -321,6 +321,87 @@ async def test_audit_rejects_unknown_event_type(api: tuple[httpx.AsyncClient, An
     assert response.status_code == 422
 
 
+async def test_dashboard_shows_recent_security_incidents(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    """ADR-012 rollout: incidents must be visible without opening the ledger."""
+    client, _state = api
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as session:
+        await append_audit_event(
+            session,
+            actor_id="bob-sub",
+            event_type=AuditEventType.SECURITY_INCIDENT,
+            session_id="conv-canary",
+            metadata_json={"reason": "canary_leak", "stage": "egress", "route": "local-llama"},
+        )
+        await append_audit_event(
+            session,
+            actor_id="alice-sub",
+            event_type=AuditEventType.SECURITY_INCIDENT,
+            session_id="conv-quarantine",
+            metadata_json={"reason": "circuit_open", "stage": "preflight"},
+        )
+        # A normal turn must not be mistaken for an incident.
+        await append_audit_event(
+            session,
+            actor_id="bob-sub",
+            event_type=AuditEventType.INPUT_RECEIVED,
+            session_id="conv-clean",
+            payload={"not_an_incident": True},
+        )
+        await session.commit()
+
+    response = await client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert "Security incidents" in response.text
+    assert response.text.count('id="incidents"') == 1
+    assert "canary_leak" in response.text
+    assert "circuit_open" in response.text
+    assert "local-llama" in response.text
+    assert 'href="/dashboard/sessions/conv-canary"' in response.text
+    assert 'href="/dashboard/audit?event_type=SECURITY_INCIDENT"' in response.text
+    assert "conv-clean" not in response.text
+    # The panel polls itself; a full page must not already carry hx-swap-oob.
+    assert 'hx-get="/api/incidents"' in response.text
+
+
+async def test_incident_panel_fragment_and_empty_state(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    client, _state = api
+
+    empty = await client.get("/api/incidents", headers={"HX-Request": "true"})
+    assert empty.status_code == 200
+    assert 'id="incidents"' in empty.text
+    assert "No security incidents recorded." in empty.text
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as session:
+        await append_audit_event(
+            session,
+            actor_id="bob-sub",
+            event_type=AuditEventType.SECURITY_INCIDENT,
+            session_id="conv-fragment",
+            metadata_json={"reason": "vault_error", "stage": "egress"},
+        )
+        await session.commit()
+
+    filled = await client.get("/api/incidents", headers={"HX-Request": "true"})
+    assert filled.status_code == 200
+    assert "vault_error" in filled.text
+    assert 'hx-trigger="every 15s' in filled.text
+
+
+async def test_incident_panel_requires_operator_or_admin(
+    api: tuple[httpx.AsyncClient, Any],
+) -> None:
+    client, state = api
+    state["context"] = session_context(CAROL)
+    assert (await client.get("/api/incidents")).status_code == 403
+
+
 async def test_chat_page_renders_suggested_prompts_and_a_scoped_conversation(
     api: tuple[httpx.AsyncClient, Any],
 ) -> None:

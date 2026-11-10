@@ -159,6 +159,7 @@ transaction, with a hash of the free-text reason (never the text itself).
 | GET | `/dashboard/audit` | operator or admin (filter + cursor paging) |
 | GET | `/dashboard/sessions/{id}` | operator or admin (audit timeline) |
 | GET | `/api/approvals` | operator or admin; JSON, or HTML with `HX-Request: true` |
+| GET | `/api/incidents` | operator or admin (HTML panel: 10 most recent `SECURITY_INCIDENT` rows) |
 | POST | `/api/approvals/{id}/action` | operator or admin + CSRF (cookie auth) |
 | GET | `/api/audit` | operator or admin (JSON/HTML, cursor paging) |
 | POST | `/api/audit/verify` | operator or admin + CSRF; full chain verification |
@@ -166,6 +167,14 @@ transaction, with a hash of the free-text reason (never the text itself).
 | GET | `/api/evals/latest` | operator or admin |
 | GET | `/auth/login`, `/auth/callback`, `/auth/logout` | public flow / session |
 | GET | `/auth/me` | any authenticated identity |
+
+### Security incidents panel
+
+The dashboard polls `GET /api/incidents` every 15 seconds and renders the ten
+most recent `SECURITY_INCIDENT` records: stage, reason, actor, route and a link
+to the session timeline. Only machine metadata from the hash-chained ledger is
+shown, never prompt text. The full filterable history stays at
+`/dashboard/audit?event_type=SECURITY_INCIDENT`.
 
 ### Evaluation health card
 
@@ -443,6 +452,23 @@ keys afterwards.
 uv run pytest -q tests/test_egress_sanitizer.py tests/test_egress_evals.py \
   tests/test_chat.py tests/test_chat_contract.py
 ```
+
+Two rollout checks are opt-in because they need an external endpoint:
+
+```bash
+# Redis TTL expiry, shared canary and quarantine keys (Redis 7)
+docker run --rm -d --name bastion-test-redis -p 56379:6379 redis:7-alpine
+REDIS_TEST_URL=redis://localhost:56379/0 uv run pytest -m redis_integration
+
+# Real model extraction probe through the sanitizer
+LLAMA_CPP_BASE_URL=http://localhost:8002 \
+  LLAMA_CPP_API_KEY=dev-only-llama-api-key \
+  uv run pytest -m model_integration
+```
+
+The model test asserts the invariant, not the model's politeness: a refusal
+passes, while a raw marker in the answer must be blocked with `canary_leak`,
+delivered as empty text and quarantined.
 
 ## Guarded Tools & Four-Eyes HITL (Milestone 4)
 

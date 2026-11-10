@@ -75,6 +75,8 @@ asyncio_mode = "auto"
 addopts = "-ra --strict-markers"
 markers = [
     "integration: requires a live PostgreSQL instance (set TEST_DATABASE_URL)",
+    "redis_integration: requires a live Redis instance (set REDIS_TEST_URL)",
+    "model_integration: requires a live llama.cpp endpoint (set LLAMA_CPP_BASE_URL)",
 ]
 asyncio_default_fixture_loop_scope = "function"
 

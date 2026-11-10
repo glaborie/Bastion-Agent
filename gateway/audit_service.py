@@ -14,6 +14,8 @@ from db.models import AuditEventType, AuditLog
 DEFAULT_PAGE_SIZE: Final[int] = 50
 MAX_PAGE_SIZE: Final[int] = 200
 MAX_TIMELINE_RECORDS: Final[int] = 1000
+#: Upper bound for the dashboard's live incident panel.
+MAX_INCIDENT_RECORDS: Final[int] = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +104,27 @@ async def session_timeline(
         select(AuditLog)
         .where(AuditLog.session_id == session_id)
         .order_by(AuditLog.id.asc())
+        .limit(bounded)
+    )
+    return list((await session.execute(statement)).scalars())
+
+
+async def recent_security_incidents(
+    session: AsyncSession,
+    *,
+    limit: int = MAX_INCIDENT_RECORDS,
+) -> list[AuditLog]:
+    """Newest-first ``SECURITY_INCIDENT`` rows for the dashboard panel.
+
+    The page is the operator's first view after a leak or a quarantine, so the
+    query is bounded and index-backed (``ix_audit_logs_event_type``); the full,
+    filterable history remains in the audit ledger.
+    """
+    bounded = max(1, min(limit, MAX_INCIDENT_RECORDS))
+    statement = (
+        select(AuditLog)
+        .where(AuditLog.event_type == AuditEventType.SECURITY_INCIDENT)
+        .order_by(AuditLog.id.desc())
         .limit(bounded)
     )
     return list((await session.execute(statement)).scalars())

@@ -1,0 +1,65 @@
+<section id="incidents"
+         hx-get="/api/incidents"
+         hx-trigger="every 15s, visibilitychange from:document, focus from:window"
+         hx-swap="outerHTML"
+         aria-live="polite">
+  <header class="row-between">
+    <h2>Security incidents</h2>
+    <a href="/dashboard/audit?event_type=SECURITY_INCIDENT">
+      <small>Full incident ledger</small>
+    </a>
+  </header>
+
+  {% if incidents %}
+    <p>
+      <small class="muted">
+        Blocked responses from the egress filter and the four-eyes guard.
+        Metadata only: reasons and stages, never prompt text (ADR-012).
+      </small>
+    </p>
+    <div class="table-scroll">
+      <table role="grid">
+        <thead>
+          <tr>
+            <th scope="col">Time</th>
+            <th scope="col">Stage</th>
+            <th scope="col">Reason</th>
+            <th scope="col">Actor</th>
+            <th scope="col">Session</th>
+            <th scope="col">Route</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for incident in incidents %}
+            {% set metadata = incident.metadata_json or {} %}
+            <tr>
+              <td><small>{{ incident.timestamp | utc_ts }}</small></td>
+              <td><small>{{ metadata.get("stage", "—") }}</small></td>
+              <td><span class="badge badge-bad">{{ metadata.get("reason", "unknown") }}</span></td>
+              <td>
+                <code title="{{ incident.actor_id }}">{{ incident.actor_id | short_hash(8) }}</code>
+              </td>
+              <td>
+                {% if incident.session_id %}
+                  <a href="/dashboard/sessions/{{ incident.session_id }}">
+                    <code>{{ incident.session_id | short_hash(16) }}</code>
+                  </a>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td><small>{{ metadata.get("route", "—") }}</small></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <article>
+      <p>
+        No security incidents recorded. A canary leak or a blocked egress
+        response appears here.
+      </p>
+    </article>
+  {% endif %}
+</section>
