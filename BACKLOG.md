@@ -16,12 +16,11 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (4)
+### Inbox (3)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-007` P1 v0.2 agent - Route corporate-confidential documents without explicit markers to the local model
-- `IDEA-008` P1 v0.2 evals - Make the eval gate bit-reproducible across hosted runners
 
 ### Ready (2)
 
@@ -36,9 +35,10 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (1)
+### Done (2)
 
 - `IDEA-006` P3 v0.2 docs - Add a deterministic egress canary demo
+- `IDEA-008` P1 v0.2 evals - Make the eval gate bit-reproducible across hosted runners
 
 _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 <!-- END BOARD -->
@@ -55,7 +55,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-005 | ready | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
 | IDEA-006 | done | P3 | v0.2 | docs | Add a deterministic egress canary demo |
 | IDEA-007 | inbox | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
-| IDEA-008 | inbox | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
+| IDEA-008 | done | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
 <!-- END INDEX -->
 
 ## Items
@@ -305,7 +305,7 @@ class of text.
 
 ### IDEA-008: Make the eval gate bit-reproducible across hosted runners
 
-- status: inbox
+- status: done
 - priority: P1
 - phase: v0.2
 - area: evals
@@ -329,15 +329,16 @@ the recorded mitigation (log the host, the AVX-512 flags and one probe) explains
 the failure but does not unblock a merge: a re-run returns to the same image.
 
 The signature is now narrowed to the host's instruction set. Every failing run
-landed on an AMD EPYC 7763 — the only host seen so far with no AVX-512 at all,
-so `/proc/cpuinfo` reports no `avx512*` flags and ONNX Runtime selects the AVX2
-int8 kernels. Every passing run is on a host with `avx512_vnni`: Intel Xeon
-Platinum 8370C, AMD EPYC 9V45, and the calibration desktop (i7-11700KF). Run
-42882954274 (`e5e7c60`, telemetry only) reproduced 0.9243 and both failing tests
-on a 7763, while the two docs-only commits between the failures passed on the
-other hosts. Same wheels, same pinned digests, same tree: 3 of the last 8
-`master` runs failed and all three were 7763s, so the verdict is a property of
-the host rather than of the commit.
+landed on an AMD EPYC machine that reports no AVX-512 at all, so `/proc/cpuinfo`
+lists no `avx512*` flags and ONNX Runtime selects the AVX2 int8 kernels: EPYC
+7763s first, and on the first run of the fix an EPYC 9V74 with the identical
+haiku score 0.9243. Every host that reproduced the calibration verdicts has
+`avx512_vnni`: Intel Xeon Platinum 8370C, AMD EPYC 9V45, and the calibration
+desktop (i7-11700KF). Run 42882954274 (`e5e7c60`, telemetry only) reproduced
+0.9243 and both failing tests on a 7763, while the two docs-only commits between
+the failures passed on the other hosts. Same wheels, same pinned digests, same
+tree: 3 of the previous 8 `master` runs failed and all three were 7763s, so the
+verdict is a property of the host rather than of the commit.
 
 **Outcome**
 
@@ -349,11 +350,11 @@ reproducible.
 
 **Acceptance**
 
-- [ ] The eval job either pins a CPU class / container image where the int8 graphs reproduce, or gates the fp32 graph, or records the dispatch anomaly and skips the ratio assertions with a non-green-but-explicit verdict
-- [ ] `docs/adr/ADR-011.md` records the choice and replaces the "not done" note in Consequences
-- [ ] A run on the offending AMD EPYC image is reproducible evidence: the probe verdict, the host and the flags appear in the job summary, not only in a log line
-- [ ] `uv run python scripts/run_evals.py` still exits non-zero on a genuine corpus regression, proven by a deliberately broken golden row in a test
-- [ ] CI is green on `master` without a manual re-run
+- [x] The eval job either pins a CPU class / container image where the int8 graphs reproduce, or gates the fp32 graph, or records the dispatch anomaly and skips the ratio assertions with a non-green-but-explicit verdict
+- [x] `docs/adr/ADR-011.md` records the choice and replaces the "not done" note in Consequences
+- [x] A run on the offending AMD EPYC image is reproducible evidence: the probe verdict, the host and the flags appear in the job summary, not only in a log line
+- [x] `uv run python scripts/run_evals.py` still exits non-zero on a genuine corpus regression, proven by a deliberately broken golden row in a test
+- [x] CI is green on `master` without a manual re-run
 
 **Notes**
 
@@ -362,3 +363,15 @@ reproducible.
   with it.
 - Not caused by the telemetry or demo work in `bb02cf0` / `9bdb5bf`: the same
   failure appears on the docs-only commit that precedes them.
+- Resolved in `c7c8616`: `scripts/check_classifier_dispatch.py` classifies five
+  golden sentinels and publishes `reference` / `dispatch_anomaly` to the job
+  summary and `$GITHUB_OUTPUT`; `agent/routing/dispatch.py` names the anomaly
+  only for the systemic signature (every benign sentinel blocked, injection
+  still detected); `tests/test_classifier_evals.py` skips the two ratio
+  assertions only on that verdict and `scripts/run_evals.py` publishes
+  `exempt_gates` instead of a synthetic failure. A failed row is never exempted.
+- Live proof, run 42888959001 on an AMD EPYC 9V74 with no AVX-512 flags:
+  verdict `dispatch_anomaly`, sentinels `haiku 0.9243`, `weather 0.7990`,
+  `translate 0.7526 criminal_planning`, `code-review 0.7848`, injection still
+  `0.9997`; `evals: 220/220 passed, 0 failed`, `ClassifierGoldenGate exempt
+  (dispatch_anomaly)`, green without a re-run.
