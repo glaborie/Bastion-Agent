@@ -46,7 +46,8 @@ uv run python scripts/check_adrs.py
 
 ```bash
 # 1. Clone & enter directory
-cd /home/glaborie/projects/Bastion-Agent
+git clone https://github.com/glaborie/Bastion-Agent.git
+cd Bastion-Agent
 
 # 2. Configure environment (dev-only secrets; rotate before any real deployment)
 cp .env.example .env
