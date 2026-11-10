@@ -529,7 +529,33 @@ Point out, in order:
 
 The script deletes its keys, so Redis keeps nothing from the demo.
 
-### 8.3 API/CLI variant
+### 8.3 The live model variant (opt-in)
+
+8.2 does not depend on the model. To show the model itself being asked, and the
+gate catching it, run the live probe:
+
+```bash
+LLAMA_CPP_BASE_URL=http://localhost:8002 uv run python scripts/demo_model_canary.py
+
+# inside the app image, against the compose network
+docker compose exec -T -e LLAMA_CPP_BASE_URL=http://llama-cpp:8080 \
+  gateway python - < scripts/demo_model_canary.py
+```
+
+It prints a clean answer first, then the extraction probe's **raw** completion.
+On the pinned `qwen2.5-7b-instruct-q4_k_m` the model repeats its whole system
+instruction including the marker. Point at:
+
+- `raw leak True` — the model did what the attacker asked;
+- `blocked True (canary_leak)` and `delivered (0 chars)` — the gate discarded it;
+- `preflight rejected (circuit_open)` — the next turn never reaches the model.
+
+A refusal is also a pass: the assertion is that no marker reaches the caller,
+not that the model obeys its system prompt. The probe calls the sanitizer
+directly, so it writes no audit rows; use the dashboard's guarded chat (8.1) to
+populate the incident panel.
+
+### 8.4 API/CLI variant
 
 The same path without a browser. Omit `conversation_id` and read the generated
 one from the response (section 5.1 has the `token_for` helper):

@@ -446,6 +446,24 @@ and the session quarantined, the next turn rejected before inference, a scoped
 marker restored, and a tool payload that cannot close its fence. It deletes its
 keys afterwards.
 
+For the non-deterministic half — a real model asked to reveal its system prompt —
+use the live probe. It prints the raw completion and the gate's verdict; a model
+refusal is also a pass, because the invariant is that no canary reaches the
+caller:
+
+```bash
+LLAMA_CPP_BASE_URL=http://localhost:8002 uv run python scripts/demo_model_canary.py
+
+# inside the app image, against the compose network
+docker compose exec -T -e LLAMA_CPP_BASE_URL=http://llama-cpp:8080 \
+  gateway python - < scripts/demo_model_canary.py
+```
+
+On the pinned model the extraction output is
+`raw leak True`, `blocked True (canary_leak)`, `delivered (0 chars)` and
+`preflight rejected (circuit_open)`. The probe calls the sanitizer directly, so
+it writes no audit rows.
+
 ### Verification
 
 ```bash
@@ -586,6 +604,7 @@ uv run pytest -q tests/test_tool_decorator.py tests/test_tool_execution.py
 | `scripts/update_threat_intel.py` | Query OSV for every registry package in `uv.lock`; writes `artifacts/threat-intel/latest.json` |
 | `scripts/run_evals.py` | Run the three golden gates and atomically publish `artifacts/evals/latest.json` |
 | `scripts/demo_egress.py` | Deterministic canary/leak/quarantine/fence demo against the live Redis |
+| `scripts/demo_model_canary.py` | Live `llama.cpp` extraction probe through the egress sanitizer (opt-in) |
 | `scripts/demo_tool_request.py` | Originate a guarded tool call for the demo (see `DEMO.md`) |
 | `scripts/seed_demo_approval.py` | Seed a suspended ticket without a worker |
 | `scripts/omniroute_bootstrap.py` | Register OmniRoute provider aliases and the gateway key |
