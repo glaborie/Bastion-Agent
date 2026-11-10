@@ -11,18 +11,19 @@ must not be edited by hand.
 
 - current-phase: v0.2
 - wip-limit: 3
-- next-id: IDEA-012
+- next-id: IDEA-013
 
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (5)
+### Inbox (6)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-007` P1 v0.2 agent - Route corporate-confidential documents without explicit markers to the local model
-- `IDEA-009` P2 v0.2 security - Author ADR-013 for observability and trace privacy
+- `IDEA-009` P2 v0.2 security - Author ADR-014 for observability and trace privacy
 - `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
+- `IDEA-012` P2 v0.3 gateway - Add a dashboard demo console that runs the demo scenarios
 
 ### Ready (2)
 
@@ -59,9 +60,10 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-006 | done | P3 | v0.2 | docs | Add a deterministic egress canary demo |
 | IDEA-007 | inbox | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
 | IDEA-008 | done | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
-| IDEA-009 | inbox | P2 | v0.2 | security | Author ADR-013 for observability and trace privacy |
+| IDEA-009 | inbox | P2 | v0.2 | security | Author ADR-014 for observability and trace privacy |
 | IDEA-010 | inbox | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
 | IDEA-011 | done | P1 | v0.2 | docs | Reconcile the CONTROL.md dashboard rate-limit claim with the gateway |
+| IDEA-012 | inbox | P2 | v0.3 | gateway | Add a dashboard demo console that runs the demo scenarios |
 <!-- END INDEX -->
 
 ## Items
@@ -382,7 +384,7 @@ reproducible.
   `0.9997`; `evals: 220/220 passed, 0 failed`, `ClassifierGoldenGate exempt
   (dispatch_anomaly)`, green without a re-run.
 
-### IDEA-009: Author ADR-013 for observability and trace privacy
+### IDEA-009: Author ADR-014 for observability and trace privacy
 
 - status: inbox
 - priority: P2
@@ -506,3 +508,42 @@ Either the control exists as CONTROL.md describes it, or CONTROL.md stops descri
 - No implementation and no CONTROL.md edit are part of this intake; this item only records the discrepancy. Triage may split it into "document the deferral" (docs) and "build the limiter" (gateway) if it prefers one state over the either/or acceptance.
 - Open question for triage: ADR-007 says Phase 1 dashboard features while ADR-008 lists rate limiting under v0.5; if the limiter is built, which phase owns it needs deciding before the phase field can be tightened.
 - 2026-11-10 resolution: took path (a), the limiter was built rather than the claim removed. `gateway/rate_limit.py` implements a Redis token bucket keyed on the JWT subject; the dashboard pages/partials/APIs share `RATE_LIMIT_DASHBOARD_PER_WINDOW` (60) and `POST /v1/chat` uses `RATE_LIMIT_CHAT_PER_WINDOW` (120), both over `RATE_LIMIT_WINDOW_SECONDS` (60). Refusals are `429` with `Retry-After`/`RateLimit-*`; a store outage is `503`. `tests/test_rate_limit.py` covers pass-under, fail-over, scope mapping, HTML rendering and fail-closed; `tests/test_rate_limit_redis.py` proves exhaustion, refill, isolation, concurrency and TTL against live Redis. ADR-013 records the decision, ADR-007 decision 7 and ADR-008 v0.5 were updated, and CONTROL.md/T12 now describe the live control. Phase question answered: it shipped in v0.2, ahead of the v0.5 roadmap line.
+
+### IDEA-012: Add a dashboard demo console that runs the demo scenarios
+
+- status: inbox
+- priority: P2
+- phase: v0.3
+- area: gateway
+- tags: dashboard, demo, htmx, rbac, arq
+- depends-on: -
+- spec: ADR-007
+- created: 2026-11-10
+- updated: 2026-11-10
+- source: session request on 2026-11-10 ("improve the dashboard, cover more demo scenarios, run scripts")
+
+**Problem**
+
+`DEMO.md` is nine acts of copy-paste: Act 3 alone needs a `token_for` helper, two tokens, `ALICE_SUB`/`CAROL_SUB`, a ticket and a session variable, seven curl/script calls and a `docker compose exec` that edits the worker's tool catalog, and a stale token turns any of them into a 401 mid-demo. The dashboard stops at `/dashboard`, `/dashboard/audit`, `/dashboard/sessions/{id}` and `/dashboard/chat` (`gateway/dashboard/routes.py`), and the chat footer (`templates/chat.html` line 68) sends the presenter out of the browser to run `scripts/demo_egress.py` by hand. No page lists the demo entry points — `demo_classifier.py`, `demo_egress.py`, `demo_model_canary.py`, `demo_tool_request.py`, `demo_traffic.py`, `seed_demo_approval.py` — so a reviewer cannot see which controls are demonstrable or re-run one without the shell history.
+
+**Outcome**
+
+One dashboard page lists every demo scenario with the control it exercises and the evidence it should produce, and starts an allow-listed scenario on demand, showing the result and linking to the ledger or trace it wrote. Execution is a fixed server-side registry keyed by scenario id: no request field carries a command, script path or argv, and a run goes through the job queue so a slow scenario cannot hold the request. The demo's first path becomes browser-only, with the CLI kept as the documented fallback.
+
+**Acceptance**
+
+- [ ] `GET /dashboard/demo` exists in `gateway/dashboard/routes.py`, requires `operator`/`admin` through `require_roles`, and renders one card per scenario with the control it exercises and the evidence it should produce
+- [ ] A scenario is started by a fixed registry (scenario id -> server-side callable); a run request with an unknown id is rejected with `404` or `422` and executes nothing, and no endpoint accepts a command string, a script path or argv
+- [ ] The egress canary block is reachable as a scenario, and `uv run pytest tests/test_dashboard_demo.py -q` proves the run reports `canary_leak` with empty delivered text
+- [ ] `readonly` and `analyst` sessions receive `403` on both the page and the run endpoint, and the four-eyes rule is unchanged for tickets created by a scenario
+- [ ] A tool-request scenario acts as the signed-in principal, never an `--actor-sub` supplied by the request, and approval still requires a second principal
+- [ ] The page lists at least `demo_classifier.py`, `demo_egress.py`, `demo_model_canary.py`, `demo_tool_request.py`, `demo_traffic.py` and `seed_demo_approval.py`, and each card states whether it needs the live model, GPU or a worker
+- [ ] `DEMO.md` Act 5 names the page as the first path, and `docs/adr/ADR-007.md` decision 2 lists the new route and the execution model
+
+**Notes**
+
+- Compound request, captured as one first step. The source ask had three strands; this item is the demo console. Left out and candidates for separate items: (a) dashboard improvements unrelated to demos, notably the `AUDIT_LOG_VIEW` record still deferred by ADR-007 decision 7; (b) scenarios with no existing script — a deterministic `429`/`Retry-After` demonstration for the ADR-013 limiter, approval expiry (DEMO.md §9 is manual), quarantine expiry; (c) a host-side `scripts/run_demo.py` if a browser console is judged too much surface for too little.
+- Security note: exposing server-side entry points to a web session adds a dangerous primitive, so the item forbids request-supplied commands, paths and argv, reuses the existing RBAC dependency, and expects the execution model to be recorded in ADR-007 (or a new ADR) before implementation. The `demo_tool_request.py --actor-sub` flag must not become an impersonation path from the dashboard.
+- Deduplication: IDEA-002 (WebSocket approvals) is dashboard transport, not a demo page; IDEA-006 (done) built the deterministic egress script itself and its acceptance names no UI; IDEA-011 (done) reconciled the rate-limit claim. No ADR in `docs/adr/` mentions a demo console or a scenario runner, and ADR-007 decision 2 enumerates the current three dashboard pages plus chat.
+- Classification: `P2`/`v0.3` because ADR-008 decision 5 freezes new features inside a phase and no ADR-008 phase scope names a demo console; triage may downgrade to `P3` or pull it into v0.2 if the demo is treated as part of the current definition of done.
+- Open questions for triage: whether runs execute in the gateway process, the ARQ worker or a dedicated compose service; and whether a run should write a new audit event type (an event-vocabulary change, like the one ADR-007 decision 7 defers for views) or structured logs only.
