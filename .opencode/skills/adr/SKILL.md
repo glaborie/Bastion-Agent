@@ -1,7 +1,11 @@
-# ADR Agent — Creating, Changing and Retiring ADRs
+---
+name: ADR workflow
+description: Create, change, supersede or validate an architectural decision record in docs/adr/. Use when a decision changes, a new component, protocol, storage or security invariant is chosen, an ADR drifted from the code, or scripts/check_adrs.py fails.
+---
+
+# ADR workflow — Creating, Changing and Retiring ADRs
 
 Instructions for working with the Architectural Decision Records in `docs/adr/`.
-Load this file when asked to write, update, supersede or validate an ADR.
 
 ---
 
