@@ -50,7 +50,13 @@ def completion_payload(model: str = "cloud-primary", content: str = "hello") -> 
                 "finish_reason": "stop",
             }
         ],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 2,
+            "total_tokens": 12,
+            # OmniRoute reports the provider's USD cost per completion.
+            "cost": 2.55e-06,
+        },
     }
 
 
@@ -123,6 +129,7 @@ async def test_completion_payload_and_auth_header() -> None:
     assert result.content == "hello"
     assert result.model == "cloud-primary"
     assert result.total_tokens == 12
+    assert result.cost_usd == pytest.approx(2.55e-06)
     assert result.finish_reason == "stop"
 
     request = captured[0]

@@ -26,9 +26,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from collections.abc import Mapping
 from typing import Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
+from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,13 +44,23 @@ from agent.egress.sanitizer import (
     EgressUnavailableError,
     get_egress_sanitizer,
 )
-from agent.routing.client import ChatMessage, ModelRouter, RoutingError, get_model_router
+from agent.routing.client import (
+    ChatCompletion,
+    ChatMessage,
+    ModelRouter,
+    RoutingError,
+    get_model_router,
+)
 from db.audit import append_audit_event
 from db.models import AuditEventType
 from db.session import get_db_session
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 
 logger = logging.getLogger(__name__)
+
+#: Resolves to the provider's tracer once ``configure_tracing`` runs; the proxy
+#: is safe to grab at import time.
+_tracer = trace.get_tracer(__name__)
 
 router = APIRouter(tags=["chat"])
 
@@ -126,6 +140,42 @@ def _vault_session(actor_id: str, conversation_id: str) -> str:
     """
     digest = hashlib.sha256(f"{actor_id}\x00{conversation_id}".encode()).hexdigest()
     return f"chat:{digest}"
+
+
+def _attributes(
+    attributes: Mapping[str, AttributeValue | None],
+) -> dict[str, AttributeValue]:
+    """Drop unset values: OTel rejects ``None`` and warns once per attribute."""
+    return {key: value for key, value in attributes.items() if value is not None}
+
+
+def _annotate(attributes: Mapping[str, AttributeValue | None]) -> None:
+    """Attach machine metadata — never prompt text — to the active server span."""
+    trace.get_current_span().set_attributes(_attributes(attributes))
+
+
+def _completion_attributes(completion: ChatCompletion) -> dict[str, AttributeValue]:
+    """GenAI semantic conventions OpenLit reads for model, tokens and cost.
+
+    OmniRoute answers with ``provider/model``: the provider becomes
+    ``gen_ai.system`` and the bare id is the key OpenLit's price table uses.
+    """
+    provider, _, bare = completion.model.partition("/")
+    if not bare:
+        provider, bare = "local", provider
+    return _attributes(
+        {
+            "gen_ai.system": provider,
+            "gen_ai.response.model": bare,
+            "gen_ai.response.finish_reasons": (
+                [completion.finish_reason] if completion.finish_reason else None
+            ),
+            "gen_ai.usage.input_tokens": completion.prompt_tokens,
+            "gen_ai.usage.output_tokens": completion.completion_tokens,
+            "gen_ai.usage.total_tokens": completion.total_tokens,
+            "gen_ai.usage.cost": completion.cost_usd,
+        }
+    )
 
 
 async def _record(
@@ -220,6 +270,14 @@ async def chat(
             "chars": total_chars,
         },
     )
+    _annotate(
+        {
+            "gen_ai.conversation.id": conversation_id,
+            "bastion.conversation.id": conversation_id,
+            "bastion.request.messages": len(request.messages),
+            "bastion.request.chars": total_chars,
+        }
+    )
 
     # -- stage 1: deterministic DLP ---------------------------------------
     try:
@@ -247,6 +305,13 @@ async def chat(
             "types": sorted(entity_types),
         },
     )
+    _annotate(
+        {
+            "bastion.dlp.redacted": entity_count > 0,
+            "bastion.dlp.entities": entity_count,
+            "bastion.dlp.types": ",".join(sorted(entity_types)),
+        }
+    )
 
     # -- stage 2: classify the raw text and route -------------------------
     # Never prefix role tags here: "[user] …" reads as a role-injection marker
@@ -268,6 +333,16 @@ async def chat(
             "model": classification.model,
         },
     )
+    _annotate(
+        {
+            "gen_ai.request.model": decision.alias,
+            "bastion.route": decision.alias,
+            "bastion.route.local": decision.local,
+            "bastion.classification": classification.label.value,
+            "bastion.classification.reason": classification.reason,
+            "bastion.classification.confidence": round(classification.confidence, 4),
+        }
+    )
 
     # -- stage 3: canary + untrusted fences -------------------------------
     try:
@@ -288,6 +363,7 @@ async def chat(
             conversation_id=conversation_id,
             metadata={"reason": "circuit_open", "stage": "preflight"},
         )
+        _annotate({"bastion.egress.blocked": True, "bastion.egress.reason": "circuit_open"})
         raise _blocked(
             status.HTTP_403_FORBIDDEN,
             "session quarantined by the egress circuit breaker",
@@ -306,16 +382,35 @@ async def chat(
         )
         upstream.append(ChatMessage(role=message.role, content=content, name=message.name))
 
-    try:
-        completion = await model_router.complete(
-            upstream,
-            decision=decision,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
+    # The LLM span carries the GenAI semantic conventions OpenLit turns into
+    # token counts and cost. It is a child of the server span, so one turn is
+    # still one trace.
+    with _tracer.start_as_current_span(
+        f"chat {decision.alias}", kind=SpanKind.CLIENT
+    ) as model_span:
+        model_span.set_attributes(
+            _attributes(
+                {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.conversation.id": conversation_id,
+                    "gen_ai.request.model": decision.alias,
+                    "gen_ai.request.temperature": request.temperature,
+                    "gen_ai.request.max_tokens": request.max_tokens,
+                }
+            )
         )
-    except RoutingError as exc:
-        logger.warning("Model completion failed", extra={"route": decision.alias})
-        raise _blocked(status.HTTP_502_BAD_GATEWAY, "upstream model unavailable") from exc
+        try:
+            completion = await model_router.complete(
+                upstream,
+                decision=decision,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+            )
+        except RoutingError as exc:
+            model_span.set_attribute("error.type", type(exc).__name__)
+            logger.warning("Model completion failed", extra={"route": decision.alias})
+            raise _blocked(status.HTTP_502_BAD_GATEWAY, "upstream model unavailable") from exc
+        model_span.set_attributes(_completion_attributes(completion))
 
     # -- stage 4: egress inspection ---------------------------------------
     try:
@@ -336,6 +431,15 @@ async def chat(
             "model": completion.model,
             "route": decision.alias,
         },
+    )
+
+    _annotate(
+        {
+            "bastion.egress.blocked": egress.blocked,
+            "bastion.egress.reason": egress.reason,
+            "bastion.egress.restored_tokens": egress.restored_tokens,
+            "bastion.egress.unresolved_tokens": egress.unresolved_tokens,
+        }
     )
 
     if egress.blocked:

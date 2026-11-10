@@ -5,12 +5,46 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from agent.routing.client import ChatCompletion
 from gateway.routers.chat import (
     MAX_MESSAGE_CHARS,
     MAX_MESSAGES,
     ChatRequest,
+    _completion_attributes,
     _vault_session,
 )
+
+
+def test_completion_attributes_split_provider_and_drop_unset_values() -> None:
+    """OpenLit reads gen_ai.* for model, tokens and cost; wrong keys are silent.
+
+    OmniRoute answers ``openai/gpt-4o-mini``; the price table is keyed on the
+    bare id, so the provider prefix belongs in ``gen_ai.system`` instead. A
+    ``None`` token count must be omitted rather than exported as null.
+    """
+    cloud = _completion_attributes(
+        ChatCompletion(
+            content="hi",
+            model="openai/gpt-4o-mini",
+            finish_reason="stop",
+            prompt_tokens=263,
+            completion_tokens=76,
+            total_tokens=339,
+            cost_usd=0.0000851,
+        )
+    )
+    assert cloud["gen_ai.system"] == "openai"
+    assert cloud["gen_ai.response.model"] == "gpt-4o-mini"
+    assert cloud["gen_ai.response.finish_reasons"] == ["stop"]
+    assert cloud["gen_ai.usage.input_tokens"] == 263
+    assert cloud["gen_ai.usage.output_tokens"] == 76
+    assert cloud["gen_ai.usage.cost"] == pytest.approx(0.0000851)
+
+    local = _completion_attributes(ChatCompletion(content="hi", model="qwen2.5-7b-q4_k_m"))
+    assert local["gen_ai.system"] == "local"
+    assert local["gen_ai.response.model"] == "qwen2.5-7b-q4_k_m"
+    assert "gen_ai.usage.input_tokens" not in local
+    assert "gen_ai.response.finish_reasons" not in local
 
 
 def test_vault_sessions_are_actor_scoped() -> None:

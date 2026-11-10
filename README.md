@@ -750,6 +750,24 @@ Health probes and the dashboard's polling endpoints (`/api/approvals` every 3 s,
 `/api/evals/latest` every 30 s) are excluded from tracing, so an open dashboard
 does not burn a backend quota; the four-eyes decision endpoint stays traced.
 
+### What a chat trace contains
+
+Each guarded turn is one trace: the `POST /v1/chat` server span plus a child
+`chat <alias>` span for the model call. The child carries the OpenTelemetry
+GenAI conventions a backend needs to show model, tokens and cost in its own
+dashboard — `gen_ai.system`, `gen_ai.request.model` (the alias),
+`gen_ai.response.model` (the concrete model), `gen_ai.usage.input_tokens`,
+`gen_ai.usage.output_tokens`, `gen_ai.usage.total_tokens` and
+`gen_ai.usage.cost` (USD, as reported by OmniRoute in `usage.cost`). The server
+span carries the guardrail evidence: `bastion.dlp.*`, `bastion.classification.*`,
+`bastion.route*`, `bastion.egress.*` and `gen_ai.conversation.id`.
+
+Prompt and completion text is never exported. That is deliberate: traces go to
+third parties, and a DLP product that ships the unredacted prompt into a trace
+backend has moved the leak rather than stopped it. The vault markers, entity
+counts and routing verdict are the auditable evidence; the text stays in the
+audit ledger, hashed.
+
 ### Local OpenLit instead of a cloud backend
 
 A self-hosted OpenLit is the unmetered option: traces never leave the host and

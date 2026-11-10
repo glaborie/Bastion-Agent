@@ -74,6 +74,8 @@ class ChatCompletion:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    #: USD, as reported by OmniRoute in ``usage.cost`` (None when it omits it).
+    cost_usd: float | None = None
     response_id: str | None = None
 
 
@@ -310,12 +312,17 @@ def _parse_completion(response: httpx.Response, *, requested_model: str) -> Chat
         prompt_tokens=_optional_int(usage_dict.get("prompt_tokens")),
         completion_tokens=_optional_int(usage_dict.get("completion_tokens")),
         total_tokens=_optional_int(usage_dict.get("total_tokens")),
+        cost_usd=_optional_float(usage_dict.get("cost")),
         response_id=response_id if isinstance(response_id, str) else None,
     )
 
 
 def _optional_int(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _optional_float(value: object) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
 def _error_code(response: httpx.Response) -> str:
