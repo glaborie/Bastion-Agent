@@ -56,7 +56,7 @@ Bastion-Agent is a **high-assurance, zero-trust AI agent harness** designed for 
 
 ### PII & Secret Detection
 - **Engine**: Microsoft Presidio (analyzer + anonymizer)
-- **Categories**: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, IP_ADDRESS, CREDIT_CARD, US_SSN, plus three local shape recognizers: API_KEY (provider tokens and secret assignments), ADDRESS (street + postal code + place) and DATE_OF_BIRTH (a date with an explicit birth anchor). Recall is bounded by this list and by the English NER model; see ADR-002 decision 5
+- **Categories**: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, IP_ADDRESS, CREDIT_CARD, US_SSN, plus four local shape recognizers: API_KEY (provider tokens and secret assignments), ADDRESS (street + postal code + place), DATE_OF_BIRTH (a date with an explicit birth anchor) and AHV_NUMBER (a Swiss AHV/AVS number whose EAN-13 check digit validates). Recall is bounded by this list and by the English NER model; see ADR-002 decision 5
 - **Patterns**: Regex + Presidio recognizers
 - **Redaction**: Reversible tokenization (`{{ENTITY:PERSON_1}}`)
 

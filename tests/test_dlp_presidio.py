@@ -320,3 +320,80 @@ async def test_non_english_prompt_still_redacts_address_and_birth_date(
     assert "Rue du Rhône 42" not in result.text
     assert "7 avril 1996" not in result.text
     assert await engine.restore(result.text, "session-french-record") == text
+
+
+# -- ADR-002 decision 1: the Swiss AHV/AVS recognizer (IDEA-013) -----------
+AHV = "756.1234.5678.97"
+
+
+async def test_ahv_number_is_redacted_and_restored(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    engine, _vault, _redis = dlp
+    text = f"AHV-Nummer: {AHV}"
+    result = await engine.redact(text, "session-ahv")
+
+    assert "AHV_NUMBER" in result.entity_types
+    assert AHV not in result.text
+    assert "{{ENTITY:AHV_NUMBER_1}}" in result.text
+    assert await engine.restore(result.text, "session-ahv") == text
+
+
+async def test_every_ahv_spelling_is_detected(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """Dotted, space-grouped and bare forms are the same number."""
+    engine, _vault, _redis = dlp
+    for spelling in ("756.1234.5678.97", "756 1234 5678 97", "7561234567897"):
+        result = await engine.redact(f"AHV {spelling} on file.", f"session-{spelling}")
+        assert "AHV_NUMBER" in result.entity_types, spelling
+        assert spelling not in result.text, spelling
+
+
+async def test_ahv_requires_a_valid_check_digit(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """756.1234.5678.90 is the item's original example and it is not valid."""
+    engine, _vault, _redis = dlp
+    for bad in ("756.1234.5678.90", "756 1234 5678 00", "7561234567890"):
+        result = await engine.redact(f"AHV {bad} on file.", f"session-bad-{bad}")
+        assert "AHV_NUMBER" not in result.entity_types, bad
+
+
+async def test_ahv_is_not_matched_inside_a_longer_number(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    engine, _vault, _redis = dlp
+    result = await engine.redact("Reference 175612345678970 and 1234567890123.", "session-long")
+    assert "AHV_NUMBER" not in result.entity_types
+
+
+async def test_ahv_is_redacted_when_the_ner_pass_is_skipped(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """The recognizer must survive IDEA-014's non-English path."""
+    engine, _vault, _redis = dlp
+    text = f"Dossier client, numéro AVS {AHV}."
+    result = await engine.redact(text, "session-ahv-french")
+
+    assert result.ner_skipped is True
+    assert "AHV_NUMBER" in result.entity_types
+    assert AHV not in result.text
+
+
+async def test_ahv_is_not_redacted_when_not_configured() -> None:
+    """A deployment that pins DLP_ENTITIES still redacts only what it names."""
+    redis = FakeAsyncRedis(decode_responses=True)
+    engine = PresidioDLP(
+        TokenVault(redis, key=KEY, ttl_seconds=60),
+        analyzer=get_analyzer(),
+        entities=("EMAIL_ADDRESS",),
+    )
+    try:
+        result = await engine.redact(f"AHV {AHV} and a@b.com", "session-pinned")
+    finally:
+        await redis.aclose()
+
+    assert "AHV_NUMBER" not in result.entity_types
+    assert AHV in result.text
+    assert "EMAIL_ADDRESS" in result.entity_types

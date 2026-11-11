@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -116,6 +117,42 @@ _ADDRESS_PATTERN: Final[str] = (
     r"[ \t]+\d{1,4}[a-z]?[ \t]*(?:,[ \t]*|\n[ \t]*)\d{4}[ \t]+"
     r"[A-ZÄÖÜ][\w.'\u2019\-]{0,38}[\w'\u2019])"
 )
+
+#: Swiss AHV/AVS number: 13 digits beginning ``756`` (Switzerland's EAN prefix),
+#: written dotted (``756.1234.5678.97``), space-grouped
+#: (``756 1234 5678 97``) or bare (``7561234567897``). The digit boundaries
+#: stop a match inside a longer number.
+_AHV_PATTERN: Final[str] = (
+    r"(?<!\d)(?:"
+    r"756\.\d{4}\.\d{4}\.\d{2}"
+    r"|756[ \t]\d{4}[ \t]\d{4}[ \t]\d{2}"
+    r"|756\d{10}"
+    r")(?!\d)"
+)
+
+#: The pattern is only the shape; :class:`_AhvRecognizer` decides. A Swiss
+#: product barcode is EAN-13 too and begins ``756``, so a checksum match is
+#: necessary but not sufficient evidence that the number is an AHV. The
+#: collision is recorded in ADR-002 rather than hidden.
+_AHV_SCORE: Final[float] = 0.85
+
+
+def _ahv_check_digit(first_twelve: str) -> str:
+    """EAN-13 check digit over the twelve payload digits (weights 1,3,1,3…)."""
+    if len(first_twelve) != 12 or not first_twelve.isdigit():
+        raise ValueError("AHV body must be twelve digits")
+    total = sum(
+        int(digit) * (1 if position % 2 == 0 else 3) for position, digit in enumerate(first_twelve)
+    )
+    return str((10 - total % 10) % 10)
+
+
+def _is_valid_ahv(value: str) -> bool:
+    """True when ``value`` is a 13-digit ``756…`` number with a valid check digit."""
+    digits = re.sub(r"\D", "", value)
+    if len(digits) != 13 or not digits.startswith("756"):
+        return False
+    return _ahv_check_digit(digits[:12]) == digits[12]
 
 
 class DLPUnavailableError(RuntimeError):
@@ -219,6 +256,35 @@ def _address_recognizer(language: str = _DEFAULT_LANGUAGE) -> PatternRecognizer:
     )
 
 
+def _ahv_recognizer(language: str = _DEFAULT_LANGUAGE) -> PatternRecognizer:
+    """Swiss AHV/AVS number, validated by its EAN-13 check digit.
+
+    A pattern alone cannot verify the check digit, so this leans on Presidio's
+    ``validate_result`` hook: it runs after the regex match and a ``False`` drops
+    the result, while ``True`` promotes the score. That keeps the recognizer a
+    ``PatternRecognizer`` — important, because the non-English path in
+    :meth:`PresidioDLP._pattern_entities` keeps only pattern recognizers.
+
+    The class is defined here rather than at module level so importing this
+    module does not import Presidio: a missing install must stay a
+    ``DLPUnavailableError`` at analyzer init, not an ImportError at import.
+    """
+    from presidio_analyzer import Pattern, PatternRecognizer
+
+    class AhvRecognizer(PatternRecognizer):
+        """Reject ``756…`` 13-digit shapes whose check digit does not hold."""
+
+        def validate_result(self, pattern_text: str) -> bool | None:
+            return _is_valid_ahv(pattern_text)
+
+    return AhvRecognizer(
+        supported_entity="AHV_NUMBER",
+        supported_language=language,
+        name="AhvRecognizer",
+        patterns=[Pattern(name="ahv-number", regex=_AHV_PATTERN, score=_AHV_SCORE)],
+    )
+
+
 #: Every non-NER recognizer, registered once per modelled language. They match
 #: shapes rather than grammar, so they keep working on a prompt whose language
 #: has no spaCy model (see :meth:`PresidioDLP._pattern_entities`).
@@ -226,6 +292,7 @@ _PATTERN_RECOGNIZERS: Final[tuple[Callable[[str], PatternRecognizer], ...]] = (
     _api_key_recognizer,
     _date_of_birth_recognizer,
     _address_recognizer,
+    _ahv_recognizer,
 )
 
 

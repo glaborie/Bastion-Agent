@@ -145,7 +145,7 @@ Two facts shape the model:
 - References: `LLM02:2026`, `AML.T0057`
 - Attack: PII or secrets in prompts reach an external provider, or are echoed in output.
 - Controls:
-  - LIVE: Presidio replaces entities with `{{ENTITY:TYPE_N}}` markers before inference. Default entity list: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, IP_ADDRESS, CREDIT_CARD, US_SSN, plus three local shape recognizers: API_KEY (provider token formats and secret assignments), ADDRESS (street + postal code + place) and DATE_OF_BIRTH (a date with an explicit birth anchor). Presidio's generic LOCATION/DATE_TIME are deliberately not enabled; they label benign text as PII (ADR-002 decision 5).
+  - LIVE: Presidio replaces entities with `{{ENTITY:TYPE_N}}` markers before inference. Default entity list: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, IP_ADDRESS, CREDIT_CARD, US_SSN, plus four local shape recognizers: API_KEY (provider token formats and secret assignments), ADDRESS (street + postal code + place), DATE_OF_BIRTH (a date with an explicit birth anchor) and AHV_NUMBER (a Swiss AHV/AVS number, checksum-validated). Presidio's generic LOCATION/DATE_TIME are deliberately not enabled; they label benign text as PII (ADR-002 decision 5).
   - LIVE: the vault stores values as AES-256-GCM ciphertext in Redis. The AAD binds each ciphertext to its session and token. A 30-minute TTL applies.
   - LIVE: routing classifies the raw text, so redaction cannot weaken the verdict. Confidential prompts go to the local model.
   - LIVE: the audit ledger stores a hash of the request, never prompt text or tool argument values.
@@ -153,7 +153,7 @@ Two facts shape the model:
 - Residual risk:
   - Presidio detects patterns and named entities. It does not detect confidential business content without identifiers. That is the classifier's job, and it is probabilistic.
   - DLP recall is bounded by the entity list and one English NER model. A name outside `en_core_web_sm`'s vocabulary is not redacted; it reaches the local model in plaintext (not a third party, because any detected entity forces the local route). A prompt whose only personal data is such a name still takes the classifier's route.
-  - The default entity list has no Swiss-specific identifiers (for example the AHV/AVS number). Add custom recognizers before a Swiss deployment.
+  - The AHV/AVS recognizer validates the EAN-13 check digit, but `756` is also Switzerland's GS1 prefix: a Swiss product barcode of the same shape is checksum-valid and is redacted too. Other Swiss identifiers (UID/CHE company number, postal account numbers) still have no recognizer.
   - The vault key and HMAC secrets come from the environment. Defaults in `.env.example` are development values. A production deployment needs a secret manager and rotation, which are not implemented.
   - Restored plaintext is returned to the caller by design.
 - Verification: `tests/test_dlp_presidio.py`, `tests/test_dlp_evals.py`, `tests/test_vault.py`.

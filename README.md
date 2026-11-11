@@ -297,12 +297,14 @@ restored = await dlp.restore(result.text, session_id="sess-1")
 
 Presidio runs on the CPU with `en_core_web_sm`. The default entities are
 `PERSON`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `IBAN_CODE`, `IP_ADDRESS`,
-`CREDIT_CARD`, `US_SSN`, `API_KEY`, `ADDRESS` and `DATE_OF_BIRTH`. The last
-three are local shape recognizers: provider tokens (`sk-…`, `ghp_…`, `AKIA…`,
-`xox…`) and `api_key = …` assignments; a street with a house number followed by
-a postal code and a place (`Bahnhofstrasse 12, 8001 Zürich`); and a date
-introduced by an explicit birth anchor (`Born April 7, 1996`, `Né le 7 avril
-1996`). Presidio's generic `LOCATION` and `DATE_TIME` are deliberately not
+`CREDIT_CARD`, `US_SSN`, `API_KEY`, `ADDRESS`, `DATE_OF_BIRTH` and
+`AHV_NUMBER`. The last four are local shape recognizers: provider tokens
+(`sk-…`, `ghp_…`, `AKIA…`, `xox…`) and `api_key = …` assignments; a street with
+a house number followed by a postal code and a place (`Bahnhofstrasse 12, 8001
+Zürich`); a date introduced by an explicit birth anchor (`Born April 7, 1996`,
+`Né le 7 avril 1996`); and a Swiss AHV/AVS number
+(`756.1234.5678.97`), accepted in dotted, space-grouped or bare form only when
+its EAN-13 check digit holds. Presidio's generic `LOCATION` and `DATE_TIME` are deliberately not
 enabled: over the golden corpus they label `UDP`, a GitHub token and `the board
 minutes` as PII. Analysis and tokenisation are fail-closed: if Presidio cannot
 initialise, `DLPUnavailableError` is raised rather than passing text through.

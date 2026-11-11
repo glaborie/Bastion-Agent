@@ -113,12 +113,13 @@ class Settings(BaseSettings):
     # -- DLP: reversible token vault --------------------------------------
     vault_master_key: SecretStr = SecretStr(DEV_VAULT_MASTER_KEY)
     vault_ttl_seconds: int = 1800  # 30 minutes, per specification
-    #: Presidio entity types to detect. API_KEY, ADDRESS and DATE_OF_BIRTH are
-    #: local shape recognizers because Presidio ships no default for provider
-    #: tokens, and its LOCATION/DATE_TIME are too noisy to redact (see ADR-002).
+    #: Presidio entity types to detect. API_KEY, ADDRESS, DATE_OF_BIRTH and
+    #: AHV_NUMBER are local recognizers because Presidio ships no default for
+    #: provider tokens, postal addresses, birth dates or the Swiss AHV/AVS
+    #: number, and its LOCATION/DATE_TIME are too noisy to redact (see ADR-002).
     dlp_entities: str = (
         "PERSON,EMAIL_ADDRESS,PHONE_NUMBER,IBAN_CODE,IP_ADDRESS,CREDIT_CARD,US_SSN,"
-        "API_KEY,ADDRESS,DATE_OF_BIRTH"
+        "API_KEY,ADDRESS,DATE_OF_BIRTH,AHV_NUMBER"
     )
     #: Presidio confidence floor. Lower values catch more edge cases but
     #: over-redact; this is not the confidentiality routing threshold.
