@@ -16,7 +16,7 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (8)
+### Inbox (7)
 
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
@@ -25,11 +25,10 @@ must not be edited by hand.
 - `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
 - `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
+
+### Ready (1)
+
 - `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
-
-### Ready (0)
-
-_none_
 
 ### Active (1)
 
@@ -91,7 +90,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
 | IDEA-025 | active | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
-| IDEA-026 | inbox | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
+| IDEA-026 | ready | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
 <!-- END INDEX -->
 
 ## Items
@@ -1438,7 +1437,7 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 
 ### IDEA-026: Replace the self-hosted OpenLit trace backend with Opik
 
-- status: inbox
+- status: ready
 - priority: P3
 - phase: v0.2
 - area: infra
