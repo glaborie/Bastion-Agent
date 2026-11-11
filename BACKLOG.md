@@ -16,9 +16,8 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (10)
+### Inbox (9)
 
-- `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
@@ -29,9 +28,9 @@ must not be edited by hand.
 - `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
 
-### Ready (0)
+### Ready (1)
 
-_none_
+- `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 
 ### Active (0)
 
@@ -66,7 +65,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | ID | Status | Prio | Phase | Area | Title |
 |---|---|---|---|---|---|
 | IDEA-001 | done | P2 | v0.3 | agent | Tenant isolation for Redis keys and Postgres rows |
-| IDEA-002 | inbox | P1 | v0.2 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
+| IDEA-002 | ready | P1 | v0.2 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
 | IDEA-003 | done | P1 | v0.2 | agent | Route the ONNX ensemble to GPU to meet the 50 ms classify budget |
 | IDEA-004 | blocked | P2 | v0.3 | db | Export the audit ledger asynchronously for retention |
 | IDEA-005 | done | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
@@ -133,7 +132,7 @@ construction, and a test proves it by attempting the access.
 
 ### IDEA-002: Push approval decisions over WebSocket instead of 3 s polling
 
-- status: inbox
+- status: ready
 - priority: P1
 - phase: v0.2
 - area: gateway
@@ -141,7 +140,7 @@ construction, and a test proves it by attempting the access.
 - depends-on: -
 - spec: ADR-007
 - created: 2026-11-09
-- updated: 2026-11-09
+- updated: 2026-11-11
 - source: ADR-008, phase v0.2 scope
 
 **Problem**
