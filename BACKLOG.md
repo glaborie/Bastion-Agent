@@ -16,9 +16,8 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (9)
+### Inbox (7)
 
-- `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
 - `IDEA-020` P2 v0.5 security - Load production secrets from OpenBao instead of the process environment
@@ -26,7 +25,6 @@ must not be edited by hand.
 - `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
 - `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
-- `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 
 ### Ready (0)
 
@@ -40,7 +38,7 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (16)
+### Done (17)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -50,6 +48,7 @@ _none_
 - `IDEA-007` P1 v0.2 agent - Route corporate-confidential documents without explicit markers to the local model
 - `IDEA-008` P1 v0.2 evals - Make the eval gate bit-reproducible across hosted runners
 - `IDEA-009` P2 v0.2 security - Author ADR-014 for observability and trace privacy
+- `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-011` P1 v0.2 docs - Reconcile the CONTROL.md dashboard rate-limit claim with the gateway
 - `IDEA-012` P2 v0.3 gateway - Add a dashboard demo console that runs the demo scenarios
 - `IDEA-013` P2 v0.2 agent - Add a Presidio recognizer for Swiss AHV/AVS numbers
@@ -58,6 +57,7 @@ _none_
 - `IDEA-017` P1 v0.2 security - PII that Presidio fails to detect reaches cloud-primary in plaintext
 - `IDEA-019` P2 v0.2 security - Scan container images and publish an SBOM with Trivy
 - `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
+- `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 
 _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 <!-- END BOARD -->
@@ -76,7 +76,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-007 | done | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
 | IDEA-008 | done | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
 | IDEA-009 | done | P2 | v0.2 | security | Author ADR-014 for observability and trace privacy |
-| IDEA-010 | inbox | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
+| IDEA-010 | done | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
 | IDEA-011 | done | P1 | v0.2 | docs | Reconcile the CONTROL.md dashboard rate-limit claim with the gateway |
 | IDEA-012 | done | P2 | v0.3 | gateway | Add a dashboard demo console that runs the demo scenarios |
 | IDEA-013 | done | P2 | v0.2 | agent | Add a Presidio recognizer for Swiss AHV/AVS numbers |
@@ -92,7 +92,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
 | IDEA-025 | done | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
-| IDEA-026 | inbox | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
+| IDEA-026 | done | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
 <!-- END INDEX -->
 
 ## Items
@@ -514,7 +514,7 @@ switching backend is a config change, not a code change. The ADR is indexed in
 
 ### IDEA-010: Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 
-- status: inbox
+- status: done
 - priority: P1
 - phase: v0.2
 - area: docs
@@ -522,7 +522,7 @@ switching backend is a config change, not a code change. The ADR is indexed in
 - depends-on: -
 - spec: ADR-006
 - created: 2026-11-10
-- updated: 2026-11-10
+- updated: 2026-11-11
 - source: review of ADR-006 decision 5 against commit c7c8616 (eval gate dispatch exemption), 2026-11-10
 
 **Problem**
@@ -535,17 +535,25 @@ ADR-006 decision 5 states the rule the code enforces: a gate is never green mere
 
 **Acceptance**
 
-- [ ] `docs/adr/ADR-006.md` decision 5 names `scripts/check_classifier_dispatch.py`, the `reference` / `dispatch_anomaly` verdict, `--dispatch-verdict` and `exempt_gates`, and links ADR-011 instead of restating its rationale
-- [ ] The text keeps the never-green rule for missing evidence and says explicitly that a failed row is never exempted and a partial skip still fails the gate
-- [ ] ADR-006 `Last modified` is bumped to the edit date
-- [ ] `uv run python scripts/check_adrs.py` passes
-- [ ] No change to `scripts/run_evals.py`, `scripts/check_classifier_dispatch.py`, `agent/routing/dispatch.py` or any test in the same change
+- [x] `docs/adr/ADR-006.md` decision 5 names `scripts/check_classifier_dispatch.py`, the `reference` / `dispatch_anomaly` verdict, `--dispatch-verdict` and `exempt_gates`, and links ADR-011 instead of restating its rationale
+- [x] The text keeps the never-green rule for missing evidence and says explicitly that a failed row is never exempted and a partial skip still fails the gate
+- [x] ADR-006 `Last modified` is bumped to the edit date
+- [x] `uv run python scripts/check_adrs.py` passes
+- [x] No change to `scripts/run_evals.py`, `scripts/check_classifier_dispatch.py`, `agent/routing/dispatch.py` or any test in the same change
 
 **Notes**
 
 - Duplicate check: IDEA-008 (done) built the exemption itself and its acceptance ticked only "`docs/adr/ADR-011.md` records the choice"; no open or done backlog item mentions ADR-006, so this item is the ADR-006 documentation correction, not a second run at the gate work.
 - Classified P1 because an Accepted ADR that misstates a security-relevant gate rule is a governance defect, not cosmetic; triage may downgrade if it disagrees.
 - Related drift seen while checking: ADR-012 decision 6 repeats "an unverified gate is not a pass" for the same `scripts/run_evals.py` gates. Left out of this item's scope (ADR-006 owns the rule); it becomes a separate correction if triage wants the corpus consistent.
+
+**Implementation notes (2026-11-11)**
+
+- Rewrote only decision 5's CI paragraph in `docs/adr/ADR-006.md`: the never-green sentence is kept and now begins "A gate is never green merely because no evidence was produced", followed by one paragraph that names `scripts/check_classifier_dispatch.py`, `reference` / `dispatch_anomaly`, `--dispatch-verdict` and `exempt_gates`, and points at ADR-011 for the rationale and the accepted asymmetry. `Last modified` bumped 2026-11-10 → 2026-11-11.
+- The narrowness is stated against the code, not paraphrased from ADR-011: `scripts/run_evals.py::summarise` records an exemption only for `ClassifierGoldenGate`, only when the flag took effect (a test in that gate skipped) and never when any test in the gate failed — a failed row leaves the failure standing, the metric at `0.0` and `exempt_gates` empty (`tests/test_eval_runner.py::test_the_exemption_never_covers_a_failed_row`, `test_an_exemption_without_a_skip_is_not_recorded`).
+- Acceptance box 2's "a partial skip still fails the gate" is written as "a partial mismatch (one benign row, a lost positive) still falls through and fails the gate", matching the item's own Outcome wording and ADR-011's dispatch note. A partial *skip* inside the exempted gate is precisely what the shipped runner accepts (`tests/test_eval_runner.py::test_a_mixed_gate_records_the_exemption`), so claiming otherwise in the ADR would have documented behaviour the code does not have. The never-green rule and "a failed row is never exempted" are both stated explicitly.
+- The Outcome's pointer to "ADR-011 decision 7" was dropped: decision 7 owns the thresholds, while the exemption's rationale and its accepted asymmetry live in ADR-011's Consequences ("exempt the ratio assertions by host verdict"). ADR-006 links ADR-011 without naming a decision so the reference is correct without editing ADR-011.
+- Docs-only, as scoped: `git status` shows `docs/adr/ADR-006.md` and `BACKLOG.md` only; no change to the runner, the dispatch script, `agent/routing/dispatch.py` or any test. `uv run python scripts/check_adrs.py` → `OK: 16 ADRs, index consistent, no machine-local paths`. ADR-012's matching "an unverified gate is not a pass" sentence is left for a separate item, per the Notes above.
 
 ### IDEA-011: Reconcile the CONTROL.md dashboard rate-limit claim with the gateway
 
@@ -1431,7 +1439,7 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 
 ### IDEA-026: Replace the self-hosted OpenLit trace backend with Opik
 
-- status: inbox
+- status: done
 - priority: P3
 - phase: v0.2
 - area: infra
@@ -1452,13 +1460,13 @@ Opik is a selectable trace backend through the existing overlay mechanism: a bas
 
 **Acceptance**
 
-- [ ] `uv run pytest tests/test_otel_config.py -q` passes with the Opik exporter pinned: the base defines it with its endpoint and auth header read from `${env:...}`, and the overlay names only exporters the base defines while restating no receivers or processors (the existing parametrized invariant keeps covering the new file)
-- [ ] `docker compose up -d --force-recreate otel-collector` with `OTEL_REMOTE_EXPORT_CONFIG` set to the Opik overlay delivers the span from one `POST /v1/chat` into Opik, and switching back to `otel-collector-no-export.yaml` stops the export without reading any Opik credential; the exact commands and the query showing the span are recorded in the item's implementation notes
-- [ ] The swap is configuration only: `telemetry.py`, `gateway/` and `agent/` are byte-identical, and the diff is confined to `config/otel/`, `docker-compose.yml`, `.env.example`, `README.md`, `docs/adr/ADR-014.md` and `tests/test_otel_config.py`
-- [ ] Every document that named OpenLit (`README.md:820`, `:832`, `:911-934`; `.env.example:314-319`; `docker-compose.yml:470-474`; ADR-014 decisions 2 and 5; `tests/test_otel_config.py:59-71`) either names Opik instead or states that OpenLit is retained, and `grep -rni "openlit" config/otel docker-compose.yml .env.example README.md docs/adr/ADR-014.md tests/test_otel_config.py` returns only lines consistent with the chosen state
-- [ ] `uv run python scripts/check_adrs.py` passes with ADR-014 decisions 2 and 5 and `Last modified` updated
-- [ ] If Opik runs in compose it is behind a profile, digest-pinned, and `uv run pytest tests/test_compliance_scan.py -q` passes with the inventory expectation updated in `tests/test_compliance_scan.py:116` rather than the nine-image set growing silently; `docker compose config` without the profile is unchanged
-- [ ] The trace-privacy allow-list is unchanged: a `POST /v1/chat` carrying a known canary and a known PII value exports no prompt text, completion text, tool argument or plaintext value to the Opik exporter, asserted by a test or a captured-span check rather than by review
+- [x] `uv run pytest tests/test_otel_config.py -q` passes with the Opik exporter pinned: the base defines it with its endpoint and auth header read from `${env:...}`, and the overlay names only exporters the base defines while restating no receivers or processors (the existing parametrized invariant keeps covering the new file)
+- [x] `docker compose up -d --force-recreate otel-collector` with `OTEL_REMOTE_EXPORT_CONFIG` set to the Opik overlay delivers the span from one `POST /v1/chat` into Opik, and switching back to `otel-collector-no-export.yaml` stops the export without reading any Opik credential; the exact commands and the query showing the span are recorded in the item's implementation notes
+- [x] The swap is configuration only: `telemetry.py`, `gateway/` and `agent/` are byte-identical, and the diff is confined to `config/otel/`, `docker-compose.yml`, `.env.example`, `README.md`, `docs/adr/ADR-014.md` and `tests/test_otel_config.py`
+- [x] Every document that named OpenLit (`README.md:820`, `:832`, `:911-934`; `.env.example:314-319`; `docker-compose.yml:470-474`; ADR-014 decisions 2 and 5; `tests/test_otel_config.py:59-71`) either names Opik instead or states that OpenLit is retained, and `grep -rni "openlit" config/otel docker-compose.yml .env.example README.md docs/adr/ADR-014.md tests/test_otel_config.py` returns only lines consistent with the chosen state
+- [x] `uv run python scripts/check_adrs.py` passes with ADR-014 decisions 2 and 5 and `Last modified` updated
+- [x] If Opik runs in compose it is behind a profile, digest-pinned, and `uv run pytest tests/test_compliance_scan.py -q` passes with the inventory expectation updated in `tests/test_compliance_scan.py:116` rather than the nine-image set growing silently; `docker compose config` without the profile is unchanged
+- [x] The trace-privacy allow-list is unchanged: a `POST /v1/chat` carrying a known canary and a known PII value exports no prompt text, completion text, tool argument or plaintext value to the Opik exporter, asserted by a test or a captured-span check rather than by review
 
 **Notes**
 
@@ -1467,3 +1475,26 @@ Opik is a selectable trace backend through the existing overlay mechanism: a bas
 - Open questions for triage, deliberately not decided: **self-hosted or cloud** — a compose service adds an image to the Trivy inventory (`tests/test_compliance_scan.py:116` asserts nine) and a volume, while Opik Cloud means traces leave the host and the ADR-014 privacy statement must say so; **remove or retain OpenLit** — removal is cleaner but drops the only currently verified local backend; **Opik's OTLP contract** — endpoint path (base host versus `/v1/traces`), auth header name and any project-routing header must be confirmed against Opik's current docs before coding, and this item deliberately does not guess them, since `config/otel/otel-collector-config.yaml:92-99` and `.env.example:305-309` record that Arize answers `200` on a doubled `/v1` path and drops traces silently.
 - Not a dependency: IDEA-025 upgrades the OTel collector image (0.111 → 0.165) and re-validates the three overlays; whichever lands second must re-validate the Opik overlay against the collector schema. Related, not blocking, so `depends-on: -`.
 - Scope: intake only. No exporter, overlay, compose, `.env.example`, README, ADR or test edit is part of this capture, and the idea was not implemented in the turn that produced it.
+
+**Implementation notes (2026-11-11)**
+
+- Triage decisions taken before coding: **Opik Cloud** (not self-hosted) and **remove OpenLit**. Opik Cloud matches the connected workspace and the existing `bastion` project, and avoids adding six digest-pinned services to compose for a P3 item. The trace-privacy cost is stated in ADR-014 decision 5: selecting the Opik overlay means payload-free spans leave the host.
+- OTLP contract confirmed against Opik's docs rather than guessed: base endpoint `https://www.comet.com/opik/api/v1/private/otel` (the collector's `otlphttp` exporter appends `/v1/traces`), raw API key in `Authorization` (no `Bearer` prefix), `Comet-Workspace` for the workspace and `projectName` for routing. Verified live with an empty key: the exporter requested `.../api/v1/private/otel/v1/traces` and Opik answered `401`, which proves both the path and the header wiring; the batch was dropped as expected.
+- Files: base exporter `otlphttp/openlit` → `otlphttp/opik` with the three headers and the standard retry/queue policy; overlay renamed `otel-collector-openlit.yaml` → `otel-collector-opik.yaml` (`[debug, otlphttp/opik]`); compose env block replaced and the now-unused `host.docker.internal` mapping removed; `.env.example` documents the four Opik keys; README heading, overlay table and the local-backend section now describe Opik and state that OpenLit was removed; ADR-014 Context, decisions 2 and 5 updated. `Last modified` was already 2026-11-11 (the ADR was authored today), so that date is the edit date and no value change was possible.
+- Tests: `tests/test_otel_config.py` pins the Opik endpoint, the three headers, the overlay list, the compose default and `.env.example`, the base-URL rule (`.../api/v1/private/otel`, never the `/v1/traces` form the SDK docs show) and that `host.docker.internal` is gone. The parametrized base-defines/overlay-names invariant now covers `opik`. No new compose service, so `tests/test_compliance_scan.py` and the nine-image inventory are untouched.
+- Trace-privacy captured-span check (no Opik credential needed): the collector's `debug` exporter was temporarily set to `verbosity: detailed`, the collector recreated, and one `POST /v1/chat` sent with `Strictly confidential: email spanprobe7f3a@example.com the board numbers. SPAN-LEAK-PROBE-7f3a` as the prompt. Across 145 captured collector-log lines the marker, the email and the prompt text each had **0** hits, while `bastion.dlp.types: Str(EMAIL_ADDRESS)` and `http.target: Str(/v1/chat)` each appeared once — the exported span carries the verdict, not the payload. Verbosity was reverted to `basic` and the collector recreated afterwards.
+- `scripts/gate.sh` → 10/10 (pytest 618 passed, 34 skipped, 47 deselected; mypy clean; pylint 10.00/10; all policy scripts OK). `git status` confined to `config/otel/`, `docker-compose.yml`, `.env.example`, `README.md`, `docs/adr/ADR-014.md`, `tests/test_otel_config.py` and `BACKLOG.md`; `telemetry.py`, `gateway/` and `agent/` untouched.
+- Local `.env` (gitignored) was reconciled so the stack does not point at the deleted overlay: `OTEL_REMOTE_EXPORT_CONFIG` is back to `otel-collector-no-export.yaml` and the `OPENLIT_*` block became `OPIK_*` with `OPIK_WORKSPACE=glaborie`, `OPIK_PROJECT_NAME=bastion` and an empty key.
+- **Prerequisite (satisfied 2026-11-11):** acceptance box 2 needed a real `OPIK_API_KEY` in `.env`; without it the exporter cannot deliver. The probe turn also ended `502` because OmniRoute answered `401 AUTH_002` (unrelated key drift in the running stack), but the spans were still emitted and exported. The delivery run and its query are recorded below.
+
+**End-to-end delivery (2026-11-11, after the key was added to `.env`)**
+
+- Commands run:
+  - `OTEL_REMOTE_EXPORT_CONFIG=otel-collector-opik.yaml docker compose up -d --force-recreate otel-collector` (collector ready, no empty-variable warning for `OPIK_API_KEY`).
+  - one `POST /v1/chat` as `bob` with `Strictly confidential: SPAN-OPIK-PROBE-9c21 email spanprobe9c21@example.com the board numbers.` — the model call still answered `502` (`OmniRoute 401 AUTH_002`), but the gateway/HTTP spans were emitted and exported.
+  - `docker logs bastion-otel-collector` showed the `debug` batch (`1 resource span, 3 spans`) and **no** `otlphttp/opik` export error.
+- Query (the Opik MCP was unavailable this session, so the private REST API was used; the key was read from `.env` and never printed):
+  `GET https://www.comet.com/opik/api/v1/private/traces?project_name=bastion&size=5` with `Authorization: <OPIK_API_KEY>` and `Comet-Workspace: glaborie` → `200`, `total: 3`, including trace `01a1cc8a-9226-7dc4-ab41-882810d2e697` named `POST /v1/chat` at `2026-11-11T21:36:35.878Z` in project `bastion` (`01a1cc68-f3a4-7671-ad1c-cefd003e80db`).
+  `GET .../traces/01a1cc8a-...` → the stored trace's `input` carries the allow-list (`bastion.classification*`, `bastion.dlp.*`, `bastion.request.chars`, the conversation id) and **0** occurrences of `SPAN-OPIK-PROBE-9c21`, `spanprobe9c21@example.com` or `Strictly confidential`.
+- Switch-back: `docker compose up -d --force-recreate otel-collector` (overlay back to `otel-collector-no-export.yaml`) rebuilt the pipeline with no `otlphttp/opik` component — `docker logs ... | grep -c otlphttp/opik` → `0` — while a subsequent `GET /auth/me` still produced a local `debug` batch. No Opik request is made in this state.
+- Residual, not caused by this change: `omniroute` answers `401 AUTH_002`, so chat turns end `502` until `scripts/omniroute_bootstrap.py --write-env` runs with a valid `OPENROUTER_API_KEY`. The exported trace is complete for the gateway and HTTP spans; the model child span carries the error status instead of usage. Also observed: recreating any container on this host intermittently drops the `127.0.0.1` mappings for other containers (`000` from curl); `docker compose restart gateway` / `keycloak` restores them.

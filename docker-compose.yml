@@ -447,7 +447,7 @@ services:
       - bastion-net
 
   # ---------------------------------------------------------------------------
-  # OpenTelemetry Collector: OTLP in, Langfuse/Arize out
+  # OpenTelemetry Collector: OTLP in, Langfuse/Arize/Opik out
   # ---------------------------------------------------------------------------
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
@@ -467,18 +467,17 @@ services:
       ARIZE_API_KEY: ${ARIZE_API_KEY:-}
       ARIZE_SPACE_ID: ${ARIZE_SPACE_ID:-}
       ARIZE_PROJECT_NAME: ${ARIZE_PROJECT_NAME:-bastion-agent}
-      # OpenLit, self-hosted on the host: the exporter appends /v1/traces.
-      OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-http://host.docker.internal:4320}
-      OPENLIT_OTLP_AUTH: ${OPENLIT_OTLP_AUTH:-}
-    # host.docker.internal is a Docker Desktop name; on Linux it must be mapped
-    # explicitly for the collector to reach OpenLit's host-published OTLP port.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # Opik Cloud. Traces leave the host when this overlay is selected; the
+      # endpoint is the base URL and the collector appends /v1/traces.
+      OPIK_OTLP_ENDPOINT: ${OPIK_OTLP_ENDPOINT:-https://www.comet.com/opik/api/v1/private/otel}
+      OPIK_API_KEY: ${OPIK_API_KEY:-}
+      OPIK_WORKSPACE: ${OPIK_WORKSPACE:-default}
+      OPIK_PROJECT_NAME: ${OPIK_PROJECT_NAME:-bastion}
     volumes:
       - ./config/otel/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
       # Choose the pipeline overlay. `otel-collector-no-export.yaml` (default)
-      # keeps egress local; `otel-collector-openlit.yaml` adds the self-hosted
-      # OpenLit collector; `otel-collector-export.yaml` adds Langfuse and Arize.
+      # keeps egress local; `otel-collector-opik.yaml` adds Opik Cloud;
+      # `otel-collector-export.yaml` adds Langfuse and Arize.
       - ./config/otel/${OTEL_REMOTE_EXPORT_CONFIG:-otel-collector-no-export.yaml}:/etc/otelcol/export.yaml:ro
     ports:
       - "127.0.0.1:4317:4317"

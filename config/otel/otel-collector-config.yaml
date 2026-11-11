@@ -4,11 +4,13 @@
 # Receives OTLP from the gateway/worker and fans traces out to:
 #   • Langfuse Cloud (EU: cloud.langfuse.com; US: us.cloud.langfuse.com)
 #   • Arize AX (OTLP/HTTP)
+#   • Opik Cloud (OTLP/HTTP; traces leave the host)
 #   • local debug logs
 #
 # Egress is decided by an overlay file, not by this one. docker-compose.yml
 # passes this file as the first --config and one of
-# otel-collector-no-export.yaml (default: local debug only) or
+# otel-collector-no-export.yaml (default: local debug only),
+# otel-collector-opik.yaml (debug + Opik Cloud) or
 # otel-collector-export.yaml (debug + Langfuse + Arize) as the second. Maps
 # merge across files, but a list replaces the same path, so the overlay owns
 # the traces pipeline's `exporters` list while everything below stays in one
@@ -116,14 +118,29 @@ exporters:
       enabled: true
       queue_size: 1000
 
-  # OpenLit (self-hosted): a local OTLP/HTTP collector with a UI, so traces stay
-  # on the host while remaining queryable. The endpoint is the base URL — the
-  # exporter appends /v1/traces — and it points at host.docker.internal because
-  # OpenLit publishes 4320 on the host, not on this container network.
-  otlphttp/openlit:
-    endpoint: ${env:OPENLIT_OTLP_ENDPOINT}
+  # Opik Cloud over OTLP/HTTP. Selecting the Opik overlay means traces leave
+  # the host. OPIK_OTLP_ENDPOINT is Opik's *base* URL —
+  # https://www.comet.com/opik/api/v1/private/otel — and the exporter appends
+  # /v1/traces itself, so adding the signal path yields .../otel/v1/traces/
+  # v1/traces and every batch is rejected.
+  #
+  # Authorization is the raw Opik API key (no "Bearer " prefix).
+  # `Comet-Workspace` selects the workspace and `projectName` routes the spans
+  # into a project; without projectName Opik files them under "default".
+  otlphttp/opik:
+    endpoint: ${env:OPIK_OTLP_ENDPOINT}
     headers:
-      x-openlit-api-key: ${env:OPENLIT_OTLP_AUTH}
+      Authorization: ${env:OPIK_API_KEY}
+      Comet-Workspace: ${env:OPIK_WORKSPACE}
+      projectName: ${env:OPIK_PROJECT_NAME}
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
 
 extensions:
   health_check:
