@@ -132,6 +132,10 @@ jobs:
               # No GPU inference endpoint here; the model-integration canary is run
               # manually against a live llama.cpp (DEMO.md, scripts/demo_model_canary.py).
               "LLAMA_CPP_BASE_URL is not set",
+              # The Falco rules-validation test needs the Falco image; this
+              # unprivileged job does not pull it. scripts/falco_smoke.sh is the
+              # host-level check (ADR-017).
+              "Falco image is not present locally",
           )
           unexpected = []
           for case in ET.parse("pytest-report.xml").iter("testcase"):
