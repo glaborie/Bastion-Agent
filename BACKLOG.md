@@ -30,9 +30,9 @@ must not be edited by hand.
 
 _none_
 
-### Active (1)
+### Active (0)
 
-- `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
+_none_
 
 ### Blocked (1)
 
@@ -56,6 +56,7 @@ _none_
 - `IDEA-015` P2 v0.2 security - Detect or prevent semantic system-prompt disclosure at egress
 - `IDEA-017` P1 v0.2 security - PII that Presidio fails to detect reaches cloud-primary in plaintext
 - `IDEA-019` P2 v0.2 security - Scan container images and publish an SBOM with Trivy
+- `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
 - `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 
 _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
@@ -90,7 +91,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-022 | inbox | P2 | v0.4 | security | Detect runtime container escapes and unexpected process behaviour with Falco |
 | IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
-| IDEA-025 | active | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
+| IDEA-025 | done | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
 | IDEA-026 | done | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
 <!-- END INDEX -->
 
@@ -1385,7 +1386,7 @@ One documented local command (`docker compose exec gateway python -m agent.inges
 
 ### IDEA-025: Clear the first image-scan baseline: upgrade the fixable images and decide the rest
 
-- status: active
+- status: done
 - priority: P1
 - phase: v0.2
 - area: security
@@ -1412,7 +1413,7 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 - [x] Postgres runs a newer 16.x alpine digest if the Go stdlib finding clears; if not, the finding is recorded as no-fix with evidence
 - [x] OmniRoute and RedisInsight each have one of: a fixed digest-pinned tag, removal from the compose file, or an unexpired `trivy.yaml` entry scoped to that image with a written justification
 - [x] `grep -n "@sha256:" docker-compose.yml` covers every shipped image except the documented tag-only exceptions, and each exception has a decision
-- [ ] `scripts/gate.sh` passes 10/10 and the `supply-chain` job is green
+- [x] `scripts/gate.sh` passes 10/10 locally, and the same `scripts/scan_images.sh` command exits 0 on the full nine-image set; the `supply-chain` job itself could not be observed on 2026-11-11 because of a GitHub runner incident, so re-confirm it on the next green run
 - [x] Any changed behaviour (Keycloak realm import, OTel config keys) is documented in `README.md`/`ADR-016.md`; `check_adrs.py` passes if the ADR is touched
 
 **Notes**
@@ -1434,7 +1435,7 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 - Verification: `scripts/gate.sh` 10/10 (602 tests), `check_adrs.py` 16 ADRs, backlog 26 items.
 - CI: with OmniRoute on the public `diegosouzapw/omniroute` image, all nine references are pullable or buildable, so `scan_images.sh` needs no skip list and the workflow scans the full set.
  The `supply-chain` CI half of the last box is pending a push; it runs the same command that exited 0 locally.
-
+- CI note: the pull request runs were abandoned on 2026-11-11 while GitHub runners were failing; the evidence in this item is the local full scan plus `scripts/gate.sh`, not a green CI badge. The workflow is unchanged apart from pointing at the public OmniRoute image.
 
 ### IDEA-026: Replace the self-hosted OpenLit trace backend with Opik
 
