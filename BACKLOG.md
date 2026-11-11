@@ -20,7 +20,6 @@ must not be edited by hand.
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
-- `IDEA-009` P2 v0.2 security - Author ADR-014 for observability and trace privacy
 - `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-015` P2 v0.3 security - Detect or prevent semantic system-prompt disclosure at egress
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
@@ -28,7 +27,8 @@ must not be edited by hand.
 
 ### Ready (0)
 
-_none_
+- `IDEA-009` P2 v0.2 security - Author ADR-014 for observability and trace privacy
+
 
 ### Active (0)
 
