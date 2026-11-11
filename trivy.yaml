@@ -17,4 +17,24 @@
 # acceptance cannot outlive its review.
 
 version: 1
-ignore: []
+ignore:
+  # postgres:16.15-alpine is the current 16.x image. The finding is the Go
+  # stdlib in `gosu`, the entrypoint privilege-dropper, not the Postgres server:
+  # gosu does not terminate TLS. No rebuilt image exists, so the acceptance is
+  # bound to the next 16.x rebuild.
+  - id: CVE-2025-68121
+    images: [postgres-16.15-alpine]
+    statement: "Go stdlib in gosu, the entrypoint helper of postgres:16.15-alpine; gosu does not serve TLS and no rebuilt image exists."
+    expires: 2027-02-09
+
+  # RedisInsight 3.8 is the latest published tag (verified against Docker Hub).
+  # It is an optional development UI, started only with the redis-ui profile and
+  # never on the request path. Both findings are in bundled Node dependencies.
+  - id: CVE-2026-59873
+    images: [redis-redisinsight-3.8]
+    statement: "node-tar bundled in RedisInsight 3.8, the latest published tag; the redis-ui profile is optional and off the request path."
+    expires: 2027-02-09
+  - id: CVE-2026-90711
+    images: [redis-redisinsight-3.8]
+    statement: "proxy-addr bundled in RedisInsight 3.8, the latest published tag; the redis-ui profile is optional and off the request path."
+    expires: 2027-02-09

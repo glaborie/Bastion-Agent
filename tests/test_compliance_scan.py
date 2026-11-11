@@ -23,16 +23,16 @@ COMPOSE = ROOT / "docker-compose.yml"
 # The nine shipped image references from IDEA-019's Problem statement.
 EXPECTED_IMAGES = {
     "bastion-agent:local",
-    "dpage/pgadmin4:9.19",
-    "redis/redisinsight:3.8",
-    "rigging/omniroute:3.8.52",
 }
 EXPECTED_IMAGE_PREFIXES = (
-    "postgres:16-alpine@sha256:",
+    "postgres:16.15-alpine@sha256:",
+    "dpage/pgadmin4:9.19@sha256:",
     "redis:7-alpine@sha256:",
-    "quay.io/keycloak/keycloak:26.0@sha256:",
+    "redis/redisinsight:3.8@sha256:",
+    "quay.io/keycloak/keycloak:26.8.2@sha256:",
     "ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:",
-    "otel/opentelemetry-collector-contrib:0.111.0@sha256:",
+    "otel/opentelemetry-collector-contrib:0.165.0@sha256:",
+    "diegosouzapw/omniroute:3.8.53@sha256:",
 )
 
 
@@ -275,6 +275,30 @@ def test_policy_entry_needs_a_statement_and_expiry(tmp_path: Path) -> None:
     )
     assert result.returncode == 2
     assert "keys must be" in result.stderr
+
+
+def test_policy_accepts_an_unquoted_yaml_date(tmp_path: Path) -> None:
+    policy = tmp_path / "trivy.yaml"
+    policy.write_text(
+        "version: 1\n"
+        "ignore:\n"
+        "  - id: CVE-2024-0001\n"
+        "    images: [alpine-3.20]\n"
+        "    statement: 'Accepted until the next base image rebuild.'\n"
+        "    expires: 2027-01-31\n",
+        encoding="utf-8",
+    )
+    report = write_report(tmp_path, "alpine-3.20", ["CVE-2024-0001"])
+    result = run_script(
+        "scripts/check_trivy_report.py",
+        "--report",
+        str(report),
+        "--policy",
+        str(policy),
+        "--today",
+        "2026-11-11",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_non_critical_findings_do_not_fail(tmp_path: Path) -> None:

@@ -21,7 +21,7 @@ import hashlib
 import os
 import uuid
 from collections.abc import AsyncIterator
-from typing import Final, cast
+from typing import Final
 
 import pytest
 import pytest_asyncio
@@ -29,6 +29,7 @@ from redis.asyncio import Redis
 
 from agent.dlp.vault import TokenVault
 from agent.egress.sanitizer import EgressSanitizer
+from db.tenancy import normalise_tenant_id
 
 REDIS_TEST_URL: Final[str] = os.getenv("REDIS_TEST_URL", "")
 KEY: Final[bytes] = b"r" * 32
@@ -42,10 +43,10 @@ requires_redis = pytest.mark.skipif(
 pytestmark = [pytest.mark.redis_integration, requires_redis]
 
 
-def _key(kind: str, session_id: str) -> str:
-    """Recompute the sanitizer key space without touching a private method."""
+def _key(kind: str, session_id: str, tenant_id: str = "acme") -> str:
+    """Recompute the tenant-scoped sanitizer key without touching a private method."""
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-    return f"egress:{kind}:{digest}"
+    return f"egress:{normalise_tenant_id(tenant_id)}:{kind}:{digest}"
 
 
 @pytest_asyncio.fixture
@@ -78,7 +79,7 @@ async def test_canary_is_shared_between_replicas_with_the_vault_ttl(
     # same marker, because the value lives in Redis rather than process memory.
     other = EgressSanitizer(
         vault,
-        cast(Redis, client),
+        client,
         canary_prefix=PREFIX,
         canary_ttl_seconds=60,
         trip_ttl_seconds=60,

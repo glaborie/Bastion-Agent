@@ -11,7 +11,7 @@ must not be edited by hand.
 
 - current-phase: v0.2
 - wip-limit: 3
-- next-id: IDEA-026
+- next-id: IDEA-027
 
 ## Board
 
@@ -26,15 +26,15 @@ must not be edited by hand.
 - `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
 - `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
-- `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
+- `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 
 ### Ready (0)
 
 _none_
 
-### Active (0)
+### Active (1)
 
-_none_
+- `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
 
 ### Blocked (1)
 
@@ -90,7 +90,8 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-022 | inbox | P2 | v0.4 | security | Detect runtime container escapes and unexpected process behaviour with Falco |
 | IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
-| IDEA-025 | inbox | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
+| IDEA-025 | active | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
+| IDEA-026 | inbox | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
 <!-- END INDEX -->
 
 ## Items
@@ -1376,7 +1377,7 @@ One documented local command (`docker compose exec gateway python -m agent.inges
 
 ### IDEA-025: Clear the first image-scan baseline: upgrade the fixable images and decide the rest
 
-- status: inbox
+- status: active
 - priority: P1
 - phase: v0.2
 - area: security
@@ -1397,14 +1398,14 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 
 **Acceptance**
 
-- [ ] `./scripts/scan_images.sh --build-missing` exits 0 on the updated pins and writes `artifacts/compliance/<date>/{sbom.cdx.json,cve.json,manifest.json}`
-- [ ] `docker-compose.yml` references a digest-pinned Keycloak 26.8.2 (or the newest 26.x that scans clean) and no longer `26.0`
-- [ ] The OTel collector upgrade is either complete with `config/otel/` validated against the new schema, or the item is split and the config diff is recorded; the collector image is digest-pinned
-- [ ] Postgres runs a newer 16.x alpine digest if the Go stdlib finding clears; if not, the finding is recorded as no-fix with evidence
-- [ ] OmniRoute and RedisInsight each have one of: a fixed digest-pinned tag, removal from the compose file, or an unexpired `trivy.yaml` entry scoped to that image with a written justification
-- [ ] `grep -n "@sha256:" docker-compose.yml` covers every shipped image except the documented tag-only exceptions, and each exception has a decision
+- [x] `./scripts/scan_images.sh --build-missing` exits 0 on the updated pins and writes `artifacts/compliance/<date>/{sbom.cdx.json,cve.json,manifest.json}`
+- [x] `docker-compose.yml` references a digest-pinned Keycloak 26.8.2 (or the newest 26.x that scans clean) and no longer `26.0`
+- [x] The OTel collector upgrade is either complete with `config/otel/` validated against the new schema, or the item is split and the config diff is recorded; the collector image is digest-pinned
+- [x] Postgres runs a newer 16.x alpine digest if the Go stdlib finding clears; if not, the finding is recorded as no-fix with evidence
+- [x] OmniRoute and RedisInsight each have one of: a fixed digest-pinned tag, removal from the compose file, or an unexpired `trivy.yaml` entry scoped to that image with a written justification
+- [x] `grep -n "@sha256:" docker-compose.yml` covers every shipped image except the documented tag-only exceptions, and each exception has a decision
 - [ ] `scripts/gate.sh` passes 10/10 and the `supply-chain` job is green
-- [ ] Any changed behaviour (Keycloak realm import, OTel config keys) is documented in `README.md`/`ADR-016.md`; `check_adrs.py` passes if the ADR is touched
+- [x] Any changed behaviour (Keycloak realm import, OTel config keys) is documented in `README.md`/`ADR-016.md`; `check_adrs.py` passes if the ADR is touched
 
 **Notes**
 
@@ -1415,3 +1416,53 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 - Evidence caveat for the implementer: `artifacts/compliance/2026-11-11/` currently holds only the Keycloak 26.8.2 spot check (`manifest.json` lists that one image, `cve.json` is the `bastion-agent-image-set` aggregate for it with 0 CRITICAL), so the failing baseline's 23 rows are not preserved as an artifact and the re-baseline overwrites the directory. Capture the failing output in the implementation notes before re-running if the before/after pair matters.
 - Open questions for triage: whether the optional `redis-ui` and `pgadmin` profiles belong in a shipped SBOM at all, or should be excluded from the inventory the way the `compliance` profile is (ADR-016 decision 1 excludes the scanner; the side cars are not the same case); whether OmniRoute has a maintained public image at all, or whether accept-risk is the only honest disposition; and whether a Go stdlib finding inside a helper binary such as `gosu` should be scanned at the OS-package level only, since it cannot be upgraded without upgrading the base image.
 - Scope: intake only. No image, compose, `trivy.yaml`, `config/otel/`, workflow, test or ADR edit is part of this capture.
+
+**Implementation notes (2026-11-11)**
+
+- Pins: Keycloak `26.8.2@sha256:723b1d6e…`, OTel collector `0.165.0@sha256:e40d61f1…`, Postgres `16.15-alpine@sha256:aa6cb33c…` (the same digest the floating `16-alpine` resolved to, so no newer build exists), pgadmin `9.19@sha256:3591b3d0…`, RedisInsight `3.8@sha256:b5e19ee2…`, and OmniRoute `diegosouzapw/omniroute:3.8.53@sha256:b52a1766…` (the public image; the earlier `rigging/omniroute` name was a local tag for the same app). `.env` can still override `LLAMA_CPP_IMAGE` with a tag.
+- Findings after the upgrades: Keycloak, the OTel collector and OmniRoute are clean. The remaining rows are Postgres `CVE-2025-68121` (Go stdlib in `gosu`, not the server) and RedisInsight `CVE-2026-59873` / `CVE-2026-90711` (latest published tag, optional profile); both are image-scoped and expiring in `trivy.yaml`.
+- OTel: all three overlays validate against 0.165.0 and the collector starts with `Everything is ready` at `service.version=0.165.0`; the config needed no edit.
+- Keycloak: the live upgrade exposed an H2 dev-file incompatibility, not a realm problem. The 26.0 volume made 26.8.2 crash-loop with `Wrong user name or password [28000-240]`; after backing up and removing `bastion-agent_keycloak_data`, Keycloak starts clean, imports the realm and `/realms/bastion` returns 200. The reset command is in `README.md` §Upgrading the pinned images.
+- Verification: `scripts/gate.sh` 10/10 (602 tests), `check_adrs.py` 16 ADRs, backlog 26 items.
+- CI: with OmniRoute on the public `diegosouzapw/omniroute` image, all nine references are pullable or buildable, so `scan_images.sh` needs no skip list and the workflow scans the full set.
+ The `supply-chain` CI half of the last box is pending a push; it runs the same command that exited 0 locally.
+
+
+### IDEA-026: Replace the self-hosted OpenLit trace backend with Opik
+
+- status: inbox
+- priority: P3
+- phase: v0.2
+- area: infra
+- tags: tracing, opentelemetry, config, privacy
+- depends-on: -
+- spec: ADR-014
+- created: 2026-11-11
+- updated: 2026-11-11
+- source: session request on 2026-11-11 ("replace openlit with opik")
+
+**Problem**
+
+The only unmetered trace backend the stack can select is OpenLit, and it is wired in six places: `config/otel/otel-collector-config.yaml:119-126` defines the `otlphttp/openlit` exporter (`endpoint: ${env:OPENLIT_OTLP_ENDPOINT}`, header `x-openlit-api-key: ${env:OPENLIT_OTLP_AUTH}`), `config/otel/otel-collector-openlit.yaml:22` is the only overlay that names it, `docker-compose.yml:470-474` supplies both variables with `http://host.docker.internal:4320` as the endpoint default, `.env.example:314-319` documents them, `README.md:820`, `:832` and the section at `:911-934` present it as the local option, and `tests/test_otel_config.py:59-71` pins the exporter shape, the overlay list and the compose default. ADR-014 decision 5 lists OpenLit among the three interchangeable backends. Nothing in the tree mentions Opik — no exporter, overlay, compose service or environment key — so the swap is unbuilt, and ADR-014's own promise that a backend is "a new exporter plus an overlay, with no change to `telemetry.py`, `gateway/` or `agent/`" is the reason this is small rather than blocked. What is missing is the backend-specific half the OpenLit wiring exposes: its endpoint is a host-published port and its auth is a vendor header, so neither the ingest URL nor the credential shape for Opik exists anywhere in the repository.
+
+**Outcome**
+
+Opik is a selectable trace backend through the existing overlay mechanism: a base exporter block plus an overlay selected by `OTEL_REMOTE_EXPORT_CONFIG`, with its endpoint and credentials in `.env` like every other backend and no change to `telemetry.py`, `gateway/` or `agent/`. Either OpenLit is removed from the base config, the overlay set, compose, `.env.example`, README and ADR-014 decision 5, or it is retained and the documents state which local backend to use and why — a reader can tell the supported state from the documents alone. `otel-collector-no-export.yaml` stays the default and still exports nothing off-host; if Opik is self-hosted it joins the stack as a profile-gated, digest-pinned service whose image enters the Trivy inventory; and the ADR-014 trace-privacy contract is unchanged, with the ADR stating plainly if the chosen deployment is a cloud endpoint that traces leave the host.
+
+**Acceptance**
+
+- [ ] `uv run pytest tests/test_otel_config.py -q` passes with the Opik exporter pinned: the base defines it with its endpoint and auth header read from `${env:...}`, and the overlay names only exporters the base defines while restating no receivers or processors (the existing parametrized invariant keeps covering the new file)
+- [ ] `docker compose up -d --force-recreate otel-collector` with `OTEL_REMOTE_EXPORT_CONFIG` set to the Opik overlay delivers the span from one `POST /v1/chat` into Opik, and switching back to `otel-collector-no-export.yaml` stops the export without reading any Opik credential; the exact commands and the query showing the span are recorded in the item's implementation notes
+- [ ] The swap is configuration only: `telemetry.py`, `gateway/` and `agent/` are byte-identical, and the diff is confined to `config/otel/`, `docker-compose.yml`, `.env.example`, `README.md`, `docs/adr/ADR-014.md` and `tests/test_otel_config.py`
+- [ ] Every document that named OpenLit (`README.md:820`, `:832`, `:911-934`; `.env.example:314-319`; `docker-compose.yml:470-474`; ADR-014 decisions 2 and 5; `tests/test_otel_config.py:59-71`) either names Opik instead or states that OpenLit is retained, and `grep -rni "openlit" config/otel docker-compose.yml .env.example README.md docs/adr/ADR-014.md tests/test_otel_config.py` returns only lines consistent with the chosen state
+- [ ] `uv run python scripts/check_adrs.py` passes with ADR-014 decisions 2 and 5 and `Last modified` updated
+- [ ] If Opik runs in compose it is behind a profile, digest-pinned, and `uv run pytest tests/test_compliance_scan.py -q` passes with the inventory expectation updated in `tests/test_compliance_scan.py:116` rather than the nine-image set growing silently; `docker compose config` without the profile is unchanged
+- [ ] The trace-privacy allow-list is unchanged: a `POST /v1/chat` carrying a known canary and a known PII value exports no prompt text, completion text, tool argument or plaintext value to the Opik exporter, asserted by a test or a captured-span check rather than by review
+
+**Notes**
+
+- Deduplication: IDEA-009 (done) authored ADR-014, and its Notes (`BACKLOG.md:498`) deliberately record the live backend choice — self-hosted OpenLit while the Langfuse quota cooled — as `.env` configuration "which is gitignored, and must not be recorded as architecture". There is therefore no earlier item for a backend swap and nothing to merge: `opik` has no hit in `BACKLOG.md` or `docs/adr/`, and the remaining OpenLit references are IDEA-009's own record plus IDEA-007 and IDEA-012 implementation notes quoting traces they read from the store. `spec: ADR-014` because decision 5 already states the add-a-backend mechanism and decision 2 owns the overlay set, so this is covered by an Accepted ADR but not built, rather than a new decision.
+- Classification: `P3`/`v0.2`/`infra`. Nothing is broken — OpenLit is configured, reachable and pinned by tests — so this is a tooling preference, and the rubric's `P2`-when-unsure rule does not apply; triage may raise it to `P2` if Opik is wanted for this phase's evaluation work. No ADR-008 phase line names a trace backend, and v0.2 is the phase that shipped the pipeline and ADR-014. `area: infra` because every edited line is `config/otel/`, compose or `.env.example`, with the ADR and README riding along; `docs` is the alternative if triage scopes the reconciliation first.
+- Open questions for triage, deliberately not decided: **self-hosted or cloud** — a compose service adds an image to the Trivy inventory (`tests/test_compliance_scan.py:116` asserts nine) and a volume, while Opik Cloud means traces leave the host and the ADR-014 privacy statement must say so; **remove or retain OpenLit** — removal is cleaner but drops the only currently verified local backend; **Opik's OTLP contract** — endpoint path (base host versus `/v1/traces`), auth header name and any project-routing header must be confirmed against Opik's current docs before coding, and this item deliberately does not guess them, since `config/otel/otel-collector-config.yaml:92-99` and `.env.example:305-309` record that Arize answers `200` on a doubled `/v1` path and drops traces silently.
+- Not a dependency: IDEA-025 upgrades the OTel collector image (0.111 → 0.165) and re-validates the three overlays; whichever lands second must re-validate the Opik overlay against the collector schema. Related, not blocking, so `depends-on: -`.
+- Scope: intake only. No exporter, overlay, compose, `.env.example`, README, ADR or test edit is part of this capture, and the idea was not implemented in the turn that produced it.

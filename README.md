@@ -73,6 +73,19 @@ docker compose up -d --no-deps gateway worker   # only needed if a key was writt
 # OmniRoute:           http://localhost:8001
 ```
 
+### Upgrading the pinned images
+
+Every image the stack ships is scanned by `scripts/scan_images.sh` (see ADR-016).
+Two notes for the current pins:
+
+- **Keycloak 26.8.2** cannot open the H2 dev-file written by 26.0: it crash-loops
+  with `Wrong user name or password [28000-240]`. Reset the dev volume once; the
+  realm is re-imported from `config/keycloak/realm-export.json`.
+  `docker compose stop keycloak && docker compose rm -f keycloak && docker volume rm bastion-agent_keycloak_data && docker compose up -d keycloak`
+- **OTel collector 0.165.0** accepts the existing configuration, including all
+  three overlays. Validate before rolling:
+  `docker run --rm -v "$PWD/config/otel:/etc/otel:ro" --entrypoint /otelcol-contrib otel/opentelemetry-collector-contrib:0.165.0 validate --config=/etc/otel/otel-collector-config.yaml --config=/etc/otel/otel-collector-no-export.yaml`
+
 ---
 
 ## Authentication & Command Control Center (Milestone 2)
@@ -1037,7 +1050,7 @@ is accounted for. If you see CUDA out-of-memory errors, lower
   unprivileged `redis` user.
 - **Image pinning** — third-party images are pinned by tag **and** digest.
   Refresh with `docker buildx imagetools inspect <image>` and update the digest.
-  The locally built `rigging/omniroute` image keeps its tag (no registry digest).
+  `omniroute` is pinned to the public `diegosouzapw/omniroute` image by digest.
 - **No `container_name` on gateway/worker** — they are replica-safe; Compose
   derives names such as `bastion-agent-worker-1`.
 - **No healthcheck on `otel-collector`** — the image is distroless (no shell).
