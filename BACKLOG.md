@@ -11,18 +11,23 @@ must not be edited by hand.
 
 - current-phase: v0.2
 - wip-limit: 3
-- next-id: IDEA-019
+- next-id: IDEA-024
 
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (5)
+### Inbox (10)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
+- `IDEA-019` P2 v0.2 security - Scan container images and publish an SBOM with Trivy
+- `IDEA-020` P2 v0.5 security - Load production secrets from OpenBao instead of the process environment
+- `IDEA-021` P2 v0.3 db - Anchor the audit chain head in object storage with WORM retention (MinIO)
+- `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
+- `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 
 ### Ready (0)
 
@@ -77,6 +82,11 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-016 | inbox | P2 | v0.3 | db | Encrypted payload escrow for pre-production debugging, disabled in production |
 | IDEA-017 | done | P1 | v0.2 | security | PII that Presidio fails to detect reaches cloud-primary in plaintext |
 | IDEA-018 | inbox | P2 | v0.4 | agent | Detect user frustration and escalate the conversation to a human operator |
+| IDEA-019 | inbox | P2 | v0.2 | security | Scan container images and publish an SBOM with Trivy |
+| IDEA-020 | inbox | P2 | v0.5 | security | Load production secrets from OpenBao instead of the process environment |
+| IDEA-021 | inbox | P2 | v0.3 | db | Anchor the audit chain head in object storage with WORM retention (MinIO) |
+| IDEA-022 | inbox | P2 | v0.4 | security | Detect runtime container escapes and unexpected process behaviour with Falco |
+| IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 <!-- END INDEX -->
 
 ## Items
@@ -933,3 +943,368 @@ A turn whose recent history reads as frustrated produces a named verdict that th
 - Tests: `tests/test_chat.py` +3 (clean prompt still takes cloud, the record is kept off the cloud end to end, PII-route failure fails closed) and the existing `PUBLIC` restore test now asserts the local route and the override; `tests/test_dlp_presidio.py` +6 (record field-by-field, inline address is one span, birth date needs an anchor, address needs a street and postcode, French record with NER skipped); `tests/test_routing_client.py` +2; `tests/test_settings.py` +1 for the compose default. No existing assertion was deleted; the one changed expectation is the deliberate route flip, documented above.
 - Corpus: `tests/data/goldens.jsonl` grows 85 → 86 with `pii-prospect-record-086` (the verbatim record; `expected_label: null` because PII is DLP's layer) and `privacy-address-019` gains `ADDRESS` in its expected redactions for the inline form. ADR-011's corpus counts are updated to 86 and the PII rows are now named in the composition. `scripts/run_evals.py`: 231/231, all three metrics 1.000.
 - Gates: full pytest 650 passed / 2 `model_integration` skips; ruff check and format clean; mypy clean (70 files); pylint 10.00/10; `check_adrs`, `validate_tool_catalog`, `validate_rbac`, `recalculate_dread`, `check_backlog` all OK.
+
+### IDEA-019: Scan container images and publish an SBOM with Trivy
+
+- status: inbox
+- priority: P2
+- phase: v0.2
+- area: security
+- tags: supply-chain, docker, sbom, ci, compliance
+- depends-on: -
+- spec: -
+- created: 2026-11-11
+- updated: 2026-11-11
+- source: review of COMPLIANCE.md SOC 2 CC7.2, SECURITY.md §Vulnerability Management and THREAT_MODEL.md T11 against .github/workflows/ci.yml and docker-compose.yml, 2026-11-11
+
+**Problem**
+
+The only supply-chain gate is a Python-dependency audit. The `supply-chain`
+job (`.github/workflows/ci.yml:221-248`) installs the locked environment and runs
+`scripts/update_threat_intel.py` at line 240, which queries OSV for every package
+in `uv.lock` and exits non-zero on an unignored advisory. That covers the wheels
+in the venv and nothing else: OS layers, base images and the shipped runtime are
+invisible to it. `docker-compose.yml` references nine images — the locally built
+`bastion-agent:${BASTION_IMAGE_TAG:-local}` from the repo `Dockerfile`, plus
+`postgres:16-alpine@sha256:aa6cb33c…`, `dpage/pgadmin4:9.19` (profile
+`pgadmin`), `redis:7-alpine@sha256:c5d34a98…`, `redis/redisinsight:3.8` (profile
+`redis-ui`), `quay.io/keycloak/keycloak:26.0@sha256:09a381c7…`,
+`${OMNIROUTE_IMAGE:-rigging/omniroute:3.8.52}`,
+`${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:f2880315…}`
+and `otel/opentelemetry-collector-contrib:0.111.0@sha256:a2a52e43…` — and none
+of them is scanned. There is no SBOM, no `trivy.yaml`, no image, IaC or secret
+scan in any workflow, and no artifact that records what was shipped.
+
+The documents disagree with the tree in both directions. `COMPLIANCE.md:103`
+marks SOC 2 CC7.2 ✅ Implemented citing "vulnerability scanning, SBOM
+generation", and `SECURITY.md:267-269` claims "Weekly Snyk scans" and an SBOM
+"generated per release" — yet no Snyk, CodeQL, gitleaks or cosign step, config or
+dependency exists anywhere in the repository, and no SBOM file is written to
+`artifacts/` (which holds only `evals/latest.json`, `gate/<timestamp>/` and
+`threat-intel/latest.json`). `THREAT_MODEL.md` T11 is the honest record —
+`PARTIAL` for OSV, `PLANNED` for "SBOM generation, image pinning and signing" —
+except that line 249 says the OSV script "is not run in CI" and line 250 still
+lists "a CI gate on the OSV script" as planned while `ci.yml:240` runs it on
+every push, and §7 gap 6 repeats the same stale ask. So the compliance documents
+overclaim a control and the one accurate document still understates the gate
+that exists.
+
+**Outcome**
+
+One documented command turns the shipped image set into evidence:
+`docker compose --profile compliance run --rm trivy-scan` (or the exact
+equivalent recorded in the ADR) writes a CycloneDX SBOM and a CVE report per run
+under `artifacts/compliance/<date>/`, exits non-zero on an unignored CRITICAL,
+and the CI `supply-chain` job uploads the same artifacts and fails the build on
+the same rule. Coverage is derived from `docker compose config --images`, so a
+new `image:` line cannot be added without being scanned, and the optional profile
+side cars count as shipped images. The scanner never mounts
+`/var/run/docker.sock` — a socket is host root and contradicts the
+`cap_drop: ALL` baseline every service already carries (`docker-compose.yml`
+lines 114-117, 217-219, 282-284) — so it runs with `no-new-privileges`,
+`cap_drop: ALL` and a digest-pinned Trivy image. `COMPLIANCE.md`, `SECURITY.md`
+and `THREAT_MODEL.md` T11 state one status for the control and point at the job,
+the command and the artifact that prove it, and the new component and its
+no-socket rule are recorded in an ADR.
+
+**Acceptance**
+
+- [ ] `docker compose --profile compliance run --rm trivy-scan` writes `artifacts/compliance/<date>/sbom.cdx.json` (CycloneDX JSON) and `artifacts/compliance/<date>/cve.json` (Trivy JSON) for a clean scan and exits 0, and exits non-zero when the CVE report holds an unignored CRITICAL; the exit-code path is covered by `uv run pytest tests/test_compliance_scan.py -q` (or the named equivalent), which feeds a report containing one CRITICAL and one ignored CRITICAL through the same gate
+- [ ] Coverage is derived from the file rather than a hand-written list: the scan enumerates `docker compose config --images` and the SBOM names all nine references listed in **Problem**, including the `pgadmin` and `redis-ui` profile images and the locally built `bastion-agent` image; a test adds a new `image:` to a compose fixture and asserts the scan list grows, so an unscanned image is a failing test
+- [ ] `.github/workflows/ci.yml` `supply-chain` scans images in addition to `uv.lock`, uploads `artifacts/compliance/<date>/sbom.cdx.json` and `cve.json` with `actions/upload-artifact` pinned by commit SHA like the existing uploads (lines 215 and 244), fails the job on an unignored CRITICAL, and `ci-ok` still requires `supply-chain`
+- [ ] `trivy.yaml` (committed) is the only suppression path: every entry carries the Trivy id, the image scope, a justification and a review/expiry date; a finding with no matching unexpired entry fails, and an expired entry fails too, proven by a test or a `scripts/` checker rather than by review
+- [ ] `grep -n "docker.sock" docker-compose.yml` returns nothing; the scanner service declares `security_opt: [no-new-privileges:true]`, `cap_drop: [ALL]`, no `privileged: true`, no added capability and `aquasecurity/trivy` pinned by digest; the chosen image-access mechanism is stated in a compose comment and in the ADR
+- [ ] `artifacts/compliance/*` is ignored with a tracked `artifacts/compliance/.gitkeep`, mirroring the existing `artifacts/gate/*` block in `.gitignore:44-46`, so generated SBOMs and CVE reports are never committed
+- [ ] `COMPLIANCE.md` CC7.2 (line 103) either names the job, command and artifact path as its evidence or marks the control planned/partial; `SECURITY.md` §Vulnerability Management (lines 266-269) states what actually runs, on what triggers, and where the SBOM is written, with "Weekly Snyk scans" removed unless a Snyk integration exists; `grep -rn "SBOM\|Snyk\|vulnerability scanning" COMPLIANCE.md SECURITY.md` returns only sentences that point at the job, the command and the artifact path
+- [ ] `THREAT_MODEL.md` T11 (lines 243-251) states the image scan and SBOM with the correct status using the document's own §1 definitions (`LIVE` only if it runs in CI with tests, otherwise `PARTIAL`), drops the "is not run in CI" sentence about the OSV script, and its residual risk names what remains — no image signature verification, the three tag-only images, and no IaC or secret scan if not built; §7 gap 6 is updated or closed and `Last updated` is bumped
+- [ ] `docs/adr/ADR-015.md` (the next free number today) records the scanner, the chosen image-access mechanism and why the Docker socket is excluded, the CRITICAL-fails policy with the ignore-file contract and its expiry, and the artifact layout; it is indexed in `docs/adr/ADR-Index.md` and `uv run python scripts/check_adrs.py` passes
+- [ ] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `scripts/gate.sh`, `check_adrs.py`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` still pass, and `docker compose up -d` without the profile is unchanged: no new default-profile service and no new required `.env` key
+
+**Notes**
+
+- Deduplication: no backlog item and no ADR mentions an SBOM, Trivy, image scanning or a supply-chain gate. Grepped `BACKLOG.md` and `docs/adr/` for `SBOM`, `trivy`, `CycloneDX`, `supply-chain`, `cosign`, `Snyk`, `Falco`, `secrets`: the only hits are the documents cited in **Problem** and `SECURITY.md`'s Vault/Falco prose. IDEA-004 (audit export for retention) is the only other item tagged `compliance` and is a ledger concern; IDEA-009 (done) authored the observability ADR for a pipeline that already existed, a different gap; IDEA-010 (ADR-006 drift) and IDEA-011 (done, rate-limit drift) are the same genre of doc reconciliation but different controls. `spec: -` is deliberate: no Accepted ADR governs supply-chain scanning, so the item authors the decision (ADR-015) instead of citing one, and `THREAT_MODEL.md` T11 only records status, not a decision.
+- Classification: `P2`/`v0.2`. The doc overclaim is a current-phase defect (COMPLIANCE.md asserts a SOC 2 control with no evidence today, and v0.2 is "Hardening"), so the conservative home is the current phase; the build is a gate addition rather than product capability, which is why this is not `P1` (no stated security invariant is broken and the stack runs). `area: security` because the load-bearing content is a cross-cutting supply-chain invariant plus the truthfulness of a stated control, spanning compose, CI and three documents; `infra` is the mechanical alternative because most edited lines land in `docker-compose.yml` and `.github/workflows/ci.yml`. Triage may split this into "correct the docs now" (docs, v0.2) and "build the gate" (security/infra, v0.5 "compliance mode", the only phase line whose scope touches compliance evidence) — the acceptance is written so both halves are separable.
+- Chosen image-access mechanism, to be confirmed against Trivy's current docs before coding: `docker save <image> | docker run -i … trivy image --input -` (the tarball arrives on stdin, so the scanner needs no socket, no registry credentials and no privileges), with the `trivy` server in the `compliance` profile holding the vulnerability DB so repeated runs do not re-download it. Rejected: a `/var/run/docker.sock` mount (host root, and inconsistent with the `cap_drop: ALL` baseline), and a throwaway local registry (extra service, writable volume and port for no security gain). The alternative to weigh before committing is scanning registry-hosted images by reference and using the tarball only for `bastion-agent`: faster, but the scanner then needs egress to five registries and the SBOM is no longer built from the bytes actually running. Whichever wins, the ADR records it with this trade-off, and `docker save` cost on the CUDA `llama-cpp` image (multiple GB) is the number that decides.
+- Deliberately out of scope, each a follow-up item rather than bundled work: runtime detection (Falco or equivalent), secrets management (OpenBao/Vault) — `SECURITY.md` and `THREAT_MODEL.md` T4/T6 already name it as a production prerequisite, audit-log WORM export / head-hash anchoring (T10), and image signing plus signature verification (cosign, T11). Also out: pinning the three tag-only images (`pgadmin4:9.19`, `redisinsight:3.8`, `omniroute:3.8.52`) to digests — that is a compose-only change with its own blast radius on upgrade procedure, and this item should report them as findings rather than silently pin them. IaC scanning of `config/keycloak/realm-export.json` and secret scanning of the tree are separate gates with separate false-positive budgets.
+- Why the docs matter enough to be in scope: a reviewer or auditor reading `COMPLIANCE.md:103` is told CC7.2 is implemented; `THREAT_MODEL.md:9` explicitly says that document is not a compliance attestation, but `COMPLIANCE.md` makes no such disclaimer for its ✅ column. Either the evidence exists or the row must say planned — leaving the ✅ while adding a scanner elsewhere would still be an unsupported claim until the artifact path is named.
+- Open questions for triage: whether the scan runs on every push or nightly (the CUDA image makes a full nine-image scan expensive on a hosted runner), whether `pgadmin` and `redisinsight` are scanned in CI although their profiles are never started there, whether the ignore file lives at `trivy.yaml` (repo root, CLI default) or under `config/compliance/`, and whether a drifted low-severity finding should warn or fail.
+- Intake only: no implementation, no compose, CI, `trivy.yaml`, `.gitignore`, doc or ADR edit is part of this capture.
+
+### IDEA-020: Load production secrets from OpenBao instead of the process environment
+
+- status: inbox
+- priority: P2
+- phase: v0.5
+- area: security
+- tags: secrets, openbao, rotation, audit, config, compliance
+- depends-on: -
+- spec: -
+- created: 2026-11-11
+- updated: 2026-11-11
+- source: session request on 2026-11-11 ("capture OpenBao as a compliance improvement")
+
+**Problem**
+
+Every credential the stack needs is a plain process environment variable, so "production secrets" today means a line in a gitignored `.env` that is readable by `docker inspect`, `docker compose config`, any process in the container and any crash dump. `settings.py` declares four of them as `SecretStr` — `keycloak_client_secret` (line 66), `vault_master_key` (line 114), `approval_hmac_secret` (line 212), `omniroute_api_key` (line 236, default `sk-local-dev`) — but two more are not even wrapped: `database_url` (line 49) and `redis_url` (line 59) are plain `str` with the Postgres and Redis passwords inline inside the connection URL, so no redacting type stands between them and any `repr`, log line or traceback that formats the settings object. `_reject_dev_secrets` (`settings.py:407-419`) is the only production guard and it is narrower than it looks: it runs only when `environment` is `staging` or `production`, compares exactly three values against their dev constants (`VAULT_MASTER_KEY` 411, `APPROVAL_HMAC_SECRET` 413, `KEYCLOAK_CLIENT_SECRET` 415), and never inspects `omniroute_api_key`, `database_url` or `redis_url`. A deployment that sets those three to new strings is therefore "production-ready" by the only check the repo has, while `sk-local-dev` and a reused Postgres password travel through the environment unchanged. `docker-compose.yml` then reproduces all six into **both** app containers: the `x-app-environment` anchor (lines 18-102) sets `KEYCLOAK_CLIENT_SECRET` (32), `VAULT_MASTER_KEY` (55), `APPROVAL_HMAC_SECRET` (59), `OMNIROUTE_API_KEY` (92) and embeds `POSTGRES_PASSWORD` (23) and `REDIS_PASSWORD` (27) inside the two connection URLs, and `gateway` (132-133) and `worker` (180-181) merge the same anchor beside the `.env` `env_file` (109-111) — one secret set and one identity for two services with different privileges. There is no top-level compose `secrets:`, no `_FILE` variable support, no rotation path other than editing `.env` and restarting, and no read audit: nothing records that a secret was fetched, by which service, or when.
+
+The documents state the gap and then stop. `THREAT_MODEL.md:158` records "The vault key and HMAC secrets come from the environment... A production deployment needs a secret manager and rotation, which are not implemented." `SECURITY.md` §Secrets Management (lines 241-244) prescribes quarterly rotation and "Use HashiCorp Vault or Azure Key Vault for production", and `COMPLIANCE.md:82-83` repeats both in the Q&A an auditor reads. That is a policy with no mechanism — the same defect IDEA-019 found in COMPLIANCE CC7.2 — and `ADR-008:20` already lists "secrets management" in the v0.5 production-readiness bullet without any decision behind it. One naming trap must be kept straight throughout: this repository already has a "vault" — `agent/dlp/vault.py` `TokenVault`, AES-256-GCM over `{{ENTITY:TYPE_N}}` PII tokens in Redis under ADR-002 — and it is a data store, not a secret store. OpenBao is a separate system; an ADR or a doc that says "the vault" without qualifying it will be read as the token vault.
+
+**Outcome**
+
+OpenBao runs as a digest-pinned compose service behind a `secrets` (or `compliance`) profile, so the default stack still starts with no OpenBao and no new required `.env` key. `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `KEYCLOAK_CLIENT_SECRET` and `OMNIROUTE_API_KEY` are read from KV v2, and the two passwords stop living inside `DATABASE_URL`/`REDIS_URL` as literals — the URLs are assembled at startup from a KV-read password and a non-secret host/user template. `VAULT_MASTER_KEY` exists at rest only as ciphertext in the transit engine, in one of two shapes the ADR chooses between: the gateway asks OpenBao to `encrypt`/`decrypt` the token payload so the 32-byte AES key never enters the process, or OpenBao unwraps the key once at startup and the process holds it in memory. Each service logs in with its own AppRole and its own policy — gateway and worker get distinct roles, because the worker never mints or needs the vault key but does execute guarded tools. The audit device records every read with the AppRole identity and the path and never the value. `settings.py` resolves through a provider with an explicit env fallback for `ENVIRONMENT=local`, and `reset_settings_cache()` (`settings.py:495`) is the supported rotation hook, so a rotation without a restart is testable. When OpenBao is unreachable, secret-dependent paths fail closed at boot and `/v1/chat` refuses to serve rather than falling back to stale environment values. `SECURITY.md`, `COMPLIANCE.md` and `THREAT_MODEL.md` describe the control that actually exists and name the claims that are still aspirational.
+
+**Acceptance**
+
+- [ ] `docker inspect gateway` and `docker inspect worker` with the secrets profile active show no plaintext for `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `KEYCLOAK_CLIENT_SECRET`, `OMNIROUTE_API_KEY` or the `VAULT_MASTER_KEY` material; `uv run pytest tests/test_secret_provider.py -q` parses `docker compose --profile secrets config` (precedent: `tests/test_settings.py:143`, which reads `docker-compose.yml` as text) and asserts each of the five appears as a file- or agent-sourced reference rather than as a literal under `environment` or inside `DATABASE_URL`/`REDIS_URL`, and the test fails when a literal is reintroduced
+- [ ] OpenBao's audit device records one entry per secret read carrying the AppRole role name and the KV/transit path; the same test reads the audit log written by a startup, asserts `role` and `path` are present for all four KV reads, and asserts the value of each secret (and the decoded `VAULT_MASTER_KEY`) appears nowhere in the audit file, so a value leaking into the audit sink fails the test
+- [ ] Rotating `VAULT_MASTER_KEY` in OpenBao and calling `reset_settings_cache()` lets the gateway decrypt a token that was minted before the rotation, proven by a test that mints a token, rotates, drops the cache and restores it, and that fails on the current tree; if the transit design forbids using two key versions at once, the item instead ships the re-encryption migration, its exact command is in the runbook, and a test proves a token written under the old version is rewritten or explicitly refused with no silent decryption failure
+- [ ] With OpenBao stopped (`docker compose stop openbao`), startup behaviour is explicit and fail-closed: `requests.post("/v1/chat", ...)` returns a non-2xx and the response body does not contain a completion, no request is routed to OmniRoute or llama.cpp, and no environment value is used as a fallback; `/health` distinguishes "degraded: secret provider unreachable" from "ready", and `uv run pytest tests/test_secret_provider.py -q` asserts all three (the refusal, the absent fallback, the health distinction)
+- [ ] `ENVIRONMENT=local docker compose up -d gateway` still starts with no OpenBao service and no secrets profile, `uv run pytest -q` stays green with the provider in its local/env mode, and `_reject_dev_secrets` still raises the same three messages for the same three variables outside local — a test asserts the guard is byte-identical (same variables, same text) so the provider work cannot quietly widen or narrow it
+- [ ] `docker compose config` without the profile is unchanged: OpenBao appears only under the gated profile, the image is pinned by digest (`openbao/openbao:<version>@sha256:...`), the service carries `cap_drop: [ALL]` and `security_opt: [no-new-privileges:true]` like the existing baseline, mounts no host directory writable by other services, and a compose comment states which profile enables it and that the default stack does not depend on it; the acceptance is a diff of `docker compose config` before and after that touches no default-profile service
+- [ ] `SECURITY.md` §Secrets Management (241-244), `COMPLIANCE.md` "How are secrets managed?" (82-83) and `THREAT_MODEL.md` T4 (158) / T6 (181-183) describe the mechanism that shipped, name the residual limits (no HSM, root in the container can read process memory, availability versus fail-closed), and either remove or explicitly mark as aspirational every sentence that claims Vault/secret-manager support the tree does not have; `grep -rn "HashiCorp Vault\|Azure Key Vault" SECURITY.md COMPLIANCE.md` returns only lines that point at the implemented service or label the sentence planned, and `uv run python scripts/check_adrs.py` passes with the new ADR file and its `ADR-Index.md` row
+
+**Notes**
+
+- Deduplication: grepped `BACKLOG.md` and `docs/adr/` for `openbao`, `hashicorp`, `secrets manager`, `rotation`, `approle` and `vault`. `IDEA-019` (line 1020) already lists "secrets management (OpenBao/Vault)" among the work it deliberately leaves as "a follow-up item", so this item is that follow-up rather than a second attempt at the same problem and there is nothing to merge. `IDEA-016` is payload escrow — a ciphertext debug store keyed to `audit_logs.id`, a different store with a different key and a different retention clock. `IDEA-004` is audit-ledger export. `IDEA-001` scopes the DLP token vault keys by tenant and would have to cover any new key if it lands first, but does not touch credential provisioning. The `agent/dlp/vault.py` / ADR-002 collision is real and is the reason the word "vault" may not be used unqualified in the new ADR, the compose comments or the three reconciled documents. Nothing in `BACKLOG.md` or `docs/adr/` describes a secret-manager mechanism.
+- `spec: -` is deliberate: no Accepted ADR governs where credentials live. `ADR-001` is ingress authentication (JWT validation, RBAC, the request path), not secret storage; `SECURITY.md` §Secrets Management and `COMPLIANCE.md:83` are policy prose with no recorded decision behind them; `THREAT_MODEL.md:158` records the gap as residual risk. `ADR-008:20` is phase scope, not a decision about mechanism. The item therefore authors the decision, and that ADR must be written before code because it owns three choices the implementation cannot make implicitly.
+- Classification: `P2`/`v0.5`, which departs from the `v0.3` suggested when this was captured. The rubric puts new capability in the phase whose ADR-008 scope names it, and `ADR-008:20` puts secrets management in v0.5 explicitly; no v0.2 or v0.3 line names it. Not `P0`/`P1`: no stated invariant is broken today, the stack starts, and the three most dangerous dev defaults are already rejected outside local — the exposure is that production means "real strings in `.env`", which is a provisioning weakness rather than a live leak. Triage may pull it forward to v0.2/v0.3 if a compliance conversation needs the control before the v0.5 readiness phase.
+- `area: security` rather than the `infra` suggested at capture. The rubric's area table assigns "secrets" to `security`, and the deliverable is a cross-cutting invariant plus the truthfulness of three documents; `infra` is the mechanical alternative because most edited lines land in `docker-compose.yml` and `.env.example`. As in IDEA-019's identical trade-off, the compose service is the thin part and the invariant is the load-bearing part.
+- Decisions the ADR must take, not preselected here: **dev mode versus Shamir shares** — dev mode keeps unseal material in memory and must be labelled non-production, while Shamir shares mean an operator must unseal after every restart, so the bootstrap and unseal material may never be committed and the runbook needs a documented custody step; **SDK in-process versus a sidecar or agent-injector** for AppRole login, trading a library dependency and a login path inside the app for a token file and one more container; **whether `worker` gets its own AppRole** with a narrower policy than `gateway` (this item assumes yes, and the acceptance asserts distinct identities, but the ADR records the policy split); and **whether OpenBao sits on the request path** — transit `encrypt`/`decrypt` per vault write adds per-turn latency and a hard availability dependency on every chat turn, and is not the same system as the Redis token vault — or **only at startup**, which moves the blast radius to unseal and forces a restart or a re-wrap on rotation.
+- Honest limits to record in the ADR rather than solve here: OpenBao on the same host is a policy and audit boundary, not an HSM — a host root can read process memory, the OpenBao memory, or the unseal material, so this reduces accidental disclosure, `docker inspect` exposure and unlogged rotation, and does not defend against host compromise; fail-closed makes OpenBao an availability dependency for `/v1/chat` while the dashboard and approvals must stay up (the compose file already treats model backends as non-hard dependencies for exactly this reason); and the audit device proves reads happened, not that a read was authorised in business terms.
+- Deliberately out of scope, each a follow-up rather than bundled work: mTLS between services (Step-CA, a separate item), dynamic Postgres/Redis credentials via a database secrets engine, OpenBao PKI issuance, and any cloud KMS as an alternative transit backend. Also out: patching `_reject_dev_secrets` to cover `omniroute_api_key`, `database_url` and `redis_url` ahead of the provider design — the gap is named in **Problem**, and its final shape should be decided together with the provider rather than guessed at now.
+- Open questions for triage: whether `OMNIROUTE_API_KEY` (today `sk-local-dev`, with no production guard at all) belongs in the first slice or is deferred with the connection strings; and whether the two URL-embedded passwords are in scope for slice one at all, since moving them requires a `str` → `SecretStr` migration of `database_url`/`redis_url` plus URL re-assembly in `db/session.py` and the ARQ bridge, which is a larger change than the four KV reads and may deserve its own item.
+- Scope: intake only. No implementation, no compose, `settings.py`, `.env.example`, document or ADR edit is part of this capture.
+
+### IDEA-021: Anchor the audit chain head in object storage with WORM retention (MinIO)
+
+- status: inbox
+- priority: P2
+- phase: v0.3
+- area: db
+- tags: audit, worm, retention, minio, tamper-evidence
+- depends-on: -
+- spec: ADR-005
+- created: 2026-11-11
+- updated: 2026-11-11
+- source: session request on 2026-11-11 ("capture MinIO WORM as a compliance improvement")
+
+**Problem**
+
+The ledger's tamper evidence stops at the database boundary. `verify_audit_chain` (`db/audit.py:121`) walks `audit_logs` and checks each `record_hash` against its `previous_hash`, but `ChainVerification` (`db/audit.py:46-53`) returns only `ok`, `checked`, `first_bad_id` and `reason` — no terminal hash — so `scripts/verify_audit_chain.py` (`:63` returns `2` when verification cannot run, `:79` returns `0`/`1` for intact/tampered) and `POST /api/audit/verify` (`gateway/routers/audit.py:107`) can only prove the rows agree with each other. `THREAT_MODEL.md:240` states the consequence: "A chain inside the same database detects partial edits. An attacker with write access can recompute the whole chain. Detecting that needs the head hash exported to a separate system or write-once store, plus an INSERT-only database role. Neither is implemented." Nothing stores a hash outside Postgres: `docker-compose.yml` defines eight services plus two profile UIs and four volumes (`pgdata`, `redisdata`, `keycloak_data`, `omniroute_data`; lines 497-501), and a search for `minio`, `object lock`, `write-once` or `archival` returns only prose claims.
+
+Those claims are the second half of the gap. ADR-005 decision 5 (`docs/adr/ADR-005.md:50`) records retention as "7 years … partitioning by year; cold data moved to archival storage" and marks it "Not implemented in v0.1 — scheduled for v0.3 (async audit export) / v0.5 (compliance mode)". `SECURITY.md:132-133` nevertheless states "Retention: 7 years (partitioned by year)" and "Cold storage: Migrate to archival after 1 year", and `COMPLIANCE.md:117` (FINMA 2018/3 §4.5) and `COMPLIANCE.md:137` (Swiss Banking Act Art. 48) both cite "7-year retention" as ✅ Compliant. No partition exists, no archival path exists, and no export can be made deletion-proof because there is no store to write it to.
+
+**Outcome**
+
+A `compliance` compose profile supplies a digest-pinned MinIO with versioning and object lock, and a one-shot `mc` init job that creates `bastion-audit` with a 7-year default retention in `COMPLIANCE` mode. Whenever an export runs — or on a schedule, until IDEA-004 exists — the writer appends a small witness object containing only the tenant or global scope, the id range, the row count, the terminal `record_hash`, a timestamp and a signature; no prompt, completion, tool argument or plaintext PII, because the ledger itself is hash-only (`THREAT_MODEL.md:238`). `scripts/verify_audit_chain.py` gains a mode that recomputes the DB head and compares it to the stored witness, exits non-zero on any mismatch, and treats an unreachable store as "could not verify" (`2`) rather than a pass. The application credential may only put objects under the witness prefix: retention is server-enforced, and an overwrite creates a new version instead of replacing the witness. `ADR-005.md:50`, `SECURITY.md:132-133`, `COMPLIANCE.md:117`/`:137` and `THREAT_MODEL.md:240` claim retention and external anchoring only once they are real.
+
+**Acceptance**
+
+- [ ] `docker compose --profile compliance up -d` starts `minio` (pinned by digest, as `db` and `redis` are) and a one-shot `minio-init` job; `mc retention info` on `bastion-audit` reports `COMPLIANCE` with a 7-year default and `mc version info` reports versioning enabled, asserted by the scripted check rather than by reading the compose file
+- [ ] Deleting or overwriting a retained witness with the application credentials fails (403 or an object-lock error) and `mc stat --versions` still lists the original version; `uv run pytest tests/test_audit_witness.py -q` asserts both the failure and the surviving version against the running MinIO
+- [ ] `uv run python scripts/verify_audit_chain.py --witness` exits `0` on an intact ledger and non-zero after one audit row is edited or deleted — mutated through the documented opt-out `SELECT set_config('bastion.allow_audit_mutation', 'on', true)` (ADR-005:46), not by disabling the trigger — and an unreachable MinIO exits `2`
+- [ ] The witness object carries only scope, range bounds, row count, terminal `record_hash`, timestamp and signature; a test reads the stored object and asserts no prompt, completion or tool-argument text and no plaintext PII is present
+- [ ] `mc admin policy info` (or the bucket policy) shows the app credential holds `s3:PutObject` on the witness prefix only, and a test asserts `s3:DeleteObject` and `s3:PutBucketObjectLockConfiguration` are denied, so retention cannot be shortened from the application
+- [ ] Both the DB chain and the witness survive `docker compose restart`, and a verification run afterwards still exits `0`
+- [ ] `docs/adr/ADR-005.md:50`, `SECURITY.md:132-133`, `COMPLIANCE.md:117`/`:137` and `THREAT_MODEL.md:240` describe retention and the external witness as implemented only once it is, narrowing T10's residual to host compromise and the missing INSERT-only role; `uv run python scripts/check_adrs.py` passes
+- [ ] `IDEA-004` gains a `**Notes**` line recording that the immutable store and the head witness ship here while its export supplies the segments, without changing its status or its own acceptance boxes
+
+**Notes**
+
+- Deduplication: IDEA-004 (blocked) is the async export job — segment paging, a manifest with "segment bounds and the terminal hash" (`BACKLOG.md:221`), and retention/deletion text in COMPLIANCE.md — so it produces the artifacts that land *in* the store; this item is the store and the out-of-band anchor, and the two are complementary rather than overlapping. IDEA-001 (inbox) supplies the tenant dimension that decides both the export partition key and, here, whether the witness is per-tenant. IDEA-016 is encrypted payload escrow — a PII store that recovers plaintext on purpose, the opposite direction. IDEA-009 is trace privacy (done); IDEA-015 is egress disclosure (done); IDEA-019 is image scanning. No item and no Accepted ADR covers a write-once store or an external head witness: the only four hits for `minio|object lock|write-once|archival` are `THREAT_MODEL.md:240`, `ADR-005.md:50`, `SECURITY.md:133` and `BACKLOG.md:215`, all of them either the residual or a promise.
+- Sequencing, honestly: IDEA-004 is `blocked` (`BACKLOG.md:195`) with `blocked-by: tenant scoping decides the partition key of the export` (`:201`) on IDEA-001, which is itself still `inbox` (`:63`). Depending on IDEA-004 would make this the third link of a chain that has not started, and the rubric forbids `depends-on` as "related to" rather than "unbuildable". The witness needs only the DB head and a row count, so **this is buildable today against the live ledger**; hence `depends-on: -`. If triage instead scopes the witness to exported segments only, set `depends-on: IDEA-001, IDEA-004` and expect it to wait.
+- Classification: `P2`/`v0.3`/`db`. No production guarantee is broken today (the chain verifies, nothing leaked), retention is explicitly scheduled for v0.3/v0.5, and `ADR-008.md:18` already lists "async audit export" in v0.3, so the next phase is the conservative home; a `P1` argument exists by the IDEA-011 precedent (a document asserting a shipped control that does not exist), and triage may split the doc correction out at `P1` — but the capability itself is new. `area: db` because the change is the ledger's external anchor: a witness writer beside `append_audit_event` (`db/audit.py:59`), a terminal hash on `ChainVerification`, the verification mode, and the IDEA-004 export as the primary caller; `security` is the fair alternative (the load-bearing content is the T10 invariant, and the store is mostly compose and bucket policy), rejected for consistency with IDEA-004 and IDEA-016, with the threat-model text riding along in the same change. Tags stop at five per the intake guidance; `compliance` is dropped because `retention` already carries it and IDEA-004 is the discoverable home for that word.
+- Deliberately out of scope: real S3/Azure Blob backends, a legal-hold UI, lifecycle tiering and cold-tier migration, annual partitioning of `audit_logs`, and the **INSERT-only database role** — `THREAT_MODEL.md:240` names it as the other half of the same residual, it is a `db`/`infra` change with its own migration and break-glass story, and it deserves its own item rather than riding on this one. Also out: any change to `record_hash` computation or the `audit_logs` schema.
+- Honest limits to record in the ADR, not solve here: MinIO on the same host and the same Docker volume is not off-host, so an attacker with host or Docker-socket access deletes the volume, recreates the bucket or rewrites the compose file — the control defends the T10 attacker who holds the database credential, not one who holds the host; off-site replication or backup is a follow-up. `COMPLIANCE`-mode retention is also a one-way door: a wrong default cannot be shortened, only worked around by recreating the bucket, so the init job's retention value must be reviewed before first run. And because the store lives behind an opt-in compose profile, a stack started without `--profile compliance` has no witness at all — verification must fail (`2`) there rather than pass, and `README.md`/`DEMO.md` must say so.
+- Open questions for triage: the cadence (one witness per export, hourly, or a daily chain of witnesses); whether the witness is per-tenant or a single global chain, which is IDEA-001's decision to make first; the signing key — reuse `APPROVAL_HMAC_SECRET` (`docker-compose.yml:59`), which keeps one secret to rotate but couples the four-eyes capability token to the audit anchor, or a separate `AUDIT_WITNESS_HMAC_SECRET` with its own rotation; which process writes it (gateway, worker job, or the IDEA-004 export job); and whether 7 years is the real policy, since `ADR-005.md:50` says "e.g., 7 years" while `SECURITY.md:132` and `COMPLIANCE.md` state it as fact.
+- Scope: intake only. No implementation, compose change, bucket policy, test, `.env.example` edit or commit is part of this capture.
+
+### IDEA-022: Detect runtime container escapes and unexpected process behaviour with Falco
+
+- status: inbox
+- priority: P2
+- phase: v0.4
+- area: security
+- tags: runtime, falco, detection, docker, monitoring
+- depends-on: -
+- spec: ADR-001
+- created: 2026-11-11
+- updated: 2026-11-11
+- source: session request on 2026-11-11 ("capture Falco as a compliance improvement")
+
+**Problem**
+
+The stack is hardened at start and unobserved afterwards. The app tier carries
+`init: true`, `no-new-privileges:true` and `cap_drop: ALL`
+(`docker-compose.yml:112-117`, the `x-app-build` anchor) and every other
+service repeats the pair (`db:217-220`, `redis:282-285`,
+`keycloak:341-344`, `omniroute:388-391`, `llama-cpp:442-445`,
+`otel-collector:490-493`), but there is no seccomp, AppArmor or `noexec`
+profile anywhere in the tree, so that is prevention with no observation: nothing
+records what a process does after the container starts. All eight services share
+one bridge network and the host kernel (`docker-compose.yml:503-505`), and
+`bastion-net` is not `internal: true`, so a compromised gateway can open a
+connection to any destination; "OmniRoute as the only routing layer"
+(`docs/adr/ADR-001.md:21`) is enforced in Python, not by the network. The
+process runs as uid 10001 (`Dockerfile:21-22,45`) but owns its own source tree
+(`Dockerfile:35-41`), so it can rewrite `/app/gateway/...`, and it can spawn
+`/bin/sh` from the `python:3.11-slim` base (`Dockerfile:6`) without any tool
+doing it: `docs/tools/v1.json` lists exactly three tools
+(`execute_file_write`, `read_file`, `read_system_status`), none executes a
+command, and `agent/tools/builtin.py:37-59,147-166` confines writes to
+`TOOL_WORKSPACE_ROOT` (`/tmp/bastion-workspace`, `.env.example:117`). The
+existing evidence cannot cover this: T10 (`THREAT_MODEL.md:231-241`) is post-hoc
+chain verification and T11 (`:243-251`) is build-time supply chain; §4's control
+table (`:85-95`) lists no control that observes syscalls, process trees or
+sockets, and the only uses of "runtime" in that document are the status
+definitions (`:18`) and a negation (`:183`). `COMPLIANCE.md` overstates what
+exists: CC7.2 (`:103`) claims "detection and monitoring procedures" evidenced by
+"Golden regression suite, CI/CD gates, vulnerability scanning, SBOM generation",
+all build-time; FINMA §4.4 (`:116`) cites "real-time approvals"; EU AI Act
+Art. 15 (`:146`) repeats the build-time list; and `:56`/`:104` claim
+"24/7/365 monitoring", which no component performs.
+
+**Outcome**
+
+One documented, opt-in command starts a runtime detector that observes the
+container syscalls the rest of the design assumes are well behaved, and a
+reviewed rule set turns the behaviours that matter here into JSON alerts naming
+the container and process: a shell or package manager in `gateway`/`worker`, a
+worker write outside `TOOL_WORKSPACE_ROOT`, a gateway connection to anything
+other than `db`, `redis`, `keycloak`, `omniroute`, `otel-collector` or the
+container DNS resolver, `exec`/`nsenter` into `db` or `redis`, and a write to
+`/etc/passwd`, `/etc/shadow` or the app's own tree. The default `docker compose
+up -d`, the unprivileged CI job and the host test suite are unchanged; alerts
+carry container and process metadata only, never prompt or completion text, tool
+arguments, vault markers or process environment. `COMPLIANCE.md` and
+`THREAT_MODEL.md` state what is observed, what is not, and which rows were
+overstating monitoring before the control existed.
+
+**Acceptance**
+
+- [ ] Each custom rule has a deterministic trigger: a documented command such as `docker compose exec gateway sh -c 'id'` produces an alert naming the container and the process, and a clean host run of `uv run pytest -q` produces none; the in-container baseline (entrypoint, `init`/tini, the 15 s `python -c` healthcheck at `docker-compose.yml:160-171`) is allowlisted in a committed file with a one-line justification and a review date per entry
+- [ ] A write by the worker outside `TOOL_WORKSPACE_ROOT` alerts and the same write inside `/tmp/bastion-workspace` does not; the alert names the path, the container and the process
+- [ ] A connection from `gateway` to a non-allowlisted destination alerts, while a normal DLP-to-OmniRoute turn (and the internal `db`, `redis`, `keycloak`, `otel-collector` paths) does not; the rule matches the app tier by image or `container.name` prefix, never by `bastion-gateway`/`bastion-worker`, which compose does not assign (`docker-compose.yml:127`)
+- [ ] A captured alert file from a test turn carrying a known canary string and a known PII value contains neither, and contains no `proc.env`, no `VAULT_MASTER_KEY`, `DATABASE_URL`, `REDIS_PASSWORD` or `OPENROUTER_API_KEY` value; the field allow-list is asserted, not reviewed
+- [ ] `docker compose --profile security up -d falco` starts a digest-pinned image, the elevated access it needs (privileged or the documented capability set, tracefs and `/proc` mounts) is confined to that service, `docker compose config` without the profile is unchanged, and the README states why it is not in the default stack
+- [ ] The container-metadata source is decided and recorded: syscall capture alone needs no engine socket and yields `container.id` only, while `container.name`/`container.image` need a read-only engine socket (Docker or CRI); whichever is chosen is stated in the ADR and in a compose comment
+- [ ] Alert delivery is proven end to end on the chosen path: JSON file under a mounted directory, or a collector logs pipeline; if the OTel collector is chosen, `config/otel/otel-collector-config.yaml` gains a `filelog` receiver and a `logs` pipeline, because it currently defines a `traces` pipeline only (`:137-143`) and `service.telemetry.logs` (`:133-136`) is the collector's own log level
+- [ ] `THREAT_MODEL.md` and `COMPLIANCE.md` cite the control only after it exists: the item names CC7.2 (`COMPLIANCE.md:103`), FINMA §4.4 (`:116`), EU AI Act Art. 15 (`:146`) and the "24/7/365 monitoring" sentences (`:56`, `:104`) as the rows this changes, and `THREAT_MODEL.md` gains a runtime-detection control row and residual with the document's own `LIVE`/`PARTIAL`/`PLANNED` definitions (`:17-19`)
+- [ ] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `scripts/gate.sh`, `check_adrs.py`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` still pass, and a new ADR (next free number; IDEA-019 claims ADR-015) records the driver, the privilege carve-out, the allowlist policy and the delivery path
+
+**Notes**
+
+- Deduplication: IDEA-019 (`BACKLOG.md`, Notes line on deliberate exclusions) already names "runtime detection (Falco or equivalent)" as deliberately out of scope and a follow-up item, so this is that follow-up, not a duplicate of the build-time image scan. Trivy/SBOM is build-time (T11); IDEA-015 is egress semantic disclosure; IDEA-018 is a conversation-signal detector; T10 is post-hoc audit tampering. Grepped `BACKLOG.md`, `docs/adr/`, `THREAT_MODEL.md`, `COMPLIANCE.md`, `SECURITY.md` and `docker-compose.yml` for `falco`, `ebpf`, `syscall`, `intrusion`, `runtime`: no item, ADR or control observes live process behaviour. `SECURITY.md:244` mentions HashiCorp/Azure Vault, a secret store, not this.
+- `spec: ADR-001` because it fixes the deployment shape this control must fit — one compose stack on one host, no service mesh or sidecar proxies (`docs/adr/ADR-001.md:11,15`) — so the detector is a host-level observer with a privilege carve-out, not a per-service sidecar. Honest boundary: ADR-001 does not decide runtime detection, so the implementation authors a new ADR; that ADR must not contradict decision 1 (no sidecars) or decision 5 (synchronous audit), and Falco alerts must not become ledger rows because the `AuditEventType` vocabulary is frozen (ADR-007 decision 7).
+- Classification: `P2`/`v0.4`. New capability, no stated invariant broken and the stack runs, so not `P0`/`P1`; ADR-008 decision 5 freezes features inside a phase and the current phase is `v0.2`. `v0.4` is the intake's chosen home; the nearest named phase is actually `v0.5` "compliance mode" / production readiness (`docs/adr/ADR-008.md:20`), and no phase line names runtime detection, so triage may move it. `area: security` because the load-bearing content is a cross-cutting runtime invariant plus the truthfulness of three compliance rows; `infra` is the mechanical alternative (compose service, `config/falco/`, collector config). The docs half is separable as a v0.2 `docs` correction if triage prefers.
+- Corrected premise 1: the engine socket is not needed for syscall capture, but it *is* needed for `container.name`/`container.image` enrichment — `container.id` is taken from cgroups in-kernel. Either mount `/var/run/docker.sock` read-only on the Falco service (and only there) or accept id-only alerts; this must be an explicit decision, and must not be read as relaxing IDEA-019's rule that the *scanner* mounts no socket.
+- Corrected premise 2: the collector cannot ingest Falco alerts today. `config/otel/otel-collector-config.yaml:137-143` defines only `traces` with receivers `[otlp]`; adding a `filelog` receiver plus a `logs` pipeline is real work. Simplest path to weigh first: Falco `json_output` to a file under a mounted `artifacts/falco/` directory, mirroring the existing `./artifacts` mount (`docker-compose.yml:141`), with the collector pipeline as a follow-up; the ADR records the trade-off.
+- Falco requirements, to be confirmed against its current docs before coding: modern eBPF needs a BPF ring buffer and kernel BTF (typically kernel ≥ 5.8); the container needs `/proc`, `/etc` and tracefs (`/sys/kernel/tracing`, or `/sys/kernel/debug/tracing` on older layouts); the least-privilege capability set is `CAP_SYS_PTRACE`, `CAP_SYS_RESOURCE`, `CAP_BPF`, `CAP_PERFMON`, but Docker does not grant `CAP_BPF`/`CAP_PERFMON`, so `CAP_SYS_ADMIN` or `privileged: true` is required. That is an explicit, single-service carve-out from the `cap_drop: ALL` baseline and must be documented as such.
+- Honest limits to record in the ADR: elevated host access means the control detects container misbehaviour more than it defends the host perimeter; events are high-volume and need tuning; a root attacker can disable or unload it; it does not contain or kill anything. Also, `docs/adr/ADR-001.md:11` names WSL2 + Docker Desktop as the development target while Falco's container quickstart says it does not work on Windows/macOS Docker Desktop, so the control is verifiable only on a Linux host or VM and must not be attempted in the unprivileged CI job.
+- Deliberately out of scope: a SIEM, alert routing/paging, the Falco response engine (kill/containment), Kubernetes, host IDS (auditd or a host vulnerability scan), secrets management, and image signing. Each is its own item; IDEA-019 covers build-time scanning.
+- Open questions for triage: file vs OTel output; retention and rotation for captured alerts (they are security evidence, not traces, so ADR-014's trace-privacy contract does not cover them); who owns the allowlist and how often it is reviewed; whether the rules also watch `db`, `redis` and the inference services or only the app tier; and whether the docs correction should ship in v0.2 ahead of the control.
+- Intake only: no implementation, compose, `config/falco/`, collector, ADR or compliance-document edit is part of this capture.
+
+### IDEA-023: Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
+
+- status: inbox
+- priority: P2
+- phase: v0.4
+- area: infra
+- tags: mtls, step-ca, pki, zero-trust, docker
+- depends-on: -
+- spec: ADR-001
+- created: 2026-11-11
+- updated: 2026-11-11
+- source: session request on 2026-11-11 ("capture Step-CA as a compliance improvement")
+
+**Problem**
+
+Every hop inside the stack is plaintext and authenticated by a shared password.
+`DATABASE_URL` is `postgresql+asyncpg://…@db:5432/bastion` with no `sslmode`
+(`docker-compose.yml:23`) and `create_async_engine` passes only `timeout` and
+`server_settings`, so the client neither requests nor verifies TLS
+(`db/session.py:34-50`). `REDIS_URL` is `redis://:${REDIS_PASSWORD}@redis:6379/0`
+(`docker-compose.yml:27`) against a server started with `--requirepass` and no
+`--tls-port` (`docker-compose.yml:259-270`), and `Redis.from_url` sets no `ssl`
+argument (`db/redis.py:20-27`). Keycloak speaks `http://keycloak:8080` for both the
+JWKS document and the back-channel token endpoint (`docker-compose.yml:34,37`;
+`KC_HTTP_ENABLED: "true"` at line 321; `.env.example:62`), OmniRoute is reached at
+`http://omniroute:20128` with `OMNIROUTE_API_KEY` defaulting to `sk-local-dev`
+(`docker-compose.yml:91-92`), and traces post to `http://otel-collector:4318`
+(`docker-compose.yml:99`). Every service in the file joins one user-defined bridge
+(`docker-compose.yml:503-505`) — the eight default services plus the `pgadmin` and
+`redis-ui` side cars — and the app tier additionally loads the whole `.env` into
+its environment (`docker-compose.yml:109-111`).
+
+The load-bearing exposure is credential replay, not passive sniffing. The compose
+baseline drops `CAP_NET_RAW` (`docker-compose.yml:116-117`), which raises the bar
+for ARP or DNS spoofing from a compromised container, but every app container
+already holds `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `OMNIROUTE_API_KEY` and
+`KEYCLOAK_CLIENT_SECRET` (`docker-compose.yml:23,27,32,92`), so a compromised
+workload — or anyone who reads a leaked `.env`, a host process, or the loopback
+ports published at `docker-compose.yml:209,274,331,372` — can replay those
+credentials from anywhere on the bridge, with no identity attached. `SECURITY.md`
+claims TLS only at the edge ("Bound to `127.0.0.1` (use TLS reverse proxy for
+external access)", lines 237-238) and quarterly rotation of `REDIS_PASSWORD`
+(line 243), which is the same shared secret model. `settings.py` masks the DSN in
+logs with `redacted_database_url` (`settings.py:478-486`, used at `db/session.py:53`
+and `gateway/main.py:66`), which is presentation, not transport security: the
+password still crosses the bridge in the clear.
+
+The gap is already named and unowned. `THREAT_MODEL.md` T8 lists "separate Redis
+ACL users for gateway and worker, TLS, and no host port exposure" as **PLANNED**
+(line 216) and concludes "treat Redis write access as equivalent to administrator
+access" (line 217), while §2 assigns "network segmentation" to the deployer
+(line 38). No ADR decides how that is done. ADR-001 is the record this item
+amends, and it does not authorise the change: its Context fixes the target as
+"a single Docker Compose stack on one host … no service mesh or sidecar proxies"
+(`docs/adr/ADR-001.md:11`), decision 1 repeats "no sidecar proxies"
+(`ADR-001.md:15`), and decision 2 accepts that JWKS is "fetched over the internal
+network" without saying over what (`ADR-001.md:17`). The zero-trust claim in that
+ADR's Consequences (`ADR-001.md:29`) therefore holds at the gateway ingress only;
+east-west, the stack is a flat trusted network. Whoever takes this item must say
+outright that it contradicts those two ADR-001 sentences, and must change the ADR
+rather than cite it as precedent.
+
+**Outcome**
+
+The default profile still starts for local development, and a `pki` profile (or a
+`docker-compose.pki.yml` override, mirroring the existing `docker-compose.gpu.yml`
+pattern from IDEA-003) switches the data plane to mutual TLS: PostgreSQL, Redis,
+Keycloak, OmniRoute and the OTLP endpoint each present a certificate issued by a
+local Step-CA, the app tier presents a client certificate, and a password alone is
+no longer sufficient to reach Postgres or Redis. A short certificate lifetime
+(default 24 h) renews from an agent without rebuilding images, an expired or
+missing certificate fails the connection closed instead of silently falling back
+to plaintext, and the CA's private key never enters the repository, `.env` or a
+world-readable volume. ADR-001 is amended — or a successor ADR with ADR-001 marked
+Superseded — to record the east-west trust model, the reversal of the "no sidecar
+proxies" sentence (a renewal agent is not a proxy, but it is a sidecar and that
+must be stated), and the honest boundary: a CA on the same host protects against
+credential replay from another workload, not against host or root compromise,
+which `THREAT_MODEL.md:44` already places out of scope.
+
+**Acceptance**
+
+- [ ] With the `pki` profile up, `psql "host=127.0.0.1 port=5432 dbname=bastion user=bastion sslmode=verify-full sslrootcert=<ca.pem> sslcert=<gateway.crt> sslkey=<gateway.key>" -c 'select 1'` succeeds as the gateway's identity, and the same command without `sslcert`/`sslkey` is refused by `pg_hba.conf` `cert` auth; both commands are recorded verbatim in the ADR and in the runbook section this item adds
+- [ ] A test proves refusal rather than fallback: `uv run pytest tests/test_db_tls.py -q` (or the named equivalent) opens a password-only connection with TLS disabled and asserts the connection error, and a container started on `bastion-net` without a client certificate cannot `SELECT` from `audit_logs`; no assertion is satisfied by a successful plaintext connection
+- [ ] `agent/runtime.py:453` and `gateway/queue.py:32` (`RedisSettings.from_dsn`) and `db/redis.py:20-27` either carry TLS settings and a client certificate — a certificate-less client cannot write to Redis, proven by a test asserting the connection error — or the ADR records the deferral with the pinned `arq` 0.26 / `redis` 5.x evidence for why, and `THREAT_MODEL.md` T8 line 216 keeps its PLANNED status for TLS; it is not silently skipped
+- [ ] Certificates are issued with a lifetime from a named settings key and renew without a container restart: a script or test captures the served serial and `notAfter` before and after a forced renewal and shows the change (Postgres via `SIGHUP`, or the reload path the chosen service actually has, which the ADR names); deleting a service's certificate makes it fail closed at startup instead of connecting in plaintext
+- [ ] `KEYCLOAK_JWKS_URI` and `KEYCLOAK_TOKEN_URI` are `https://keycloak:8080/…` with the CA bundle trusted by the gateway, and `uv run pytest tests/test_auth_oidc.py tests/test_auth_routes.py -q` stays green, so RS256 validation is proven end to end over TLS; `grep -rn "http://keycloak:8080" docker-compose.yml .env.example` returns only lines inside the documented local-only path
+- [ ] The CA root private key is absent from the repository and from `docker-compose.yml`, `.env` and `.env.example`; it lives in an encrypted volume or OpenBao transit, is mode `0600`/`0640` owned by root or its service user, is unreadable by the `gateway` and `worker` users, and `pki/` (or the chosen path) is added to `.gitignore`; a committed check script asserts both the ignore rule and the file mode rather than relying on review
+- [ ] The provisioner password and the CA key password come from a secret mechanism — a compose `secrets:` mount, which the file does not use today — not from an inline `.env` value, and `docker compose -f docker-compose.yml -f docker-compose.pki.yml config` is valid
+- [ ] `docs/adr/ADR-001.md` is amended (Context line 11 and decision 1 line 15) or superseded by a new ADR that records the east-west trust model, the Step-CA component, the certificate lifetime and rotation, the availability trade-off, and the honest limit above; `uv run python scripts/check_adrs.py` passes and the index is updated
+- [ ] `docker compose up -d` without the `pki` profile still starts the stack, `README.md`, `SECURITY.md` §Deployment Security and `THREAT_MODEL.md` §2/T8 say plainly that the default path is plaintext and local-only, and `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `scripts/gate.sh`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` still pass
+
+**Notes**
+
+- Authority: `spec: ADR-001` names the record that must change, not a decision that already permits this. ADR-001's Context (line 11) and decision 1 (line 15) both exclude sidecars and imply a flat trusted bridge, and decision 2 (line 17) only says JWKS is fetched "over the internal network". This item therefore reverses or narrows a sentence of an Accepted ADR, which is exactly the case ADR-008's Context calls acceptable "only when an ADR records why" (`docs/adr/ADR-008.md:11`). No part of the item may be written as if the ADR already authorises mTLS.
+- Deduplication: a repo-wide search for `mtls`, `mTLS`, `step-ca`, `pki`, `PKI`, `spiffe`, `SPIFFE` returns no hit in `BACKLOG.md` and no hit in `docs/adr/`; the only `certificate` hits are the hash-chain run certificate (`docs/adr/ADR-009.md:81-84`, `SECURITY.md:137-138`), which is ledger provenance, not transport identity. "Vault" in ADR-002 is the reversible PII token vault (`docs/adr/ADR-002.md` title), and the OpenBao/Vault secrets item named at `BACKLOG.md:1020` (IDEA-019, out of scope there) is secrets at rest; this item is transport identity for east-west traffic, a different control. Ruled out as the same problem: IDEA-001 (tenant isolation of keys and rows), IDEA-004 (ledger export), IDEA-016 (payload escrow), IDEA-019 (image scanning and SBOM — same compliance genre, different control). The gap is already recorded as PLANNED in `THREAT_MODEL.md` T8 line 216, which is why this is "named and unowned" rather than a new discovery.
+- `depends-on: -` deliberately. It becomes a dependency only if triage chooses OpenBao transit for the CA root key: the OpenBao item is being drafted separately and has no id yet, and a `depends-on` value must be an existing `IDEA-NNN`. Record the dependency when both items exist; do not invent an id here. Until then the item is buildable with an encrypted volume and a compose `secrets:`-mounted password.
+- Classification: `P2`/`v0.4`. No stated invariant is broken today — `THREAT_MODEL.md` §2 line 38 assigns segmentation to the deployer and T8 line 217 states the risk honestly — so this is not `P0`/`P1`; it is new capability, and ADR-008 decision 5 freezes features inside a phase. `v0.4` is the requested home; ADR-008's nearest textual line is v0.5 "production readiness … secrets management" (`docs/adr/ADR-008.md:20`), and triage may legitimately move it there, or pull it into v0.3 alongside the other infrastructure work. `area: infra` because almost every line lands in `docker-compose.yml`, a new override file, `config/` and `.gitignore`, with thin code surfaces in `db/session.py`, `db/redis.py`, `agent/runtime.py` and `gateway/queue.py`; `security` is the alternative because the outcome is a cross-cutting invariant.
+- A triager may also reject this outright, and that is a defensible answer: the deployment target is a single Docker Compose host for development and demo (`docs/adr/ADR-001.md:11`), the threat model explicitly leaves segmentation to the deployer (`THREAT_MODEL.md:38`), and a CA whose root key lives on the same host as every workload it certifies provides a bounded gain. The item exists so that the choice is recorded, not because the gain is large; rejecting it should write the rationale into ADR-001 or T8 rather than leave the PLANNED line standing forever.
+- Phasing inside the item, so it is not an epic: phase 1 is PostgreSQL only — server certificate for `db`, client certificates for `gateway` and `worker`, `pg_hba.conf` requiring `cert` for the app role so the password is insufficient — and is the acceptance target. Phase 2 is Redis TLS (`--tls-port`, `--tls-cert-file`, `--tls-ca-cert-file`, `tls-auth-clients yes`) or the documented deferral. Phase 3 is HTTPS for `keycloak:8080`, `omniroute:20128` and `otel-collector:4318`, with the trust bundle mounted read-only in each consumer. The `pki` profile name is chosen over `compliance`, which IDEA-019 already claims for the Trivy scanner.
+- Scope questions left open rather than solved here: which provisioner (`ACME` or `JWK`), and whether issuance is pull (each service runs `step ca certificate`) or push; the certificate lifetime and renewal skew; whether the profile side cars `pgadmin` (`docker-compose.yml:236-249`) and `redis-ui` (`298-308`) get client certificates or are excluded from the PKI profile, since both connect to `db`/`redis` over `bastion-net` and would break under cert-only auth; and whether the trust bundle is one per service or one shared read-only config volume.
+- Honest limits to write into the ADR rather than paper over: the root key is on the host it protects, so host or root compromise defeats the CA (`THREAT_MODEL.md:44` already excludes that attacker); a 24 h lifetime plus an unavailable CA is a startup-order hazard, so the CA must be reachable at issuance or services must start from a cached certificate, and that availability trade-off is a decision, not an accident; and mTLS does not reduce the blast radius of a compromised `gateway` or `worker`, which legitimately holds its own key — it removes the ability to replay a password from a workload that does not hold that key.
+- Intake only: no compose, config, code, test, `.gitignore`, doc or ADR change is part of this capture.

@@ -9,6 +9,9 @@ permissions:
   - action: edit
     resource: "*BACKLOG.md"
     effect: allow
+  - action: edit
+    resource: "*backlog-drafts*"
+    effect: allow
   - action: shell
     resource: "*"
     effect: deny

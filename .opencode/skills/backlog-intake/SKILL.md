@@ -15,10 +15,13 @@ is not finished.
 
 ## Non-negotiables
 
-1. Only `BACKLOG.md` may be written. Never edit source code, tests, ADRs, config,
-   `AGENTS.md` or the generated `## Board` / `## Index` sections.
-2. One idea per invocation. Split compound ideas into separate items and say so
-   in the report.
+1. Only `BACKLOG.md` and scratch drafts under `/tmp/opencode/backlog-drafts/` may
+   be written. Never edit source code, tests, ADRs, config, `AGENTS.md` or the
+   generated `## Board` / `## Index` sections. Drafts are transport, never a
+   source of truth and never referenced from the repo.
+2. One idea per item. Split compound ideas into separate items and say so in the
+   report. When several ideas arrive together, use the batch procedure below
+   instead of appending them one after another in a single writer.
 3. Do not ask the user anything: you run as a subagent with no user turn. When
    something is unclear, choose the conservative classification and record the
    open question in a final `**Notes**` section.
@@ -49,6 +52,40 @@ is not finished.
    reports; do not leave warnings unexplained in your report.
 6. Report one short paragraph: id, title, `priority/phase/area`, tags, whether a
    duplicate was merged, and the validator result.
+
+## Batch capture
+
+When a turn captures more than one idea, drafting is parallel and merging is
+single-threaded. Two agents appending to `BACKLOG.md` at once corrupt the id
+sequence and the generated sections; two agents drafting scratch files do not.
+
+1. List every idea and a slug for each before drafting. If two ideas are the same
+   problem, merge them here, not later.
+2. Spawn one drafter per idea. Each drafter reads this skill, deduplicates, and
+   writes exactly one file to `/tmp/opencode/backlog-drafts/<slug>.md`, shaped
+   like a normal item but with `### IDEA-000: <title>` as the heading. `IDEA-000`
+   is a placeholder; the merger renumbers.
+3. The drafter must not touch `BACKLOG.md`, must not run
+   `check_backlog.py --write`, and must not allocate an id — concurrent drafters
+   would all pick the same one. If a drafter cannot write files (for example it
+   runs under a read-only agent profile), it returns the draft in its reply and
+   the merger saves it; never treat the missing file as a failed idea.
+4. Run the drafters concurrently; completion order is irrelevant.
+5. Merge serially, in the order the ideas were requested. For each draft: read
+   it, replace `IDEA-000` with the next free id from `next-id`, append it at the
+   end of `## Items`, bump `next-id`, then move on. Do not run `--write` between
+   items.
+6. After the last merge, run `check_backlog.py --write` once. Fix the offending
+   item and re-run if it fails; a later clean run does not excuse an earlier
+   broken item.
+7. Delete the draft files after the validator passes, and report every id in one
+   summary. Name any idea whose draft was lost rather than silently dropping it.
+
+Batch mode relaxes nothing else: ids stay unique and are never reused, every
+item keeps its `**Problem**`, `**Outcome**` and an executable acceptance box,
+deduplication still happens before an id is allocated, and no draft may contain
+a secret, customer data, an internal hostname or an absolute machine path. The
+`/tmp` location is transport, not content.
 
 ## Rubrics
 
