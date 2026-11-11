@@ -65,8 +65,11 @@ class Finding:
 
 
 def _parse_date(value: Any, entry_id: str) -> date:
+    # PyYAML turns an unquoted YYYY-MM-DD into datetime.date; accept both forms.
+    if isinstance(value, date):
+        return value
     if not isinstance(value, str):
-        raise GateError(f"ignore entry {entry_id}: expires must be a YYYY-MM-DD string")
+        raise GateError(f"ignore entry {entry_id}: expires must be a YYYY-MM-DD date")
     try:
         return date.fromisoformat(value)
     except ValueError as exc:

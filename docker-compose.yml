@@ -196,7 +196,7 @@ services:
   # PostgreSQL 16: append-only audit chain + suspended approvals
   # ---------------------------------------------------------------------------
   db:
-    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     container_name: bastion-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bastion}
@@ -234,7 +234,7 @@ services:
   # docker compose --profile pgadmin up --pull always -d pgadmin
   # ---------------------------------------------------------------------------
   pgadmin:
-    image: dpage/pgadmin4:9.19
+    image: dpage/pgadmin4:9.19@sha256:3591b3d02910dcd817dec6fcaa681c278ba6966945283dd0ea0042731c330c83
     profiles: [pgadmin]
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?set PGADMIN_DEFAULT_EMAIL in .env}
@@ -296,7 +296,7 @@ services:
   # Optional RedisInsight UI; start with the redis-ui profile.
   # ---------------------------------------------------------------------------
   redis-ui:
-    image: redis/redisinsight:3.8
+    image: redis/redisinsight:3.8@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84
     profiles: [redis-ui]
     ports:
       - "127.0.0.1:${REDIS_UI_PORT:-5540}:5540"
@@ -311,7 +311,7 @@ services:
   # Keycloak: OIDC identity provider, realm imported from config/keycloak
   # ---------------------------------------------------------------------------
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0@sha256:09a381c715ab0b111835b70f2905955274843a219c6f27efb348e4d9f4086858
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:723b1d6e254c0fc96d5cffec860c7e0744d6a3277822b865bb538cf891575e41
     container_name: bastion-keycloak
     command: ["start-dev", "--import-realm", "--http-port=8080"]
     environment:
@@ -450,7 +450,7 @@ services:
   # OpenTelemetry Collector: OTLP in, Langfuse/Arize out
   # ---------------------------------------------------------------------------
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.111.0@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029
+    image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
     container_name: bastion-otel-collector
     # Two configs: the base (receivers, processors, exporters, retry policy) and
     # an overlay that decides the traces pipeline's exporter list. The overlay

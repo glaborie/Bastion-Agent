@@ -249,7 +249,7 @@ Two facts shape the model:
   - LIVE: `scripts/update_threat_intel.py` queries every package in `uv.lock` against OSV and exits non-zero on unignored findings. The `supply-chain` job runs it on every push and pull request.
   - LIVE: `scripts/scan_images.sh` exports every image the compose stack ships, scans the archives with the digest-pinned Trivy service (no Docker engine socket), writes a CycloneDX SBOM and a Trivy CVE report to `artifacts/compliance/<date>/`, and fails on an unsuppressed CRITICAL. `trivy.yaml` is the only suppression path: every entry names the image scope, a justification and an expiry date. The same command runs in the `supply-chain` job and its output is uploaded as the `compliance-reports` artifact (ADR-016).
   - LIVE: GitHub Actions are pinned by commit SHA.
-  - PARTIAL: image signing and verification (cosign), digest pinning for the three tag-only references (`pgadmin4:9.19`, `redisinsight:3.8`, `omniroute:3.8.52`), and IaC or secret scanning.
+  - PARTIAL: image signing and verification (cosign), and IaC or secret scanning. The OmniRoute image is built locally (no registry digest to pin) and `LLAMA_CPP_IMAGE` can be overridden with a tag-only reference from `.env`; the accepted CRITICALs for Postgres, RedisInsight and OmniRoute are image-scoped and expiring in `trivy.yaml`.
 - Residual risk: the LLM served through OmniRoute and llama.cpp is not integrity-checked by this project. The registry and the scanner image are trusted by digest, so a compromised tag or registry could scan clean; the SBOM is only as complete as Trivy's package discovery for the scanned base images.
 
 ### T12. Resource exhaustion and denial of service
