@@ -353,7 +353,7 @@ services:
     # Upstream image runs as root and writes /root/.omniroute; re-owning it is
     # not supported without upstream changes. Compensated by cap_drop + no
     # published port beyond loopback.
-    image: ${OMNIROUTE_IMAGE:-rigging/omniroute:3.8.52}
+    image: ${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:3.8.53@sha256:b52a17661a1aff42ffb78f349f423e986dfc55b57274f28559f8387622ef8ee4}
     container_name: bastion-omniroute
     environment:
       PORT: "20128"

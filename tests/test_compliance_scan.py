@@ -23,7 +23,6 @@ COMPOSE = ROOT / "docker-compose.yml"
 # The nine shipped image references from IDEA-019's Problem statement.
 EXPECTED_IMAGES = {
     "bastion-agent:local",
-    "rigging/omniroute:3.8.52",
 }
 EXPECTED_IMAGE_PREFIXES = (
     "postgres:16.15-alpine@sha256:",
@@ -33,6 +32,7 @@ EXPECTED_IMAGE_PREFIXES = (
     "quay.io/keycloak/keycloak:26.8.2@sha256:",
     "ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:",
     "otel/opentelemetry-collector-contrib:0.165.0@sha256:",
+    "diegosouzapw/omniroute:3.8.53@sha256:",
 )
 
 
@@ -367,8 +367,6 @@ def test_aggregate_merges_sboms_and_tags_every_result(tmp_path: Path) -> None:
         str(raw),
         "--out",
         str(out),
-        "--skip-image",
-        "rigging/omniroute:3.8.52",
         "alpine:3.20",
         "busybox:1.36",
     )
@@ -390,7 +388,6 @@ def test_aggregate_merges_sboms_and_tags_every_result(tmp_path: Path) -> None:
         "alpine:3.20",
         "busybox:1.36",
     ]
-    assert manifest["skipped"] == ["rigging/omniroute:3.8.52"]
 
 
 def test_aggregate_refuses_an_empty_raw_directory(tmp_path: Path) -> None:

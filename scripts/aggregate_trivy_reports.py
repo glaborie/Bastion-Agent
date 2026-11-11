@@ -111,9 +111,7 @@ def merge_trivy_results(
     }
 
 
-def aggregate(
-    raw_dir: Path, out_dir: Path, images: list[str], skipped: list[str] | None = None
-) -> dict[str, Any]:
+def aggregate(raw_dir: Path, out_dir: Path, images: list[str]) -> dict[str, Any]:
     try:
         sbom_files = sorted(raw_dir.glob("*.cdx.json"))
         report_files = sorted(
@@ -145,7 +143,6 @@ def aggregate(
     manifest = {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "images": [{"reference": image} for image in images],
-        "skipped": skipped or [],
         "sbom": "sbom.cdx.json",
         "cve_report": "cve.json",
     }
@@ -160,14 +157,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--raw", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
-        "--skip-image",
-        action="append",
-        default=[],
-        dest="skipped",
-        metavar="IMAGE",
-        help="image reference deliberately not scanned in this run (repeatable)",
-    )
-    parser.add_argument(
         "images",
         nargs="+",
         metavar="IMAGE",
@@ -176,15 +165,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        manifest = aggregate(args.raw, args.out, args.images, args.skipped)
+        manifest = aggregate(args.raw, args.out, args.images)
     except AggregateError as exc:
         print(f"aggregate: {exc}", file=sys.stderr)
         return 2
 
     print(f"aggregate: {len(manifest['images'])} image(s) -> {args.out}")
-    if manifest["skipped"]:
-        skipped = ", ".join(manifest["skipped"])
-        print(f"aggregate: skipped {len(manifest['skipped'])} image(s): {skipped}")
     return 0
 
 

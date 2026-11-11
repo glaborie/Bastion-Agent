@@ -1050,7 +1050,7 @@ is accounted for. If you see CUDA out-of-memory errors, lower
   unprivileged `redis` user.
 - **Image pinning** — third-party images are pinned by tag **and** digest.
   Refresh with `docker buildx imagetools inspect <image>` and update the digest.
-  The locally built `rigging/omniroute` image keeps its tag (no registry digest).
+  `omniroute` is pinned to the public `diegosouzapw/omniroute` image by digest.
 - **No `container_name` on gateway/worker** — they are replica-safe; Compose
   derives names such as `bastion-agent-worker-1`.
 - **No healthcheck on `otel-collector`** — the image is distroless (no shell).

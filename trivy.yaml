@@ -38,21 +38,3 @@ ignore:
     images: [redis-redisinsight-3.8]
     statement: "proxy-addr bundled in RedisInsight 3.8, the latest published tag; the redis-ui profile is optional and off the request path."
     expires: 2027-02-09
-
-  # OmniRoute 3.8.52 is built locally (compose project `rigging`), not pulled
-  # from a registry, so there is no newer digest to pin. The Next.js RCE and the
-  # DOMPurify bypass require rebuilding the application outside this repository.
-  # The 30-day expiry is deliberate: this is a routing dependency, not an
-  # optional UI, and the accept-risk must come back to review quickly.
-  - id: GHSA-2464-fhr4-w9xw
-    images: [rigging-omniroute-3.8.52]
-    statement: "Next.js 16.3.8 in the locally built OmniRoute image; rebuild the app with 16.4.1+ or 15.5.28 and re-pin."
-    expires: 2026-12-11
-  - id: GHSA-673q-mjm6-r5xr
-    images: [rigging-omniroute-3.8.52]
-    statement: "Next.js 16.3.8 in the locally built OmniRoute image; rebuild the app with 16.4.1+ and re-pin."
-    expires: 2026-12-11
-  - id: GHSA-cg2g-xh64-v4q7
-    images: [rigging-omniroute-3.8.52]
-    statement: "DOMPurify 3.4.8 in the locally built OmniRoute image; rebuild the app with 3.4.17+ and re-pin."
-    expires: 2026-12-11

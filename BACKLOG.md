@@ -1419,12 +1419,12 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 
 **Implementation notes (2026-11-11)**
 
-- Pins: Keycloak `26.8.2@sha256:723b1d6e…`, OTel collector `0.165.0@sha256:e40d61f1…`, Postgres `16.15-alpine@sha256:aa6cb33c…` (the same digest the floating `16-alpine` resolved to, so no newer build exists), pgadmin `9.19@sha256:3591b3d0…`, RedisInsight `3.8@sha256:b5e19ee2…`. OmniRoute stays tag-only because the image is a local build with no registry digest, and `.env` can still override `LLAMA_CPP_IMAGE` with a tag.
-- Findings after the upgrades: the full nine-image scan reports **8 CRITICAL rows, all suppressed, 0 unsuppressed, exit 0**; Keycloak and the OTel collector are clean. The accepted rows are Postgres `CVE-2025-68121` (Go stdlib in `gosu`, not the server), RedisInsight `CVE-2026-59873` and `CVE-2026-90711` (latest published tag, optional profile), and OmniRoute `GHSA-2464-fhr4-w9xw`, `GHSA-673q-mjm6-r5xr`, `GHSA-cg2g-xh64-v4q7` (locally built app; 30-day expiry because the Next.js RCE is on a routing dependency).
+- Pins: Keycloak `26.8.2@sha256:723b1d6e…`, OTel collector `0.165.0@sha256:e40d61f1…`, Postgres `16.15-alpine@sha256:aa6cb33c…` (the same digest the floating `16-alpine` resolved to, so no newer build exists), pgadmin `9.19@sha256:3591b3d0…`, RedisInsight `3.8@sha256:b5e19ee2…`, and OmniRoute `diegosouzapw/omniroute:3.8.53@sha256:b52a1766…` (the public image; the earlier `rigging/omniroute` name was a local tag for the same app). `.env` can still override `LLAMA_CPP_IMAGE` with a tag.
+- Findings after the upgrades: Keycloak, the OTel collector and OmniRoute are clean. The remaining rows are Postgres `CVE-2025-68121` (Go stdlib in `gosu`, not the server) and RedisInsight `CVE-2026-59873` / `CVE-2026-90711` (latest published tag, optional profile); both are image-scoped and expiring in `trivy.yaml`.
 - OTel: all three overlays validate against 0.165.0 and the collector starts with `Everything is ready` at `service.version=0.165.0`; the config needed no edit.
 - Keycloak: the live upgrade exposed an H2 dev-file incompatibility, not a realm problem. The 26.0 volume made 26.8.2 crash-loop with `Wrong user name or password [28000-240]`; after backing up and removing `bastion-agent_keycloak_data`, Keycloak starts clean, imports the realm and `/realms/bastion` returns 200. The reset command is in `README.md` §Upgrading the pinned images.
 - Verification: `scripts/gate.sh` 10/10 (602 tests), `check_adrs.py` 16 ADRs, backlog 26 items.
-- CI exception: `rigging/omniroute` is built locally and `docker pull` is denied (the repository is not public). `scan_images.sh` gained `SCAN_SKIP_IMAGES`; the workflow skips that one pattern, the manifest records it under `skipped`, and a developer run scans it from the local daemon. Making OmniRoute rebuildable is a follow-up.
+- CI: with OmniRoute on the public `diegosouzapw/omniroute` image, all nine references are pullable or buildable, so `scan_images.sh` needs no skip list and the workflow scans the full set.
  The `supply-chain` CI half of the last box is pending a push; it runs the same command that exited 0 locally.
 
 
