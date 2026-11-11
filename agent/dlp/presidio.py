@@ -10,17 +10,27 @@ token metadata.
 Initialisation is deliberately fail-closed: if Presidio or its spaCy model
 cannot load, :class:`DLPUnavailableError` is raised instead of silently passing
 unredacted text to a model.
+
+Language contract (ADR-002): only the languages in :data:`_SPACY_MODELS` have an
+NER model here. A prompt detected as another language still runs the
+language-independent pattern recognizers — email, IBAN, API key, credit card,
+IP address, phone number, US SSN — but the NER-backed entities are skipped
+rather than handed to the English model, which tagged ``"donne moi le "`` as a
+person and corrupted the prompt. Below the configured detector confidence the
+text is analyzed as English, so a short English prompt keeps full NER coverage.
 """
 
 from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 from anyio import to_thread
+from langdetect import DetectorFactory, LangDetectException, detect_langs
 
 from agent.dlp.vault import TokenVault, get_vault
 from settings import get_settings
@@ -30,7 +40,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SPACY_MODEL: Final[str] = "en_core_web_sm"
+#: ``langdetect`` resolves ties from a profiled distribution; a fixed seed makes
+#: the same prompt produce the same language on every host and every run.
+DetectorFactory.seed = 0
+
+#: Languages with an NER model in this image. Adding one means adding its spaCy
+#: package to ``pyproject.toml`` and the image, plus one entry here.
+_SPACY_MODELS: Final[Mapping[str, str]] = MappingProxyType({"en": "en_core_web_sm"})
+_SUPPORTED_LANGUAGES: Final[tuple[str, ...]] = tuple(_SPACY_MODELS)
+_DEFAULT_LANGUAGE: Final[str] = "en"
 
 #: Provider token formats that Presidio does not ship a recognizer for.
 _PROVIDER_TOKEN_PATTERN: Final[str] = (
@@ -73,6 +91,11 @@ class RedactionResult:
 
     text: str
     entities: tuple[RedactionEntity, ...] = ()
+    #: Detector verdict when it was usable, else the default language.
+    language: str = _DEFAULT_LANGUAGE
+    #: True when a non-English language was detected and the NER-backed
+    #: entities were skipped; the pattern recognizers still ran.
+    ner_skipped: bool = False
 
     @property
     def redacted(self) -> bool:
@@ -86,12 +109,39 @@ class RedactionResult:
         return self.redacted
 
 
-def _api_key_recognizer() -> PatternRecognizer:
+@dataclass(frozen=True, slots=True)
+class _LanguagePlan:
+    """Which language Presidio is asked for and whether NER may run."""
+
+    analyze_language: str
+    detected: str
+    confidence: float
+    ner_skipped: bool
+
+
+def detect_language(text: str) -> tuple[str, float]:
+    """Return the most likely language and its probability, or ``("", 0.0)``.
+
+    This is a routing hint for the DLP stage, not an authorization decision: a
+    wrong answer can only skip the NER pass on text it reads as foreign, and the
+    pattern recognizers are never gated on it.
+    """
+    try:
+        candidates = detect_langs(text)
+    except LangDetectException:
+        return "", 0.0
+    if not candidates:
+        return "", 0.0
+    top = candidates[0]
+    return top.lang, float(top.prob)
+
+
+def _api_key_recognizer(language: str = _DEFAULT_LANGUAGE) -> PatternRecognizer:
     from presidio_analyzer import Pattern, PatternRecognizer
 
     return PatternRecognizer(
         supported_entity="API_KEY",
-        supported_language="en",
+        supported_language=language,
         patterns=[
             Pattern(name="provider-token", regex=_PROVIDER_TOKEN_PATTERN, score=0.9),
             Pattern(name="secret-assignment", regex=_GENERIC_SECRET_PATTERN, score=0.75),
@@ -101,7 +151,7 @@ def _api_key_recognizer() -> PatternRecognizer:
 
 @functools.lru_cache(maxsize=1)
 def get_analyzer() -> AnalyzerEngine:
-    """Load and cache the Presidio analyzer (spaCy small model)."""
+    """Load and cache the Presidio analyzer for every modelled language."""
     from presidio_analyzer import AnalyzerEngine
     from presidio_analyzer.nlp_engine import NlpEngineProvider
 
@@ -109,19 +159,29 @@ def get_analyzer() -> AnalyzerEngine:
         provider = NlpEngineProvider(
             nlp_configuration={
                 "nlp_engine_name": "spacy",
-                "models": [{"lang_code": "en", "model_name": _SPACY_MODEL}],
+                "models": [
+                    {"lang_code": language, "model_name": model}
+                    for language, model in _SPACY_MODELS.items()
+                ],
             }
         )
         analyzer = AnalyzerEngine(
             nlp_engine=provider.create_engine(),
-            supported_languages=["en"],
+            supported_languages=list(_SUPPORTED_LANGUAGES),
         )
-        analyzer.registry.add_recognizer(_api_key_recognizer())
+        # One instance per modelled language: Presidio only runs a recognizer
+        # for the language it declares, so a future second model would otherwise
+        # silently lose API_KEY coverage.
+        for language in _SUPPORTED_LANGUAGES:
+            analyzer.registry.add_recognizer(_api_key_recognizer(language))
     except Exception as exc:  # pragma: no cover - depends on the runtime image
         raise DLPUnavailableError(
             "Presidio could not be initialised; refusing to pass text unredacted"
         ) from exc
-    logger.info("Presidio analyzer ready", extra={"spacy_model": _SPACY_MODEL})
+    logger.info(
+        "Presidio analyzer ready",
+        extra={"languages": ",".join(_SUPPORTED_LANGUAGES)},
+    )
     return analyzer
 
 
@@ -147,29 +207,99 @@ class PresidioDLP:
         )
         if not 0.0 <= self._threshold <= 1.0:
             raise ValueError("score_threshold must be within [0.0, 1.0]")
+        self._min_language_confidence = settings.dlp_language_min_confidence
+        if not 0.0 <= self._min_language_confidence <= 1.0:
+            raise ValueError("dlp_language_min_confidence must be within [0.0, 1.0]")
 
     def _engine(self) -> AnalyzerEngine:
         return self._analyzer if self._analyzer is not None else get_analyzer()
+
+    def _plan(self, text: str) -> _LanguagePlan:
+        """Decide the analysis language and whether the NER pass may run.
+
+        Only a language with a loaded spaCy model gets NER. A confident
+        non-English verdict skips it: the English model tagged
+        ``"donne moi le "`` as a person, which corrupted the prompt and wrote a
+        false ``DLP_REDACTION``. An inconclusive verdict stays on the default
+        language, so short English prompts are not penalised.
+        """
+        detected, confidence = detect_language(text)
+        if (
+            detected
+            and detected not in _SUPPORTED_LANGUAGES
+            and confidence >= self._min_language_confidence
+        ):
+            return _LanguagePlan(
+                analyze_language=_DEFAULT_LANGUAGE,
+                detected=detected,
+                confidence=confidence,
+                ner_skipped=True,
+            )
+        analyze_language = detected if detected in _SUPPORTED_LANGUAGES else _DEFAULT_LANGUAGE
+        return _LanguagePlan(
+            analyze_language=analyze_language,
+            detected=detected,
+            confidence=confidence,
+            ner_skipped=False,
+        )
+
+    def _pattern_entities(self, language: str) -> list[str]:
+        """Configured entities supplied by regex recognizers rather than NER.
+
+        Presidio's pattern recognizers do not parse the text's grammar, so they
+        stay correct for every language; the NER-backed ones are the only ones
+        a language mismatch can corrupt.
+        """
+        from presidio_analyzer import PatternRecognizer
+
+        pattern_types: set[str] = set()
+        for recognizer in self._engine().registry.get_recognizers(
+            language=language, all_fields=True
+        ):
+            if isinstance(recognizer, PatternRecognizer):
+                pattern_types.update(recognizer.supported_entities)
+        return [entity for entity in self._entities if entity in pattern_types]
+
+    def _analyze(self, text: str) -> tuple[list[RecognizerResult], _LanguagePlan]:
+        plan = self._plan(text)
+        if plan.ner_skipped:
+            entities = self._pattern_entities(plan.analyze_language)
+            logger.info(
+                "DLP NER skipped for a language without a model",
+                extra={
+                    "language": plan.detected,
+                    "confidence": round(plan.confidence, 2),
+                    "entities": ",".join(entities),
+                },
+            )
+            if not entities:
+                return [], plan
+        else:
+            entities = list(self._entities)
+
+        results = self._engine().analyze(
+            text=text,
+            language=plan.analyze_language,
+            entities=entities,
+            score_threshold=self._threshold,
+        )
+        return results, plan
 
     def analyze(self, text: str) -> list[RecognizerResult]:
         """Run Presidio synchronously (use :meth:`redact` from async code)."""
         if not text:
             return []
-        return self._engine().analyze(
-            text=text,
-            language="en",
-            entities=list(self._entities),
-            score_threshold=self._threshold,
-        )
+        return self._analyze(text)[0]
 
     async def redact(self, text: str, session_id: str) -> RedactionResult:
         """Replace sensitive spans with session-scoped vault markers."""
         if not text:
             return RedactionResult(text="")
-        results = await to_thread.run_sync(self.analyze, text)
+        results, plan = await to_thread.run_sync(self._analyze, text)
         spans = _select_non_overlapping(results, text_length=len(text))
+        language = plan.detected or _DEFAULT_LANGUAGE
         if not spans:
-            return RedactionResult(text=text)
+            return RedactionResult(text=text, language=language, ner_skipped=plan.ner_skipped)
 
         pieces: list[str] = []
         entities: list[RedactionEntity] = []
@@ -198,7 +328,12 @@ class PresidioDLP:
             "DLP redaction applied",
             extra={"entities": len(entities), "types": sorted({e.entity_type for e in entities})},
         )
-        return RedactionResult(text="".join(pieces), entities=tuple(entities))
+        return RedactionResult(
+            text="".join(pieces),
+            entities=tuple(entities),
+            language=language,
+            ner_skipped=plan.ner_skipped,
+        )
 
     async def restore(self, text: str, session_id: str) -> str:
         """Restore known markers for an authorised recipient."""

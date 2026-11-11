@@ -303,6 +303,12 @@ assignments. Analysis and tokenisation are fail-closed: if Presidio cannot
 initialise, `DLPUnavailableError` is raised rather than passing text through.
 `DLP_SCORE_THRESHOLD` (default `0.35`) is the Presidio confidence floor.
 
+Text is language-detected first (seeded, offline `langdetect`). A confident
+non-English verdict skips the NER entities and keeps the pattern recognizers, so
+a French or German prompt is no longer rewritten as a person name;
+`DLP_LANGUAGE_MIN_CONFIDENCE` (default `0.80`) is the floor below which the text
+is analyzed as English, preserving NER coverage for short English prompts.
+
 ### Sensitivity classifier
 
 The production gate is the ADR-011 two-model ensemble. Set

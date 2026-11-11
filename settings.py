@@ -121,6 +121,10 @@ class Settings(BaseSettings):
     #: Presidio confidence floor. Lower values catch more edge cases but
     #: over-redact; this is not the confidentiality routing threshold.
     dlp_score_threshold: float = 0.35
+    #: Language detector probability a non-English prompt must clear before the
+    #: NER-backed entities are skipped. Below it the text is analyzed as
+    #: English, so short English prompts keep full NER coverage (ADR-002).
+    dlp_language_min_confidence: float = 0.8
 
     # -- Two-stage classifier ---------------------------------------------
     #: Legacy single-graph contract: one ONNX file returning two logits ordered
@@ -316,6 +320,7 @@ class Settings(BaseSettings):
         "classifier_safety_unsafe_threshold_gpu",
         "classifier_safety_category_threshold",
         "dlp_score_threshold",
+        "dlp_language_min_confidence",
     )
     @classmethod
     def _validate_ratio(cls, value: float | None) -> float | None:
