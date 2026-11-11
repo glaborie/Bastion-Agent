@@ -79,6 +79,13 @@ uv run python scripts/check_backlog.py --check
 For a `docs` item, `check_adrs.py` plus any script that reads the changed file is
 enough; the full suite is still required before `status: done`.
 
+`scripts/gate.sh` runs that whole list in a bounded pool and prints a metrics
+table — per-step time, the one number that matters per step, and
+`gate: 10/10 passed · wall 6m40s · sum 7m12s · 1.08x · jobs 4` — plus the
+failing step's tail when one breaks. `--jobs N` caps the pool, `--serial` runs
+it the old way, `--evals` adds the DeepEval gate, `--integration` the
+database-backed tests.
+
 A gate that fails is not a reason to weaken the gate. Fix the change; if the fix
 is out of scope for this item, mark the item `blocked` with the failing gate in
 `- blocked-by:` and stop.

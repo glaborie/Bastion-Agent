@@ -40,3 +40,7 @@ artifacts/evals/*
 # --- Threat-intelligence reports --------------------------------------------
 artifacts/threat-intel/*
 !artifacts/threat-intel/.gitkeep
+
+# --- Gate run logs -----------------------------------------------------------
+artifacts/gate/*
+!artifacts/gate/.gitkeep
