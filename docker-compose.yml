@@ -234,7 +234,7 @@ services:
   # docker compose --profile pgadmin up --pull always -d pgadmin
   # ---------------------------------------------------------------------------
   pgadmin:
-    image: dpage/pgadmin4:9.8
+    image: dpage/pgadmin4:9.19
     profiles: [pgadmin]
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?set PGADMIN_DEFAULT_EMAIL in .env}
@@ -289,6 +289,21 @@ services:
       - DAC_OVERRIDE
       - SETGID
       - SETUID
+    networks:
+      - bastion-net
+
+  # ---------------------------------------------------------------------------
+  # Optional RedisInsight UI; start with the redis-ui profile.
+  # ---------------------------------------------------------------------------
+  redis-ui:
+    image: redis/redisinsight:3.8
+    profiles: [redis-ui]
+    ports:
+      - "127.0.0.1:${REDIS_UI_PORT:-5540}:5540"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - bastion-net
 
