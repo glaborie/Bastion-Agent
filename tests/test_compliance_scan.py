@@ -8,6 +8,7 @@ so a regression fails without needing Docker or network access.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,13 +36,19 @@ EXPECTED_IMAGE_PREFIXES = (
 )
 
 
-def run_script(script: str, *args: str) -> subprocess.CompletedProcess[str]:
+def run_script(
+    script: str, *args: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    merged = dict(os.environ)
+    if env is not None:
+        merged.update(env)
     return subprocess.run(
         [sys.executable, str(ROOT / script), *args],
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=False,
+        env=merged,
     )
 
 
@@ -96,7 +103,14 @@ def write_report(tmp_path: Path, image: str, vulnerability_ids: list[str]) -> Pa
 
 
 def test_default_compose_inventory_is_the_shipped_set() -> None:
-    result = run_script("scripts/image_inventory.py")
+    # --no-env-file: the assertion is about the file's defaults, not a dev .env.
+    # The empty overrides neutralise image variables that a loaded .env may have
+    # exported into this process; Compose treats an empty value as unset.
+    result = run_script(
+        "scripts/image_inventory.py",
+        "--no-env-file",
+        env={"LLAMA_CPP_IMAGE": "", "OMNIROUTE_IMAGE": "", "BASTION_IMAGE_TAG": ""},
+    )
     assert result.returncode == 0, result.stderr
     images = result.stdout.splitlines()
     assert len(images) == 9
@@ -112,7 +126,7 @@ def test_inventory_grows_with_a_new_image_line(tmp_path: Path) -> None:
         "services:\n  a:\n    image: alpine:3.20\n  b:\n    image: ${B_IMAGE:-busybox:1.36}\n",
         encoding="utf-8",
     )
-    before = run_script("scripts/image_inventory.py", "--compose", str(compose))
+    before = run_script("scripts/image_inventory.py", "--compose", str(compose), "--no-env-file")
     assert before.returncode == 0, before.stderr
     assert before.stdout.splitlines() == ["alpine:3.20", "busybox:1.36"]
 
@@ -120,7 +134,7 @@ def test_inventory_grows_with_a_new_image_line(tmp_path: Path) -> None:
         compose.read_text(encoding="utf-8") + "  c:\n    image: redis:7-alpine\n",
         encoding="utf-8",
     )
-    after = run_script("scripts/image_inventory.py", "--compose", str(compose))
+    after = run_script("scripts/image_inventory.py", "--compose", str(compose), "--no-env-file")
     assert after.returncode == 0, after.stderr
     assert after.stdout.splitlines() == ["alpine:3.20", "busybox:1.36", "redis:7-alpine"]
 
@@ -136,7 +150,7 @@ def test_inventory_excludes_a_service_that_only_exists_behind_compliance(tmp_pat
         "    profiles: [compliance]\n",
         encoding="utf-8",
     )
-    result = run_script("scripts/image_inventory.py", "--compose", str(compose))
+    result = run_script("scripts/image_inventory.py", "--compose", str(compose), "--no-env-file")
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["alpine:3.20"]
 
@@ -144,9 +158,35 @@ def test_inventory_excludes_a_service_that_only_exists_behind_compliance(tmp_pat
 def test_inventory_rejects_an_unset_required_variable(tmp_path: Path) -> None:
     compose = tmp_path / "docker-compose.yml"
     compose.write_text("services:\n  a:\n    image: ${MISSING:?set it}\n", encoding="utf-8")
-    result = run_script("scripts/image_inventory.py", "--compose", str(compose))
+    result = run_script("scripts/image_inventory.py", "--compose", str(compose), "--no-env-file")
     assert result.returncode == 2
     assert "MISSING" in result.stderr
+
+
+def test_env_file_supplies_overrides_and_process_env_wins(tmp_path: Path) -> None:
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text(
+        "services:\n  a:\n    image: ${PROBE_IMAGE:-alpine:3.20}\n", encoding="utf-8"
+    )
+    env_file = tmp_path / ".env"
+    env_file.write_text("# local override\nPROBE_IMAGE=busybox:1.36\n", encoding="utf-8")
+
+    from_file = run_script(
+        "scripts/image_inventory.py", "--compose", str(compose), "--env-file", str(env_file)
+    )
+    assert from_file.returncode == 0, from_file.stderr
+    assert from_file.stdout.splitlines() == ["busybox:1.36"]
+
+    from_process = run_script(
+        "scripts/image_inventory.py",
+        "--compose",
+        str(compose),
+        "--env-file",
+        str(env_file),
+        env={"PROBE_IMAGE": "redis:7-alpine"},
+    )
+    assert from_process.returncode == 0, from_process.stderr
+    assert from_process.stdout.splitlines() == ["redis:7-alpine"]
 
 
 # ---------------------------------------------------------------------------

@@ -10,12 +10,15 @@ stack is worse than no scan.
 ``docker compose config --images`` is deliberately not used: rendering the file
 requires every secret-shaped variable (``POSTGRES_PASSWORD``, ``VAULT_MASTER_KEY``
 and seven others) and the CI job has no ``.env``. Parsing the same file gives the
-same set with no secrets in the environment.
+same set with no secrets in the environment. A project ``.env`` is read the way
+Compose reads it; the process environment wins over the file, and the file wins
+over the ``${VAR:-default}`` fallback.
 
     uv run python scripts/image_inventory.py
     uv run python scripts/image_inventory.py --compose docker-compose.yml --json
     uv run python scripts/image_inventory.py --slug postgres:16-alpine@sha256:...
     uv run python scripts/image_inventory.py --required-vars
+    uv run python scripts/image_inventory.py --no-env-file
 """
 
 from __future__ import annotations
@@ -98,9 +101,43 @@ def _is_scanner_only(body: list[str]) -> bool:
     return False
 
 
-def read_images(path: Path = DEFAULT_COMPOSE, env: dict[str, str] | None = None) -> list[str]:
+def read_env_file(path: Path) -> dict[str, str]:
+    """Read a Compose-style ``.env``: KEY=VALUE, optional quotes, # comments."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].lstrip()
+        key, separator, value = stripped.partition("=")
+        if not separator:
+            continue
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def read_images(
+    path: Path = DEFAULT_COMPOSE,
+    env: dict[str, str] | None = None,
+    env_file: Path | None = None,
+) -> list[str]:
     """Return image references in file order, de-duplicated."""
-    environment = dict(os.environ if env is None else env)
+    if env is None:
+        environment = read_env_file(env_file) if env_file is not None else {}
+        environment.update(os.environ)
+    else:
+        environment = dict(env)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -143,6 +180,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print a JSON object")
     parser.add_argument("--slug", metavar="IMAGE", help="print the slug for one reference")
     parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="read variable fallbacks from this file (default: ./.env if present)",
+    )
+    parser.add_argument(
+        "--no-env-file",
+        action="store_true",
+        help="ignore ./.env and use only the process environment and Compose defaults",
+    )
+    parser.add_argument(
         "--required-vars",
         action="store_true",
         help="print the ${NAME:?} variables the file requires",
@@ -153,13 +201,18 @@ def main(argv: list[str] | None = None) -> int:
         print(slug(args.slug))
         return 0
 
+    env_file = args.env_file
+    if env_file is None and not args.no_env_file:
+        candidate = ROOT / ".env"
+        env_file = candidate if candidate.is_file() else None
+
     try:
         text = args.compose.read_text(encoding="utf-8")
         if args.required_vars:
             for name in required_vars(text):
                 print(name)
             return 0
-        images = read_images(args.compose)
+        images = read_images(args.compose, env_file=env_file)
     except (InventoryError, OSError) as exc:
         print(f"image-inventory: {exc}", file=sys.stderr)
         return 2
