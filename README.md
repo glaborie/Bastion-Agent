@@ -766,9 +766,10 @@ gate: 10/10 passed · wall 6m40s · sum 7m12s · 1.08x · jobs 4 · slot 6m32s (
 what the pool bought you; `slot` names the step that set the floor. Steps run in
 a bounded pool with pytest first, so the long test run overlaps the
 lint/type/policy work instead of queueing behind it. `--jobs N` caps the pool
-(`--jobs 1` or `--serial` is the old sequential run), each step's output is kept
-under `artifacts/gate/<run>/`, and a failure prints that step's tail and exits
-non-zero. `--evals` adds `run_evals.py` — run alone after the pool, because it
+(`--jobs 1` or `--serial` is the old sequential run). Each run leaves one log per
+step plus a `summary.md` (branch, HEAD, dirty count, the table above) under
+`artifacts/gate/<run>/`, with `artifacts/gate/latest` pointing at the newest; a
+failure prints that step's tail and exits non-zero. `--evals` adds `run_evals.py` — run alone after the pool, because it
 drives pytest itself — `--integration` runs the database-backed tests (requires
 `TEST_DATABASE_URL`), `--no-tests` skips pytest, `--verbose` streams each step
 prefixed with its name.
