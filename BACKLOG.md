@@ -11,12 +11,12 @@ must not be edited by hand.
 
 - current-phase: v0.2
 - wip-limit: 3
-- next-id: IDEA-016
+- next-id: IDEA-017
 
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (9)
+### Inbox (10)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -27,6 +27,7 @@ must not be edited by hand.
 - `IDEA-013` P2 v0.3 agent - Add a Presidio recognizer for Swiss AHV/AVS numbers
 - `IDEA-014` P1 v0.2 agent - Stop the English-only DLP analyzer from mangling non-English input
 - `IDEA-015` P2 v0.3 security - Detect or prevent semantic system-prompt disclosure at egress
+- `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 
 ### Ready (2)
 
@@ -70,6 +71,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-013 | inbox | P2 | v0.3 | agent | Add a Presidio recognizer for Swiss AHV/AVS numbers |
 | IDEA-014 | inbox | P1 | v0.2 | agent | Stop the English-only DLP analyzer from mangling non-English input |
 | IDEA-015 | inbox | P2 | v0.3 | security | Detect or prevent semantic system-prompt disclosure at egress |
+| IDEA-016 | inbox | P2 | v0.3 | db | Encrypted payload escrow for pre-production debugging, disabled in production |
 <!-- END INDEX -->
 
 ## Items
@@ -665,3 +667,47 @@ Bastion has a recorded decision on whether a model may describe or claim to disc
 - Classification: `P2`/`v0.3`. This is new capability (an output-policy control, or an explicit accepted-risk decision), not a defect in shipped behaviour, and ADR-008 decision 5 freezes new features inside a phase; no ADR-008 v0.2 line names semantic disclosure, so v0.3 is the conservative home. Triage could argue `P1` if a delivered "here is your system prompt" is treated as a trust/security invariant breach; the deterministic canary does block the actual marker, which is why this is not `P0`.
 - Related brittleness, out of scope here and recorded as an open question rather than a separate item: the scan is case-sensitive and requires the literal prefix immediately followed by `[0-9A-Za-z-]{6,}`, so a case change, a newline after `CANARY-`, or a Unicode hyphen inside the marker would evade `inspect()`. Whether to normalise before matching, or to accept that as part of the canary contract, should be decided with this item or explicitly deferred.
 - Open question for triage: whether the control should be an output-policy classifier or evaluator that flags disclosure claims, a refusal clause added to the system instruction, or a documented accepted risk. This item deliberately does not preselect; if the accepted-risk route is taken, the residual-risk statement belongs in ADR-012 rather than only in THREAT_MODEL T3.
+
+### IDEA-016: Encrypted payload escrow for pre-production debugging, disabled in production
+
+- status: inbox
+- priority: P2
+- phase: v0.3
+- area: db
+- tags: audit, escrow, encryption, debugging, forensics, pre-production
+- depends-on: -
+- spec: ADR-005
+- created: 2026-11-11
+- updated: 2026-11-11
+- source: live incident on 2026-11-11, audit session f5c89000bc0c42499be2b2c87c13c78c (actor breakglass); the ledger and every service log retained no recoverable payload
+
+**Problem**
+
+Post-incident forensics cannot reconstruct what the model actually saw. In session `f5c89000bc0c42499be2b2c87c13c78c` the ledger kept a 27-character `payload_hash`, one `PERSON`, `restored_tokens: 1` and the routing verdict, while the delivered model text and the mangled DLP input existed nowhere — not in `audit_logs`, not in any service log — so the investigator had to ask the user to paste the transcript, and debugging the IDEA-014 false positive needed a live reproduction instead. This is by construction: `hash_payload()` (`db/models.py:155`) is one-way, `append_audit_event` (`db/audit.py:66`) accepts only a payload to hash or a precomputed digest, `metadata_json` is documented as never carrying raw PII, and `agent/tools/execution.py` states that argument values are never written to the ledger or to logs. ADR-005 decision 6 already permits encrypted raw-prompt storage "if the raw prompt must be stored (e.g., for debugging)", but nothing implements it, nothing bounds it, and `THREAT_MODEL.md:236` plus `audit_logs`' own schema still assert the hash-only posture.
+
+**Outcome**
+
+A pre-production-only escrow store keyed to the audit record can hold the exact payload behind a `payload_hash` as AES-256-GCM ciphertext, decryptable only by an authorised principal whose read is itself audited, while `payload_hash`, `record_hash` and every chain link stay byte-identical to today. The flag defaults off, production refuses to start with it on, and escrow rows expire on a shorter clock than the ledger without touching `audit_logs` or forking the chain.
+
+**Acceptance**
+
+- [ ] `uv run pytest tests/test_payload_escrow.py -q` proves the flag off writes no escrow rows for a `POST /v1/chat` turn, and the flag on writes exactly one escrow row per escrowed event
+- [ ] The escrow row stores AES-256-GCM ciphertext with a per-record nonce, binds the audit record (`audit_logs.id` or `record_hash`) as AEAD associated data, and takes its master key from the environment/KMS by reusing or extending the vault's key handling in `agent/dlp/vault.py`; no key material is committed
+- [ ] A test dumps the escrow table and the captured logs for an escrowed turn and asserts no plaintext payload value appears in either
+- [ ] Decrypt round-trips: `hash_payload(decrypted_payload)` equals the row's `audit_logs.payload_hash`
+- [ ] `PAYLOAD_ESCROW_ENABLED=false` in `.env.example` with a comment that escrow is pre-production/debugging only; `ENVIRONMENT=production` with the flag `true` fails startup with an error naming `PAYLOAD_ESCROW_ENABLED`, proven with production-valid secrets so the dev-secret guard is not what raises
+- [ ] `uv run python scripts/verify_audit_chain.py` and `POST /api/audit/verify` stay green with escrow rows present, and a record's `payload_hash`/`record_hash` are identical with the flag on and off
+- [ ] Decrypt is reachable only through `require_roles`, requires an explicit principal action, and appends a new `AuditEventType` member carrying the record id, actor and outcome; a `readonly` or `analyst` principal is refused and no audit row claims a successful read
+- [ ] A purge job removes escrow rows past `expires_at` (the window a settings key, strictly shorter than the ledger retention in ADR-005 decision 5) without touching `audit_logs`, and the chain still verifies after a purge
+- [ ] `docs/adr/ADR-005.md` (or a successor ADR) records the escrow store, explicitly supersedes the "prompt text never enters the ledger" posture for it, states the new trust boundary and that production is excluded, and `uv run python scripts/check_adrs.py` passes
+- [ ] `.env.example`, `THREAT_MODEL.md` T10 and the `scripts/verify_audit_chain.py` runbook section (or `README.md`) give the exact enable/decrypt/purge commands and label the escrow table a PII store whose access needs review
+
+**Notes**
+
+- Classification: `P2`/`v0.3`. This is new capability, not a defect: no production guardrail is broken today and nothing leaked, so the next phase is the conservative home, and ADR-008 decision 5 freezes features inside a phase; no v0.2 line names payload escrow, while v0.3 already owns audit retention/export. `area: db` because the change lands as a table with an FK to `audit_logs.id`, an escrow writer beside `append_audit_event`, a purge job and the chain-verification invariant — the startup guard and the decrypt route are thin surfaces over that store. `security` was the alternative because the item also rewrites a stated invariant; not chosen because that content is ADR/THREAT_MODEL text in the same change rather than a cross-cutting code edit.
+- Deduplication: no backlog item and no ADR mentions an escrow store, ciphertext payloads or payload recovery; the ADR hits for "payload" are the hash-only statements (`ADR-005` decision 1, `ADR-010` decision 8, `ADR-012` decision 4). IDEA-001 (tenant isolation) would have to cover the escrow table if it lands first — related, not a dependency, since escrow does not require tenant isolation to be built. IDEA-014 is the DLP bug this store would have made debuggable without a live repro, a different capability. IDEA-004 is ledger export/retention, not payload recovery; IDEA-009 is trace privacy; IDEA-015 is egress disclosure; done IDEA-006/008/011 are unrelated. `spec: ADR-005` because decision 6 already anticipates "encrypted at rest with KMS-managed keys and access-limited to `admin` role" for debugging, so this is covered by an ADR but not built, and the item amends that decision instead of inventing a second storage contract.
+- Open decision, not prescribed: what is escrowed — the raw pre-DLP payload (what `INPUT_RECEIVED` hashes, and the only thing that explains a DLP false positive such as IDEA-014), the post-DLP redacted payload (keeps PII out but cannot explain a redaction), or both as separate escrow kinds.
+- Open decision, not prescribed: whether escrow ciphertext is deleted or tombstoned at expiry, and whether a purged row keeps a link stub to `audit_logs.id`/`payload_hash`. Either way the ledger row itself must not be rewritten, which is why the purge is a separate table.
+- Open decision, not prescribed: whether escrow read access belongs to a new role or to the existing `breakglass` principal, and whether it needs four-eyes. The dev realm ships alice/bob/carol/breakglass, so both routes exist today.
+- The store cannot retroactively recover session `f5c89000bc0c42499be2b2c87c13c78c`; it only changes what the next investigation has. The retention window is deliberately shorter than the ledger's because this table is a PII store, and its access should be reviewed on the same cadence as the vault key.
+- Scope: intake only. No implementation, no schema change, no `.env.example` edit and no commit are part of this capture.
