@@ -3,8 +3,10 @@
 #
 # The gate list is the one in .opencode/commands/next.md §5 and README
 # "Verification"; this script only sequences it, it never weakens a check.
-# Steps run in a bounded pool (pytest first, since it is the long pole) and each
-# one's output is captured to artifacts/gate/<run>/ so a failure can be re-read.
+# Steps run in a bounded pool (pytest first, since it is the long pole). Each run
+# leaves artifacts/gate/<run>/ with one log per step plus summary.md; the
+# bookkeeping that steers the pool lives in a temporary directory and is deleted
+# on exit. artifacts/gate/latest points at the newest run.
 #
 #   scripts/gate.sh                 # lint, types, policy, unit tests
 #   scripts/gate.sh --evals         # ... plus the deterministic DeepEval gate
@@ -81,6 +83,11 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 LOGDIR="artifacts/gate/$STAMP"
 mkdir -p "$LOGDIR"
 
+# Per-step status and timing are bookkeeping, not evidence: keep them in $TMPDIR
+# so the run directory only holds logs a human might actually read.
+STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/bastion-gate.XXXXXX") || exit 2
+trap 'rm -rf "$STATE_DIR"' EXIT
+
 NAMES=()
 CMDS=()
 LAUNCH_ORDER=()
@@ -114,8 +121,7 @@ start_step() {
             bash -c "$cmd" 2>&1 | sed -u "s/^/[$name] /" | tee "$log"
             rc=${PIPESTATUS[0]}
             t1=$(date +%s%N)
-            printf '%s\n' "$rc" >"$LOGDIR/$name.rc"
-            printf '%s %s\n' "$t0" "$t1" >"$LOGDIR/$name.time"
+            printf '%s %s %s\n' "$rc" "$t0" "$t1" >"$STATE_DIR/$name.state"
         ) &
     else
         (
@@ -123,8 +129,7 @@ start_step() {
             bash -c "$cmd" >"$log" 2>&1
             rc=$?
             t1=$(date +%s%N)
-            printf '%s\n' "$rc" >"$LOGDIR/$name.rc"
-            printf '%s %s\n' "$t0" "$t1" >"$LOGDIR/$name.time"
+            printf '%s %s %s\n' "$rc" "$t0" "$t1" >"$STATE_DIR/$name.state"
         ) &
     fi
 }
@@ -199,13 +204,15 @@ LONGEST_NAME=""
 
 declare -A DUR RC
 for name in "${NAMES[@]}"; do
-    if [[ -f "$LOGDIR/$name.time" ]]; then
-        read -r t0 t1 <"$LOGDIR/$name.time"
+    if [[ -f "$STATE_DIR/$name.state" ]]; then
+        read -r rc t0 t1 <"$STATE_DIR/$name.state"
+        RC[$name]="$rc"
         DUR[$name]=$(((t1 - t0) / 1000000))
     else
+        # A step that never reported is a failure, not a zero-second pass.
+        RC[$name]=1
         DUR[$name]=0
     fi
-    RC[$name]=$(<"$LOGDIR/$name.rc")
     [[ "${RC[$name]}" != 0 ]] && FAILED+=("$name")
     SERIAL_MS=$((SERIAL_MS + DUR[$name]))
     if ((DUR[$name] > LONGEST)); then
@@ -237,17 +244,58 @@ SPEEDUP=$(awk -v s="$SERIAL_MS" -v w="$WALL_MS" 'BEGIN { printf "%.2f", (w > 0 ?
 PASSED=$((${#NAMES[@]} - ${#FAILED[@]}))
 VERDICT_METRICS="wall $(fmt_ms "$WALL_MS") · sum $(fmt_ms "$SERIAL_MS") · ${SPEEDUP}x · jobs $JOBS · slot $(fmt_ms "$LONGEST") ($LONGEST_NAME)"
 
+# ---- summary.md ---------------------------------------------------------------
+# One readable record per run. The per-step logs stay next to it; nothing here is
+# required to steer the script, so it is safe to delete the directory wholesale.
+SUMMARY="$LOGDIR/summary.md"
+FAILED_LIST=$(printf '%s, ' "${FAILED[@]}")
+FAILED_LIST=${FAILED_LIST%, }
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+HEAD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DIRTY=$(git status --porcelain 2>/dev/null | wc -l)
+OUTCOME="$PASSED/${#NAMES[@]} passed"
+[[ -n "$FAILED_LIST" ]] && OUTCOME="$OUTCOME — failed: $FAILED_LIST"
+
+{
+    printf '# gate · %s\n\n' "$STAMP"
+    printf '| field | value |\n| --- | --- |\n'
+    printf '| when | %s |\n' "$(date +%Y-%m-%dT%H:%M:%S%z)"
+    printf '| branch | `%s` @ `%s` (%s dirty) |\n' "$BRANCH" "$HEAD_SHA" "$DIRTY"
+    printf '| mode | tests=%s, evals=%s, jobs=%s |\n' "$TEST_MODE" \
+        "$([[ $RUN_EVALS == 1 ]] && echo on || echo off)" "$JOBS"
+    printf '| result | %s |\n' "$OUTCOME"
+    printf '| wall / sum | %s / %s (%sx) |\n' "$(fmt_ms "$WALL_MS")" "$(fmt_ms "$SERIAL_MS")" "$SPEEDUP"
+    printf '| slowest step | %s (%s) |\n' "$LONGEST_NAME" "$(fmt_ms "$LONGEST")"
+    printf '\n## Steps\n\n| step | status | time | detail |\n| --- | --- | --- | --- |\n'
+    for name in "${NAMES[@]}"; do
+        if [[ "${RC[$name]}" == 0 ]]; then step_status=ok; else step_status=FAIL; fi
+        step_detail=$(detail "$name" "$LOGDIR/$name.log")
+        printf '| `%s` | %s | %s | %s |\n' "$name" "$step_status" \
+            "$(fmt_ms "${DUR[$name]}")" "${step_detail//|/\\|}"
+    done
+    if ((${#FAILED[@]})); then
+        printf '\n## Failures\n'
+        for name in "${FAILED[@]}"; do
+            printf '\n### %s\n\n```text\n' "$name"
+            tail -n 20 "$LOGDIR/$name.log"
+            printf '```\n'
+        done
+    fi
+} >"$SUMMARY"
+ln -sfn "$STAMP" artifacts/gate/latest
+
 if ((${#FAILED[@]} == 0)); then
     printf '\ngate: %d/%d passed · %s\n' "$PASSED" "${#NAMES[@]}" "$VERDICT_METRICS"
+    printf 'summary: %s\n' "$SUMMARY"
     exit 0
 fi
 
 printf '\ngate: %d/%d passed · FAILED: %s · %s\n' "$PASSED" "${#NAMES[@]}" \
-    "$(IFS=', '; echo "${FAILED[*]}")" "$VERDICT_METRICS" >&2
+    "$FAILED_LIST" "$VERDICT_METRICS" >&2
 
 for name in "${FAILED[@]}"; do
     printf '\n--- %s (last 30 lines) ---\n' "$name" >&2
     tail -n 30 "$LOGDIR/$name.log" >&2
 done
-printf '\nfull logs: %s\n' "$LOGDIR" >&2
+printf '\nsummary + logs: %s\n' "$LOGDIR" >&2
 exit 1
