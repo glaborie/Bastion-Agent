@@ -200,6 +200,68 @@ def test_golden_labels_are_zero_tolerance() -> None:
     assert not failures, "golden classifier gate failed:\n" + "\n".join(failures)
 
 
+#: Rows added by IDEA-007: corporate-confidential by content, with no marking.
+UNMARKED_CORPORATE_ROWS: tuple[str, ...] = (
+    "corporate-forecast-unmarked-084",
+    "corporate-indemnity-clause-085",
+)
+
+#: IDEA-007 measurement over the 85-row corpus, quoted in ADR-011 decision 4.
+#: The floor is deterministic, so these are exact counts; a corpus change
+#: updates them and the ADR together.
+FLOOR_POSITIVES = 42
+FLOOR_BLOCKED = 18
+FLOOR_BENIGN = 26
+
+
+def test_the_rules_floor_keeps_its_measured_recall_and_false_positive_budget() -> None:
+    """The floor is what routes corporate-confidential-by-content text.
+
+    Its coverage and its false-positive budget are measured rather than
+    inferred: 18 of 42 asserted must-block positives, and no row that the
+    corpus expects to stay ``PUBLIC``. Raising a marker or adding a rule must
+    not move a benign row off the cloud, and must not silently shrink coverage.
+    """
+    rules = SensitivityClassifier(
+        model_path=None, threshold=Settings(_env_file=None).classifier_confidence_threshold
+    )
+    positives = [
+        golden
+        for golden in GOLDENS
+        if golden.category in MUST_BLOCK and golden.expected_label == "CONFIDENTIAL"
+    ]
+    benign = [
+        golden
+        for golden in GOLDENS
+        if golden.category in {"public", "borderline"} and golden.expected_label == "PUBLIC"
+    ]
+    blocked = [golden for golden in positives if rules.classify(golden.prompt).is_confidential]
+    flagged = [golden.ident for golden in benign if rules.classify(golden.prompt).is_confidential]
+
+    assert len(positives) == FLOOR_POSITIVES
+    assert len(blocked) == FLOOR_BLOCKED
+    assert len(benign) == FLOOR_BENIGN
+    assert not flagged, flagged
+
+
+def test_unmarked_corporate_content_is_gated_by_the_rules_floor() -> None:
+    """A forecast and a contract clause with no marking must route local.
+
+    The ensemble reads both as harmless ``public_content`` — it models harm,
+    not secrecy — so this also pins *which* layer decided: the deterministic
+    floor, with the matched rule families carried as evidence.
+    """
+    classifier = _real_classifier()
+    for ident in UNMARKED_CORPORATE_ROWS:
+        golden = next(row for row in GOLDENS if row.ident == ident)
+        result = classifier.classify(golden.prompt)
+        assert result.label.value == golden.expected_label, ident
+        assert result.model == "semantic-rules", ident
+        assert result.matched, ident
+        route = "local-llama" if result.is_confidential else "cloud-primary"
+        assert route == golden.expected_route, ident
+
+
 def test_a_broken_golden_row_fails_the_gate() -> None:
     """A wrong expectation must fail even where the exemption could apply.
 

@@ -120,6 +120,36 @@ def test_confidential_domains_are_detected(prompt: str) -> None:
 @pytest.mark.parametrize(
     "prompt",
     [
+        "Q3 revenue forecast assumes a hiring freeze through December.",
+        "Review the indemnity clause in our master services agreement with a prospective client.",
+    ],
+)
+def test_unmarked_corporate_content_is_confidential_by_content(prompt: str) -> None:
+    """No "confidential" anywhere: the marker is the substance, not a label."""
+    result = classifier().classify(prompt)
+    assert result.label is Sensitivity.CONFIDENTIAL
+    assert result.model == "semantic-rules"
+    assert result.confidence >= 0.55
+    assert result.matched, "the verdict must carry the rule evidence"
+
+
+def test_one_domain_marker_routes_local_and_only_a_codename_stays_borderline() -> None:
+    """ADR-011 decision 4: substance weighs 3.0, an identifier 2.0."""
+    forecast = classifier().classify("Our quarterly revenue forecast is attached.")
+    clause = classifier().classify("The indemnity clause caps our exposure.")
+    codename = classifier().classify("Project Nightingale launches next quarter.")
+
+    assert forecast.confidence == pytest.approx(0.6)
+    assert forecast.matched == ("commercial",)
+    assert clause.confidence == pytest.approx(0.6)
+    assert clause.matched == ("contract_legal",)
+    assert codename.confidence == pytest.approx(0.5)
+    assert codename.label is Sensitivity.PUBLIC
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
         "IBAN CH93 0076 2011 6238 5295 7",
         "IBAN CH93 0076 2011 6238 5295 7.",
         "The customer's bank account is CH93 0076 2011 6238 5295 7.",

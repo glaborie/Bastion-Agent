@@ -185,8 +185,11 @@ class _Rule:
     pattern: re.Pattern[str]
 
 
-#: Weighted semantic markers. A single weight-3/4 marker crosses the default
-#: 0.55 threshold; a single weight-2 marker stays borderline (PUBLIC by policy).
+#: Weighted semantic markers. Every domain marker weighs 3.0, so one marker of
+#: confidential *substance* ("revenue forecast", "indemnity clause") crosses the
+#: default 0.55 threshold on its own. ``codename`` is the only weight-2 marker:
+#: a project name is an identifier with no confidential content around it, so a
+#: lone codename stays borderline (PUBLIC by policy). See ADR-011 decision 4.
 _RULES: Final[tuple[_Rule, ...]] = (
     _Rule(
         "explicit_marking",
@@ -254,8 +257,22 @@ _RULES: Final[tuple[_Rule, ...]] = (
     ),
     _Rule(
         "commercial",
-        2.0,
+        3.0,
         re.compile(r"\b(?:sales pipeline|revenue forecast|margin analysis)\b", re.IGNORECASE),
+    ),
+    _Rule(
+        # Contract language is corporate-confidential by content: a supplier
+        # indemnity or liability clause is client terms, not public knowledge,
+        # even when the document carries no "confidential" marking. The markers
+        # are clause-shaped so a general question about contracts stays public.
+        "contract_legal",
+        3.0,
+        re.compile(
+            r"\b(?:indemnif\w*|indemnit(?:y|ies)|force majeure|governing law|"
+            r"limitation of liability|unlimited liability|liability cap|"
+            r"master services agreement|warrant(?:y|ies) clause|warranty period)\b",
+            re.IGNORECASE,
+        ),
     ),
     _Rule(
         "sensitive_personal",

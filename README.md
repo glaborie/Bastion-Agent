@@ -373,11 +373,14 @@ and verified before a session opens.
 
 With both paths unset, a deterministic weighted-marker classifier covers
 explicit markings, internal-only notes, codenames, board/HR/finance material,
-technical IP, customer data and sensitive personal topics. The confidence is
-`weight / (weight + 2)` and `CLASSIFIER_CONFIDENCE_THRESHOLD` (default `0.55`)
-decides the label; borderline prompts are `PUBLIC` by policy. This fallback is
-only allowed with `ENVIRONMENT=local`; every other environment refuses to
-start without a model, because the rules cannot detect injection.
+commercial substance (forecasts, margin analysis), contract language (indemnity,
+liability, governing law), technical IP, customer data and sensitive personal
+topics. The confidence is `weight / (weight + 2)` and
+`CLASSIFIER_CONFIDENCE_THRESHOLD` (default `0.55`) decides the label; every
+domain marker weighs 3.0, so one marker routes to the local model, and only a
+lone codename (weight 2.0) stays `PUBLIC` by policy. This fallback is only
+allowed with `ENVIRONMENT=local`; every other environment refuses to start
+without a model, because the rules cannot detect injection.
 
 The legacy single-graph contract remains available via `CLASSIFIER_MODEL_PATH`:
 the graph takes `input_ids` (plus `attention_mask` and optional
