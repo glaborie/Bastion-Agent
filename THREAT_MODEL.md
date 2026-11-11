@@ -145,13 +145,14 @@ Two facts shape the model:
 - References: `LLM02:2026`, `AML.T0057`
 - Attack: PII or secrets in prompts reach an external provider, or are echoed in output.
 - Controls:
-  - LIVE: Presidio replaces entities with `{{ENTITY:TYPE_N}}` markers before inference. Default entity list: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, IP_ADDRESS, CREDIT_CARD, US_SSN, and a custom API_KEY recognizer (provider token formats and secret assignments).
+  - LIVE: Presidio replaces entities with `{{ENTITY:TYPE_N}}` markers before inference. Default entity list: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, IP_ADDRESS, CREDIT_CARD, US_SSN, plus three local shape recognizers: API_KEY (provider token formats and secret assignments), ADDRESS (street + postal code + place) and DATE_OF_BIRTH (a date with an explicit birth anchor). Presidio's generic LOCATION/DATE_TIME are deliberately not enabled; they label benign text as PII (ADR-002 decision 5).
   - LIVE: the vault stores values as AES-256-GCM ciphertext in Redis. The AAD binds each ciphertext to its session and token. A 30-minute TTL applies.
   - LIVE: routing classifies the raw text, so redaction cannot weaken the verdict. Confidential prompts go to the local model.
   - LIVE: the audit ledger stores a hash of the request, never prompt text or tool argument values.
-  - LIVE: any DLP failure returns 503. Unredacted text is never forwarded.
+  - LIVE: any DLP failure returns 503. Detected entities are always tokenised, and a prompt in which DLP found personal data is kept on the local model even when the classifier says PUBLIC, so incomplete recall does not send it to a third party (ADR-002 decision 5). A local-model failure on such a prompt returns 503 with a SECURITY_INCIDENT.
 - Residual risk:
   - Presidio detects patterns and named entities. It does not detect confidential business content without identifiers. That is the classifier's job, and it is probabilistic.
+  - DLP recall is bounded by the entity list and one English NER model. A name outside `en_core_web_sm`'s vocabulary is not redacted; it reaches the local model in plaintext (not a third party, because any detected entity forces the local route). A prompt whose only personal data is such a name still takes the classifier's route.
   - The default entity list has no Swiss-specific identifiers (for example the AHV/AVS number). Add custom recognizers before a Swiss deployment.
   - The vault key and HMAC secrets come from the environment. Defaults in `.env.example` are development values. A production deployment needs a secret manager and rotation, which are not implemented.
   - Restored plaintext is returned to the caller by design.

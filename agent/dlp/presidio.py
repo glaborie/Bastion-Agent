@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
@@ -67,6 +67,54 @@ _PROVIDER_TOKEN_PATTERN: Final[str] = (
 _GENERIC_SECRET_PATTERN: Final[str] = (
     r"(?i)\b(?:api[_-]?key|secret|access[_-]?token|client[_-]?secret|password)"
     r"\b\s*[:=]\s*['\"]?[A-Za-z0-9_\-./+]{12,}['\"]?"
+)
+
+
+#: Month names Presidio's ``DATE_TIME`` would match anyway, but the point here is
+#: the anchor, not the date grammar: only a date introduced by an explicit
+#: "born"/"date of birth" phrase is personal data. Presidio's own ``DATE_TIME``
+#: labels ``"the board minutes"`` and ``"the opening hours"`` as dates, so it
+#: would over-redact ordinary prompts (measured over ADR-006's corpus, 2026-11-11).
+_MONTHS: Final[str] = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
+    r"janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|"
+    r"novembre|d[ée]cembre|januar|februar|m[äa]rz|juni|juli|oktober|dezember)"
+)
+
+#: One calendar date, numeric or month-named. No free-standing date is matched:
+#: the recognizer below requires a birth anchor in front of it.
+_DATE: Final[str] = (
+    r"(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}"
+    r"|\d{4}-\d{2}-\d{2}"
+    rf"|{_MONTHS}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}"
+    rf"|\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTHS}\.?,?\s+\d{{4}})"
+)
+
+#: A birth date only counts when the text says what it is. The anchor is
+#: English, French, German and Italian so the pattern recognizer stays useful on
+#: the non-English prompts the NER pass no longer touches (ADR-002).
+_DATE_OF_BIRTH_PATTERN: Final[str] = (
+    r"(?i)\b(?:date of birth|d\.?o\.?b\.?|born|geboren(?:\s+am)?|geb\.|"
+    r"n[ée]e?\s+le|data di nascita)\s*[:\-]?\s*"
+    rf"({_DATE})"
+)
+
+#: A postal address is a street line with a house number followed by a postal
+#: code and a place, separated by a comma or a newline:
+#: ``Bahnhofstrasse 12, 8001 Zürich`` or the two-line form used in a record.
+#: The separator requirement is what keeps ``8001 Zürich`` on its own, ``UDP``,
+#: ``ghp_…`` and a bare year from matching. ``LOCATION`` is deliberately not used:
+#: over the same corpus it labels ``UDP`` and a GitHub token as places.
+_ADDRESS_PATTERN: Final[str] = (
+    # Presidio compiles recognizer patterns with ``re.IGNORECASE``, which would
+    # let ``[A-ZÄÖÜ]`` match lowercase and swallow the words before the street
+    # ("Maria Keller lives at Bahnhofstrasse…"). The scoped ``(?-i:…)`` turns
+    # case-insensitivity off for this pattern only, keeping the street and place
+    # anchored to capitalised words.
+    r"(?-i:\b[A-ZÄÖÜ][\w.'\u2019\-]{1,40}(?:[ \t]+[A-ZÄÖÜ][\w.'\u2019\-]{1,40}){0,4}"
+    r"[ \t]+\d{1,4}[a-z]?[ \t]*(?:,[ \t]*|\n[ \t]*)\d{4}[ \t]+"
+    r"[A-ZÄÖÜ][\w.'\u2019\-]{0,38}[\w'\u2019])"
 )
 
 
@@ -149,6 +197,38 @@ def _api_key_recognizer(language: str = _DEFAULT_LANGUAGE) -> PatternRecognizer:
     )
 
 
+def _date_of_birth_recognizer(language: str = _DEFAULT_LANGUAGE) -> PatternRecognizer:
+    """A birth date anchored by its own label, never a bare date."""
+    from presidio_analyzer import Pattern, PatternRecognizer
+
+    return PatternRecognizer(
+        supported_entity="DATE_OF_BIRTH",
+        supported_language=language,
+        patterns=[Pattern(name="birth-anchor", regex=_DATE_OF_BIRTH_PATTERN, score=0.85)],
+    )
+
+
+def _address_recognizer(language: str = _DEFAULT_LANGUAGE) -> PatternRecognizer:
+    """Street, house number, postal code and place in one span."""
+    from presidio_analyzer import Pattern, PatternRecognizer
+
+    return PatternRecognizer(
+        supported_entity="ADDRESS",
+        supported_language=language,
+        patterns=[Pattern(name="street-postcode-place", regex=_ADDRESS_PATTERN, score=0.8)],
+    )
+
+
+#: Every non-NER recognizer, registered once per modelled language. They match
+#: shapes rather than grammar, so they keep working on a prompt whose language
+#: has no spaCy model (see :meth:`PresidioDLP._pattern_entities`).
+_PATTERN_RECOGNIZERS: Final[tuple[Callable[[str], PatternRecognizer], ...]] = (
+    _api_key_recognizer,
+    _date_of_birth_recognizer,
+    _address_recognizer,
+)
+
+
 @functools.lru_cache(maxsize=1)
 def get_analyzer() -> AnalyzerEngine:
     """Load and cache the Presidio analyzer for every modelled language."""
@@ -171,9 +251,10 @@ def get_analyzer() -> AnalyzerEngine:
         )
         # One instance per modelled language: Presidio only runs a recognizer
         # for the language it declares, so a future second model would otherwise
-        # silently lose API_KEY coverage.
+        # silently lose API_KEY, ADDRESS and DATE_OF_BIRTH coverage.
         for language in _SUPPORTED_LANGUAGES:
-            analyzer.registry.add_recognizer(_api_key_recognizer(language))
+            for factory in _PATTERN_RECOGNIZERS:
+                analyzer.registry.add_recognizer(factory(language))
     except Exception as exc:  # pragma: no cover - depends on the runtime image
         raise DLPUnavailableError(
             "Presidio could not be initialised; refusing to pass text unredacted"

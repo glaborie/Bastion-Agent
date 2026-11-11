@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import re
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -136,3 +138,19 @@ def test_database_url_is_redacted_for_logs() -> None:
 
 def test_dev_vault_key_constant_is_a_valid_aes256_key() -> None:
     assert len(base64.b64decode(DEV_VAULT_MASTER_KEY)) == 32
+
+
+def test_compose_dlp_entity_default_matches_settings() -> None:
+    """A drift here silently re-enables the pre-IDEA-017 entity list in Docker.
+
+    ``docker-compose.yml`` supplies ``DLP_ENTITIES`` as a container environment
+    variable, and an environment variable wins over the Pydantic default. The
+    live check for IDEA-017 hit exactly this: the image carried the new
+    ``ADDRESS``/``DATE_OF_BIRTH`` recognizers but the compose default still
+    narrowed the entity list, so neither fired.
+    """
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    match = re.search(r"^  DLP_ENTITIES: \$\{DLP_ENTITIES:-([^}]+)\}$", compose, re.MULTILINE)
+    assert match, "docker-compose.yml no longer defaults DLP_ENTITIES"
+    compose_entities = tuple(match.group(1).split(","))
+    assert compose_entities == make_settings().dlp_entity_list

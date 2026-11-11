@@ -333,7 +333,11 @@ async def chat(
     # Never prefix role tags here: "[user] …" reads as a role-injection marker
     # to the guard and produced a measured false positive on a benign question.
     raw_scan = "\n\n".join(turn.content for turn in request.messages)
-    decision = await model_router.aroute(raw_scan)
+    # A DLP hit means the stage found personal data, so its own recall on this
+    # prompt is not trusted: the request stays on the local model even when the
+    # classifier reads it as PUBLIC. That is the control that keeps a record
+    # whose name or address Presidio missed off a third-party provider.
+    decision = await model_router.aroute(raw_scan, pii_detected=entity_count > 0)
     classification = decision.classification
     await _record(
         session,
@@ -347,12 +351,14 @@ async def chat(
             "reason": classification.reason,
             "confidence": round(classification.confidence, 4),
             "model": classification.model,
+            "override": decision.override,
         },
     )
     _annotate(
         {
             "bastion.route": decision.alias,
             "bastion.route.local": decision.local,
+            "bastion.route.override": decision.override,
             "bastion.classification": classification.label.value,
             "bastion.classification.reason": classification.reason,
             "bastion.classification.confidence": round(classification.confidence, 4),
@@ -428,6 +434,26 @@ async def chat(
         except RoutingError as exc:
             model_span.set_attribute("error.type", type(exc).__name__)
             logger.warning("Model completion failed", extra={"route": decision.alias})
+            if decision.override == "pii_detected":
+                # The prompt was kept off the cloud because DLP found personal
+                # data. Falling back would undo that control, so the request
+                # fails closed and the attempt is on the ledger (ADR-004).
+                await _record(
+                    session,
+                    actor_id=actor_id,
+                    event_type=AuditEventType.SECURITY_INCIDENT,
+                    conversation_id=conversation_id,
+                    metadata={
+                        "reason": "pii_route_local_unavailable",
+                        "stage": "model",
+                        "route": decision.alias,
+                        "error": type(exc).__name__,
+                    },
+                )
+                raise _blocked(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "local model unavailable for a PII-bearing prompt",
+                ) from exc
             raise _blocked(status.HTTP_502_BAD_GATEWAY, "upstream model unavailable") from exc
         model_span.set_attributes(
             _completion_attributes(completion, requested=decision.primary_model or decision.alias)

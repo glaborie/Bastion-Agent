@@ -24,7 +24,7 @@ from agent.dlp.presidio import DLPUnavailableError, PresidioDLP, get_analyzer
 from agent.dlp.vault import TokenVault
 from agent.egress.sanitizer import EgressSanitizer
 from agent.routing.classifier import Classification, Sensitivity
-from agent.routing.client import ChatCompletion, ChatMessage, RouteDecision
+from agent.routing.client import ChatCompletion, ChatMessage, RouteDecision, RoutingError
 from db.audit import verify_audit_chain
 from db.models import AuditEventType, AuditLog
 from db.session import get_db_session
@@ -60,22 +60,28 @@ class StubRouter:
     answer: str = "A normal answer."
     echo_last_user: bool = False
     echo_canary: bool = False
+    fail_completion: bool = False
     route_calls: int = 0
     complete_calls: int = 0
     scan_inputs: list[str] = field(default_factory=list)
+    pii_flags: list[bool] = field(default_factory=list)
     sent: list[list[ChatMessage]] = field(default_factory=list)
 
-    def _decision(self) -> RouteDecision:
+    def _decision(self, *, pii_detected: bool = False) -> RouteDecision:
+        confidential = self.classification.is_confidential
+        local = confidential or pii_detected
         return RouteDecision(
-            alias="local-llama" if self.classification.is_confidential else "cloud-primary",
+            alias="local-llama" if local else "cloud-primary",
             classification=self.classification,
-            local=self.classification.is_confidential,
+            local=local,
+            override="pii_detected" if pii_detected and not confidential else None,
         )
 
-    async def aroute(self, prompt: str) -> RouteDecision:
+    async def aroute(self, prompt: str, *, pii_detected: bool = False) -> RouteDecision:
         self.route_calls += 1
         self.scan_inputs.append(prompt)
-        return self._decision()
+        self.pii_flags.append(pii_detected)
+        return self._decision(pii_detected=pii_detected)
 
     async def complete(
         self,
@@ -87,6 +93,8 @@ class StubRouter:
     ) -> ChatCompletion:
         self.complete_calls += 1
         self.sent.append(list(messages))
+        if self.fail_completion:
+            raise RoutingError("local model is down")
         resolved = decision or self._decision()
         if self.echo_canary:
             system = next(message for message in messages if message.role == "system")
@@ -192,7 +200,9 @@ async def test_public_turn_is_restored_and_fully_audited(chat_api: Harness) -> N
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["conversation_id"] == CONVERSATION
-    assert payload["route"] == "cloud-primary"
+    # DLP found an address, so the prompt is kept local even though the
+    # classifier reads it as PUBLIC (ADR-002 decision 3).
+    assert payload["route"] == "local-llama"
     assert payload["classification"] == "PUBLIC"
     assert payload["restored_tokens"] == 1
     assert payload["message"]["content"] == ("Please email alice@example.com about the contract.")
@@ -219,6 +229,10 @@ async def test_public_turn_is_restored_and_fully_audited(chat_api: Harness) -> N
     dlp_record = records[1]
     assert dlp_record.metadata_json["types"] == ["EMAIL_ADDRESS"]
     assert dlp_record.metadata_json["redacted"] is True
+    routing_record = records[2]
+    assert routing_record.metadata_json["route"] == "local-llama"
+    assert routing_record.metadata_json["override"] == "pii_detected"
+    assert routing_record.metadata_json["label"] == "PUBLIC"
     egress_record = records[3]
     assert egress_record.metadata_json["blocked"] is False
     assert egress_record.metadata_json["restored_tokens"] == 1
@@ -303,3 +317,70 @@ async def test_dlp_failure_returns_503_without_calling_the_model(chat_api: Harne
     response = await chat_api.client.post("/v1/chat", json=body("Hello"))
     assert response.status_code == 503
     assert chat_api.stub.complete_calls == 0
+
+
+PROSPECT_RECORD = (
+    "this prospect\nSenapus Perillard\nPiazza Indipendenza 102\n6808 Torricella\n"
+    "Switzerland\n091 479 98 31\nSenapusPerillard@teleworm.us\nBorn April 7, 1996"
+)
+
+
+async def test_a_clean_public_turn_still_takes_the_cloud_route(chat_api: Harness) -> None:
+    """The PII override must not move ordinary prompts off the cloud."""
+    response = await chat_api.client.post(
+        "/v1/chat", json=body("Explain what a message queue does.")
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["route"] == "cloud-primary"
+    assert chat_api.stub.pii_flags == [False]
+
+
+async def test_pii_record_is_kept_off_the_cloud(chat_api: Harness) -> None:
+    """IDEA-017: the recorded prospect record, end to end through the gateway."""
+    chat_api.stub.echo_last_user = True
+
+    response = await chat_api.client.post("/v1/chat", json=body(PROSPECT_RECORD))
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["route"] == "local-llama"
+    assert data["classification"] == "PUBLIC"
+    assert chat_api.stub.pii_flags == [True]
+
+    upstream = next(message for message in chat_api.stub.sent[0] if message.role == "user")
+    for pii_field in (
+        "Piazza Indipendenza 102",
+        "6808 Torricella",
+        "SenapusPerillard@teleworm.us",
+        "091 479 98 31",
+        "April 7, 1996",
+    ):
+        assert pii_field not in upstream.content
+
+    records = await events(chat_api)
+    routing = next(r for r in records if r.event_type is AuditEventType.ROUTING_DECISION)
+    assert routing.metadata_json["override"] == "pii_detected"
+    assert routing.metadata_json["local"] is True
+    assert routing.metadata_json["label"] == "PUBLIC"
+    dlp_record = next(r for r in records if r.event_type is AuditEventType.DLP_REDACTION)
+    assert {"ADDRESS", "DATE_OF_BIRTH", "EMAIL_ADDRESS", "PHONE_NUMBER"} <= set(
+        dlp_record.metadata_json["types"]
+    )
+    # The client is the authorised recipient, so the markers are restored.
+    assert data["restored_tokens"] == 4
+    assert "Piazza Indipendenza 102" in data["message"]["content"]
+
+
+async def test_pii_route_failure_fails_closed(chat_api: Harness) -> None:
+    """No cloud fallback when the local model is the PII control (ADR-004)."""
+    chat_api.stub.fail_completion = True
+
+    response = await chat_api.client.post("/v1/chat", json=body(PROSPECT_RECORD))
+
+    assert response.status_code == 503
+    records = await events(chat_api)
+    incidents = [r for r in records if r.event_type is AuditEventType.SECURITY_INCIDENT]
+    assert incidents[0].metadata_json["reason"] == "pii_route_local_unavailable"
+    assert incidents[0].metadata_json["route"] == "local-llama"
+    assert chat_api.stub.route_calls == 1

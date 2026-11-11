@@ -297,9 +297,14 @@ restored = await dlp.restore(result.text, session_id="sess-1")
 
 Presidio runs on the CPU with `en_core_web_sm`. The default entities are
 `PERSON`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `IBAN_CODE`, `IP_ADDRESS`,
-`CREDIT_CARD`, `US_SSN` and `API_KEY`; the last is a local recognizer for
-provider tokens (`sk-…`, `ghp_…`, `AKIA…`, `xox…`) and `api_key = …` style
-assignments. Analysis and tokenisation are fail-closed: if Presidio cannot
+`CREDIT_CARD`, `US_SSN`, `API_KEY`, `ADDRESS` and `DATE_OF_BIRTH`. The last
+three are local shape recognizers: provider tokens (`sk-…`, `ghp_…`, `AKIA…`,
+`xox…`) and `api_key = …` assignments; a street with a house number followed by
+a postal code and a place (`Bahnhofstrasse 12, 8001 Zürich`); and a date
+introduced by an explicit birth anchor (`Born April 7, 1996`, `Né le 7 avril
+1996`). Presidio's generic `LOCATION` and `DATE_TIME` are deliberately not
+enabled: over the golden corpus they label `UDP`, a GitHub token and `the board
+minutes` as PII. Analysis and tokenisation are fail-closed: if Presidio cannot
 initialise, `DLPUnavailableError` is raised rather than passing text through.
 `DLP_SCORE_THRESHOLD` (default `0.35`) is the Presidio confidence floor.
 
@@ -308,6 +313,15 @@ non-English verdict skips the NER entities and keeps the pattern recognizers, so
 a French or German prompt is no longer rewritten as a person name;
 `DLP_LANGUAGE_MIN_CONFIDENCE` (default `0.80`) is the floor below which the text
 is analyzed as English, preserving NER coverage for short English prompts.
+
+**A DLP hit keeps the turn local.** `ModelRouter` maps `CONFIDENTIAL` to
+`local-llama` and `PUBLIC` to `cloud-primary`, but when the DLP stage redacted at
+least one entity the request goes to `local-llama` even though the label stays
+`PUBLIC`. `RouteDecision.override` and the `ROUTING_DECISION` audit row record
+`pii_detected`, so the label and the route are both legible. The rule is a proxy
+for incomplete recall: if the stage found personal data in the prompt, it is not
+trusted with the rest of it. A local-model failure on such a prompt returns
+`503` with a `SECURITY_INCIDENT` — never a cloud fallback.
 
 ### Sensitivity classifier
 
@@ -685,6 +699,7 @@ check runs at startup.
 | `scripts/recalculate_dread.py` | Recompute DREAD totals and the risk-priority list; `--check` / `--write` |
 | `scripts/update_threat_intel.py` | Query OSV for every registry package in `uv.lock`; writes `artifacts/threat-intel/latest.json` |
 | `scripts/run_evals.py` | Run the three golden gates and atomically publish `artifacts/evals/latest.json` |
+| `scripts/gate.sh` | Run every gate in a bounded pool (lint, format, types, pylint, tests, policy scripts) and print a metrics table; `--jobs`, `--evals`, `--integration`, `--no-tests`, `--serial`, `--verbose` |
 | `scripts/check_classifier_dispatch.py` | Classify five sentinels and publish the host's `reference` / `dispatch_anomaly` verdict (ADR-011) |
 | `scripts/demo_egress.py` | Deterministic canary/leak/quarantine/fence demo against the live Redis |
 | `scripts/demo_model_canary.py` | Live `llama.cpp` extraction probe through the egress sanitizer (opt-in) |
@@ -733,6 +748,30 @@ uv run python scripts/validate_rbac.py
 uv run python scripts/recalculate_dread.py --check
 uv run pytest -m "not integration"   # unit tests (no database required)
 ```
+
+`scripts/gate.sh` runs that set in one shot — adding the ruff format check and
+the backlog validator — and prints a metrics table plus one verdict line:
+
+```
+  step         status      time  detail
+  --------------------------------------
+  pytest       ok         6m32s  575 passed, 33 skipped, 43 deselected
+  pylint       ok         19.8s  rated at 10.00/10
+  ...
+
+gate: 10/10 passed · wall 6m40s · sum 7m12s · 1.08x · jobs 4 · slot 6m32s (pytest)
+```
+
+`wall` is the elapsed time, `sum` the total work, and the ratio between them is
+what the pool bought you; `slot` names the step that set the floor. Steps run in
+a bounded pool with pytest first, so the long test run overlaps the
+lint/type/policy work instead of queueing behind it. `--jobs N` caps the pool
+(`--jobs 1` or `--serial` is the old sequential run), each step's output is kept
+under `artifacts/gate/<run>/`, and a failure prints that step's tail and exits
+non-zero. `--evals` adds `run_evals.py` — run alone after the pool, because it
+drives pytest itself — `--integration` runs the database-backed tests (requires
+`TEST_DATABASE_URL`), `--no-tests` skips pytest, `--verbose` streams each step
+prefixed with its name.
 
 Database-backed tests need a disposable PostgreSQL 16 instance. The suite
 refuses to run against a database whose name does not contain `test`:

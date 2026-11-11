@@ -89,6 +89,10 @@ class RouteDecision:
     local: bool
     #: Concrete model the alias is configured to use first (telemetry only).
     primary_model: str | None = None
+    #: Set when a deterministic control moved the request off the classifier's
+    #: verdict. ``"pii_detected"`` means the DLP stage found personal data and
+    #: the prompt is kept on the local model regardless of the PUBLIC label.
+    override: str | None = None
 
 
 class OmniRouteClient:
@@ -246,13 +250,13 @@ class ModelRouter:
     def client(self) -> OmniRouteClient:
         return self._client
 
-    def route(self, prompt: str) -> RouteDecision:
+    def route(self, prompt: str, *, pii_detected: bool = False) -> RouteDecision:
         """Synchronous routing decision (rule/ONNX inference is cheap)."""
-        return self._decision(self._classifier.classify(prompt))
+        return self._decision(self._classifier.classify(prompt), pii_detected=pii_detected)
 
-    async def aroute(self, prompt: str) -> RouteDecision:
+    async def aroute(self, prompt: str, *, pii_detected: bool = False) -> RouteDecision:
         """Async routing decision for callers on the event loop."""
-        return self._decision(await self._classifier.aclassify(prompt))
+        return self._decision(await self._classifier.aclassify(prompt), pii_detected=pii_detected)
 
     async def complete(
         self,
@@ -272,13 +276,25 @@ class ModelRouter:
             max_tokens=max_tokens,
         )
 
-    def _decision(self, classification: Classification) -> RouteDecision:
-        local = classification.is_confidential
+    def _decision(
+        self, classification: Classification, *, pii_detected: bool = False
+    ) -> RouteDecision:
+        """Map a classification to an alias, letting a DLP hit force local.
+
+        The classifier's label is never rewritten: the ledger keeps the
+        ``PUBLIC`` verdict next to the ``pii_detected`` override, so the reason a
+        prompt stayed on-box is legible after the fact. Only a route that the
+        evidence did not already send local is marked as an override.
+        """
+        confidential = classification.is_confidential
+        local = confidential or pii_detected
+        override = "pii_detected" if pii_detected and not confidential else None
         return RouteDecision(
             alias=self._local_alias if local else self._cloud_alias,
             classification=classification,
             local=local,
             primary_model=self._local_primary if local else self._cloud_primary,
+            override=override,
         )
 
 

@@ -106,6 +106,30 @@ async def test_public_prompts_route_to_the_cloud_alias() -> None:
         await http.aclose()
     assert decision.alias == "cloud-primary"
     assert decision.local is False
+    assert decision.override is None
+
+
+async def test_a_dlp_hit_keeps_a_public_prompt_on_the_local_model() -> None:
+    """ADR-002 decision 3: the classifier verdict is kept, the route is not."""
+    client, http = build_client(lambda request: httpx.Response(200, json={}))
+    try:
+        decision = await router(public(), client).aroute("anything", pii_detected=True)
+    finally:
+        await http.aclose()
+    assert decision.alias == "local-llama"
+    assert decision.local is True
+    assert decision.override == "pii_detected"
+    assert decision.classification.label is Sensitivity.PUBLIC
+
+
+async def test_confidential_traffic_is_not_marked_as_a_pii_override() -> None:
+    client, http = build_client(lambda request: httpx.Response(200, json={}))
+    try:
+        decision = await router(confidential(), client).aroute("anything", pii_detected=True)
+    finally:
+        await http.aclose()
+    assert decision.alias == "local-llama"
+    assert decision.override is None
 
 
 def test_pinned_model_mirrors_the_omniroute_combos() -> None:

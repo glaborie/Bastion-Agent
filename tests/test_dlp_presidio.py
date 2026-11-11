@@ -235,3 +235,88 @@ def test_empty_text_short_circuits() -> None:
     engine = PresidioDLP(TokenVault(FakeAsyncRedis(), key=KEY), analyzer=get_analyzer())
     # No event loop needed: redact handles the empty string before Presidio/vault.
     assert engine.analyze("") == []
+
+
+# -- ADR-002 decision 1: the shape recognizers added for IDEA-017 ----------
+RECORDED_PROSPECT = (
+    "this prospect\nSenapus Perillard\nPiazza Indipendenza 102\n6808 Torricella\n"
+    "Switzerland\n091 479 98 31\nSenapusPerillard@teleworm.us\nBorn April 7, 1996"
+)
+
+
+async def test_recorded_prospect_record_is_redacted_field_by_field(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """IDEA-017: the 2026-11-11 record that reached cloud-primary as PUBLIC."""
+    engine, _vault, _redis = dlp
+    result = await engine.redact(RECORDED_PROSPECT, "session-prospect")
+
+    assert {"ADDRESS", "DATE_OF_BIRTH", "EMAIL_ADDRESS", "PHONE_NUMBER"} <= set(result.entity_types)
+    for field in (
+        "Piazza Indipendenza 102",
+        "6808 Torricella",
+        "091 479 98 31",
+        "SenapusPerillard@teleworm.us",
+        "April 7, 1996",
+    ):
+        assert field not in result.text
+    # The name is out-of-vocabulary for en_core_web_sm and stays: the gateway's
+    # PII route override is what keeps it on-box, not redaction (ADR-002).
+    assert await engine.restore(result.text, "session-prospect") == RECORDED_PROSPECT
+
+
+async def test_inline_swiss_address_is_one_span(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """The comma form must not swallow the words before the street."""
+    engine, _vault, _redis = dlp
+    text = "Our customer Maria Keller lives at Bahnhofstrasse 12, 8001 Zürich."
+    result = await engine.redact(text, "session-inline-address")
+
+    address = [entity for entity in result.entities if entity.entity_type == "ADDRESS"]
+    assert address, result.entity_types
+    assert text[address[0].start : address[0].end] == "Bahnhofstrasse 12, 8001 Zürich"
+
+
+async def test_birth_date_needs_its_own_anchor(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """A bare date is not personal data; only a labelled birth date is."""
+    engine, _vault, _redis = dlp
+    for text in (
+        "Summarise the board minutes from Friday and the opening hours for April.",
+        "Q3 revenue forecast assumes a hiring freeze through December 2026.",
+        "It happened on 1987-03-14 at the Zurich office.",
+    ):
+        result = await engine.redact(text, f"session-no-dob-{hash(text)}")
+        assert "DATE_OF_BIRTH" not in result.entity_types, text
+        assert not result.redacted, (text, result.entity_types)
+
+
+async def test_address_requires_a_street_and_a_postcode(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """Presidio's LOCATION is deliberately not used: it labels these as places."""
+    engine, _vault, _redis = dlp
+    for text in (
+        "The UDP port is 8123 on host 10.0.0.5.",
+        "Deploy token ghp_abcdefghijklmnopqrstuvwxyz0123456789.",
+        "8001 Zürich and 6808 Torricella are postcodes.",
+    ):
+        result = await engine.redact(text, f"session-not-address-{hash(text)}")
+        assert "ADDRESS" not in result.entity_types, text
+
+
+async def test_non_english_prompt_still_redacts_address_and_birth_date(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """The shape recognizers must survive a skipped NER pass (ADR-002)."""
+    engine, _vault, _redis = dlp
+    text = "Dossier client : Rue du Rhône 42, 1204 Genève. Né le 7 avril 1996."
+    result = await engine.redact(text, "session-french-record")
+
+    assert result.ner_skipped is True
+    assert {"ADDRESS", "DATE_OF_BIRTH"} <= set(result.entity_types)
+    assert "Rue du Rhône 42" not in result.text
+    assert "7 avril 1996" not in result.text
+    assert await engine.restore(result.text, "session-french-record") == text

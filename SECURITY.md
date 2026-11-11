@@ -19,7 +19,7 @@ Bastion-Agent is a **high-assurance, zero-trust AI agent harness** designed for 
 | Layer | Control | Implementation | Swiss Relevance |
 |-------|---------|----------------|------------------|
 | **Ingress** | Single FastAPI gateway with OIDC JWT validation | FastAPI + Keycloak OIDC + JWKS cache | Prevents unauthorized access; enforces identity at the choke point |
-| **DLP** | Two-stage Presidio + ONNX classifier + Redis vault | Presidio analyzer/anonymizer → ONNX classifier → reversible tokenization in Redis (AES-256-GCM, 30-min TTL) | Prevents PII/secrets from reaching the model; supports Swiss data residency |
+| **DLP** | Two-stage Presidio + ONNX classifier + Redis vault | Presidio analyzer/anonymizer → ONNX classifier → reversible tokenization in Redis (AES-256-GCM, 30-min TTL); any prompt where DLP finds personal data is kept on the local model | Prevents PII/secrets from reaching a third-party model; supports Swiss data residency |
 | **Tool Governance** | Four-gate runtime model (occludra + Microsoft patterns) | Tool catalog allow-list → JWT RBAC → four-eyes HITL approval → source-side entitlement | Enforces least privilege, segregation of duties, and auditability |
 | **Egress** | Canary tripwires + XML fence isolation | Session-unique canary tokens embedded in system prompt; tool outputs scanned before return | Detects and blocks indirect prompt injection and data exfiltration |
 | **Audit** | Append-only PostgreSQL audit with SHA-256 hash chaining | `audit_logs` table with `record_hash` = SHA256(id || timestamp || actor_id || event_type || payload_hash || previous_hash) | Non-repudiable logs for Swiss compliance audits |
@@ -56,7 +56,7 @@ Bastion-Agent is a **high-assurance, zero-trust AI agent harness** designed for 
 
 ### PII & Secret Detection
 - **Engine**: Microsoft Presidio (analyzer + anonymizer)
-- **Categories**: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN, IP_ADDRESS, API_KEY, CREDIT_CARD, AWS_ACCESS_KEY_ID, GITHUB_TOKEN, PRIVATE_KEY
+- **Categories**: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, IP_ADDRESS, CREDIT_CARD, US_SSN, plus three local shape recognizers: API_KEY (provider tokens and secret assignments), ADDRESS (street + postal code + place) and DATE_OF_BIRTH (a date with an explicit birth anchor). Recall is bounded by this list and by the English NER model; see ADR-002 decision 5
 - **Patterns**: Regex + Presidio recognizers
 - **Redaction**: Reversible tokenization (`{{ENTITY:PERSON_1}}`)
 
@@ -221,7 +221,7 @@ CREATE TABLE audit_logs (
 - **Penetration testing**: Quarterly red team exercises
 
 ### CI/CD Gates
-- **DLP recall**: 100% on golden dataset
+- **DLP recall**: 100% on every entity type asserted in `tests/data/goldens.jsonl`; recall outside the configured entity list is not claimed (ADR-002 decision 5)
 - **Approval workflow**: All state-changing tools require approval
 - **Audit chain**: Hash chain verification before merge
 - **Image pinning**: All third-party images pinned by digest

@@ -67,7 +67,7 @@ Bastion-Agent is **designed from the ground up** for Swiss-regulated environment
 
 ### 4. **Swiss Data Protection Act Compliance**
 
-- **Presidio DLP** detects PII categories (PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN, IP_ADDRESS, API_KEY, CREDIT_CARD, AWS_ACCESS_KEY_ID, GITHUB_TOKEN, PRIVATE_KEY). The pattern recognizers run in every language; the NER entities (PERSON, …) run only for languages with a model (English today), so a French, German or Italian prompt is scanned without being rewritten by the English model
+- **Presidio DLP** detects PII categories (PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN, IP_ADDRESS, API_KEY, CREDIT_CARD, ADDRESS, DATE_OF_BIRTH). The pattern recognizers run in every language; the NER entities (PERSON, …) run only for languages with a model (English today), so a French, German or Italian prompt is scanned without being rewritten by the English model. Any prompt where DLP finds personal data is answered on the local model, never sent to a third-party provider, and a local-model failure fails closed
 - **Reversible token vault** (Redis AES-256-GCM, 30-min TTL)
 - **Canary token injection** — session-unique `BASTION-CANARY-<uuid4>` in system prompt
 - **Egress filter** scans tool outputs for canary presence before return
