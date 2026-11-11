@@ -320,6 +320,8 @@ class _OnnxGraph:
 
         try:
             providers = _execution_providers(onnxruntime)
+            if "CUDAExecutionProvider" in providers:
+                _preload_cuda(onnxruntime)
             tokenizer = Tokenizer.from_file(str(tokenizer_path))
             tokenizer.no_truncation()
             session = onnxruntime.InferenceSession(
@@ -431,9 +433,14 @@ class SensitivityClassifier:
         safety_max_tokens: int | None = None,
         injection_threshold: float | None = None,
         safety_unsafe_threshold: float | None = None,
+        safety_unsafe_threshold_gpu: float | None = None,
         safety_category_threshold: float | None = None,
         injection_model_sha256: str | None = None,
         safety_model_sha256: str | None = None,
+        injection_model_gpu_path: str | None = None,
+        safety_model_gpu_path: str | None = None,
+        injection_model_gpu_sha256: str | None = None,
+        safety_model_gpu_sha256: str | None = None,
         injection_predictor: _InjectionPredictor | None = None,
         safety_predictor: _SafetyPredictor | None = None,
         rules_floor: bool = True,
@@ -446,13 +453,31 @@ class SensitivityClassifier:
         self._threshold = (
             settings.classifier_confidence_threshold if threshold is None else threshold
         )
+        self._injection = injection_predictor
+        self._safety = safety_predictor
+        self._rules_floor = rules_floor
+        # A CUDA session runs the fp32 graphs: the int8 matmuls have no CUDA
+        # kernel, and the fp32 ones are what meet the budget on the device
+        # (ADR-011, measured 2026-11-11). The provider is resolved once, before
+        # the thresholds, because the fp32 graph has its own unsafe operating
+        # point: it scores the benign prompt-engineering explainer 0.570 against
+        # the int8 graph's 0.364.
+        builds = (injection_predictor is None and injection_model_path is not None) or (
+            safety_predictor is None and safety_model_path is not None
+        )
+        provider = _provider_choice() if builds else None
+        unsafe = _operating_unsafe_threshold(
+            provider=provider,
+            gpu_graph_configured=safety_model_gpu_path is not None,
+            explicit=safety_unsafe_threshold,
+            gpu=safety_unsafe_threshold_gpu,
+            default=settings.classifier_safety_unsafe_threshold,
+        )
         self._thresholds = EnsembleThresholds(
             injection=settings.injection_threshold
             if injection_threshold is None
             else injection_threshold,
-            unsafe=settings.classifier_safety_unsafe_threshold
-            if safety_unsafe_threshold is None
-            else safety_unsafe_threshold,
+            unsafe=unsafe,
             category=settings.classifier_safety_category_threshold
             if safety_category_threshold is None
             else safety_category_threshold,
@@ -461,9 +486,22 @@ class SensitivityClassifier:
         if self._max_tokens <= 0:
             raise ValueError("max_tokens must be positive")
 
-        self._injection = injection_predictor
-        self._safety = safety_predictor
-        self._rules_floor = rules_floor
+        if self._injection is None and injection_model_path is not None:
+            injection_model_path, injection_model_sha256 = _graph_for_provider(
+                provider=provider if provider is not None else "cpu",
+                cpu_path=injection_model_path,
+                cpu_sha256=injection_model_sha256,
+                gpu_path=injection_model_gpu_path,
+                gpu_sha256=injection_model_gpu_sha256,
+            )
+        if self._safety is None and safety_model_path is not None:
+            safety_model_path, safety_model_sha256 = _graph_for_provider(
+                provider=provider if provider is not None else "cpu",
+                cpu_path=safety_model_path,
+                cpu_sha256=safety_model_sha256,
+                gpu_path=safety_model_gpu_path,
+                gpu_sha256=safety_model_gpu_sha256,
+            )
         if self._injection is None and injection_model_path is not None:
             self._injection = _OnnxInjectionModel(
                 self._build_graph(
@@ -723,6 +761,74 @@ def _windows(ids: list[int], window: int) -> list[list[int]]:
     return [ids[start : start + window] for start in range(0, len(ids), stride)]
 
 
+def _graph_for_provider(
+    *,
+    provider: str,
+    cpu_path: str,
+    cpu_sha256: str | None,
+    gpu_path: str | None,
+    gpu_sha256: str | None,
+) -> tuple[str, str | None]:
+    """Pick the graph that matches the resolved execution provider.
+
+    The int8 graphs are the CPU path; the fp32 graphs are the CUDA path, because
+    ``MatMulInteger`` has no CUDA kernel (ADR-011). A CUDA session without a
+    configured GPU graph keeps the configured one rather than failing.
+    """
+    if provider == "cuda" and gpu_path:
+        return gpu_path, gpu_sha256
+    return cpu_path, cpu_sha256
+
+
+def _operating_unsafe_threshold(
+    *,
+    provider: str | None,
+    gpu_graph_configured: bool,
+    explicit: float | None,
+    gpu: float | None,
+    default: float,
+) -> float:
+    """The ``unsafe`` operating point for the selected graph.
+
+    The fp32 GPU graph is calibrated separately (ADR-011 decision 7): it scores
+    the benign prompt-engineering explainer 0.570, so the int8 operating point
+    of 0.5 would turn it into a false positive. An explicit caller value wins,
+    then the GPU value, then the configured default.
+    """
+    if explicit is not None:
+        return explicit
+    if provider == "cuda" and gpu_graph_configured and gpu is not None:
+        return gpu
+    return default
+
+
+def _provider_choice() -> str:
+    """``cuda`` when the resolved provider order leads with CUDA, else ``cpu``."""
+    import onnxruntime
+
+    return "cuda" if _execution_providers(onnxruntime)[0] == "CUDAExecutionProvider" else "cpu"
+
+
+def _preload_cuda(onnxruntime: Any) -> None:
+    """Load pip-installed CUDA/cuDNN libraries before a CUDA session opens.
+
+    ``onnxruntime-gpu[cuda,cudnn]`` ships the shared libraries inside the
+    environment; without ``preload_dlls()`` the container has to carry an
+    ``LD_LIBRARY_PATH`` that points at the wheel tree. A failure is not fatal:
+    the session then falls back to the CPU execution provider.
+    """
+    preload = getattr(onnxruntime, "preload_dlls", None)
+    if preload is None:  # pragma: no cover - CPU wheel never reaches here
+        return
+    try:
+        preload()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "CUDA library preload failed; the session may fall back to the CPU",
+            extra={"error": type(exc).__name__},
+        )
+
+
 def _execution_providers(onnxruntime: Any) -> list[str]:
     """Resolve the execution provider order from ``CLASSIFIER_EXECUTION_PROVIDER``.
 
@@ -732,6 +838,9 @@ def _execution_providers(onnxruntime: Any) -> list[str]:
     therefore the default. ``cuda`` is opt-in and fails closed when the
     interpreter has no CUDA provider, so an operator never believes a graph is
     on the device while it runs on the CPU. ``auto`` prefers CUDA when present.
+    The CUDA order is paired with the fp32 graphs in the constructor, because
+    those are the graphs with real CUDA kernels and the ones that meet the
+    latency budget on the device.
     """
     available = set(onnxruntime.get_available_providers())
     if "CPUExecutionProvider" not in available:  # pragma: no cover - always present
@@ -782,10 +891,14 @@ def get_classifier() -> SensitivityClassifier:
         injection_max_tokens=settings.classifier_injection_max_tokens,
         safety_max_tokens=settings.classifier_safety_max_tokens,
         injection_threshold=settings.injection_threshold,
-        safety_unsafe_threshold=settings.classifier_safety_unsafe_threshold,
+        safety_unsafe_threshold_gpu=settings.classifier_safety_unsafe_threshold_gpu,
         safety_category_threshold=settings.classifier_safety_category_threshold,
         injection_model_sha256=settings.classifier_injection_model_sha256,
         safety_model_sha256=settings.classifier_safety_model_sha256,
+        injection_model_gpu_path=settings.classifier_injection_model_gpu_path,
+        safety_model_gpu_path=settings.classifier_safety_model_gpu_path,
+        injection_model_gpu_sha256=settings.classifier_injection_model_gpu_sha256,
+        safety_model_gpu_sha256=settings.classifier_safety_model_gpu_sha256,
         rules_floor=settings.classifier_rules_floor,
         require_models=settings.environment != "local",
     )

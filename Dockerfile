@@ -47,3 +47,23 @@ USER bastion
 EXPOSE 8000
 
 CMD ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+
+# =============================================================================
+# GPU variant (ADR-011): the same image with onnxruntime-gpu instead of the CPU
+# wheel, so a CUDA session can run the fp32 graphs. The CPU execution provider
+# stays in the wheel, which is the fallback when no device is visible.
+#
+#   docker build --target runtime-gpu -t bastion-agent:gpu .
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# The CPU wheel is removed first: both distributions install the `onnxruntime`
+# package, and uninstalling after the GPU wheel would delete shared files.
+# =============================================================================
+FROM runtime AS runtime-gpu
+
+USER root
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip uninstall --python /app/.venv/bin/python onnxruntime \
+ && uv pip install --python /app/.venv/bin/python --no-cache-dir \
+      "onnxruntime-gpu[cuda,cudnn]==1.31.1"
+USER bastion

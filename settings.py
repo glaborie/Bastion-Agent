@@ -161,6 +161,12 @@ class Settings(BaseSettings):
     classifier_injection_threshold: float | None = None
     #: ``unsafe >= 0.5`` flags the prompt for review (ADR-011).
     classifier_safety_unsafe_threshold: float = 0.5
+    #: Operating point for the fp32 GPU graph, calibrated separately: the fp32
+    #: graph scores the benign prompt-engineering explainer 0.570 against the
+    #: int8 graph's 0.364, so the CPU value would add a benign false positive.
+    #: Empty means "use the CPU value"; the setting is ignored unless the CUDA
+    #: session selected a configured GPU graph.
+    classifier_safety_unsafe_threshold_gpu: float | None = None
     #: ``privacy``, ``fraud_manipulation``, ``criminal_planning`` and
     #: ``unauthorized_advice`` at or above this route CONFIDENTIAL.
     classifier_safety_category_threshold: float = 0.3
@@ -168,6 +174,17 @@ class Settings(BaseSettings):
     #: operator cannot silently run a different quantisation.
     classifier_injection_model_sha256: str | None = None
     classifier_safety_model_sha256: str | None = None
+    #: Full-precision graphs used when the resolved provider is CUDA. The int8
+    #: graphs above keep the CPU path fast; the fp32 graphs are the only ones
+    #: with real CUDA kernels, so they replace the int8 graphs on the device
+    #: (ADR-011, measured 2026-11-11). Leave empty to run the configured graph
+    #: on CUDA anyway (slower, but functional).
+    classifier_injection_model_gpu_path: str | None = None
+    classifier_safety_model_gpu_path: str | None = None
+    #: Digests for the GPU graphs. Verified with the same contract as the CPU
+    #: digests when the GPU path is selected.
+    classifier_injection_model_gpu_sha256: str | None = None
+    classifier_safety_model_gpu_sha256: str | None = None
     #: Keep the deterministic rule classifier as a floor when the ensemble is
     #: active. The safety model detects harmful content, not corporate
     #: confidentiality markings ("strictly confidential", board minutes,
@@ -179,7 +196,9 @@ class Settings(BaseSettings):
     #: quantised matmuls have no CUDA kernel and shuttle their tensors over
     #: PCIe (ADR-011, measured 2026-11-10). ``cuda`` requires the
     #: ``onnxruntime-gpu`` wheel and fails closed without it; ``auto`` prefers
-    #: CUDA when the interpreter provides it.
+    #: CUDA when the interpreter provides it. A CUDA session uses the fp32
+    #: graphs when ``*_GPU_PATH`` is set, because those are the graphs with
+    #: real CUDA kernels and the only ones that meet the 50 ms budget.
     classifier_execution_provider: Literal["cpu", "cuda", "auto"] = "cpu"
 
     # -- HITL approvals ----------------------------------------------------
@@ -252,7 +271,12 @@ class Settings(BaseSettings):
         "classifier_safety_tokenizer_path",
         "classifier_injection_model_sha256",
         "classifier_safety_model_sha256",
+        "classifier_injection_model_gpu_path",
+        "classifier_safety_model_gpu_path",
+        "classifier_injection_model_gpu_sha256",
+        "classifier_safety_model_gpu_sha256",
         "classifier_injection_threshold",
+        "classifier_safety_unsafe_threshold_gpu",
         mode="before",
     )
     @classmethod
@@ -289,6 +313,7 @@ class Settings(BaseSettings):
         "classifier_confidence_threshold",
         "classifier_injection_threshold",
         "classifier_safety_unsafe_threshold",
+        "classifier_safety_unsafe_threshold_gpu",
         "classifier_safety_category_threshold",
         "dlp_score_threshold",
     )
@@ -356,7 +381,12 @@ class Settings(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {sorted(allowed)}")
         return level
 
-    @field_validator("classifier_injection_model_sha256", "classifier_safety_model_sha256")
+    @field_validator(
+        "classifier_injection_model_sha256",
+        "classifier_safety_model_sha256",
+        "classifier_injection_model_gpu_sha256",
+        "classifier_safety_model_gpu_sha256",
+    )
     @classmethod
     def _validate_sha256(cls, value: str | None) -> str | None:
         if value is None:

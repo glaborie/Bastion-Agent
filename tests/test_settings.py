@@ -41,6 +41,34 @@ def test_canary_prefix_at_the_floor_is_accepted() -> None:
     assert make_settings(canary_prefix=prefix).canary_prefix == prefix
 
 
+def test_gpu_graph_digests_are_validated_like_the_cpu_ones() -> None:
+    settings = make_settings()
+    assert settings.classifier_injection_model_gpu_path is None
+    assert settings.classifier_safety_model_gpu_sha256 is None
+    assert settings.classifier_safety_unsafe_threshold_gpu is None
+    assert settings.classifier_execution_provider == "cpu"
+
+    digest = "a" * 64
+    assert (
+        make_settings(
+            classifier_injection_model_gpu_path="models/injection/onnx/model.onnx",
+            classifier_injection_model_gpu_sha256=digest,
+        ).classifier_injection_model_gpu_sha256
+        == digest
+    )
+    with pytest.raises(ValidationError, match="64 hexadecimal"):
+        make_settings(classifier_safety_model_gpu_sha256="not-a-digest")
+    # An empty value is "not pinned", not a malformed digest.
+    blank = make_settings(classifier_safety_model_gpu_sha256="  ")
+    assert blank.classifier_safety_model_gpu_sha256 is None
+
+    # The fp32 operating point is a ratio like the int8 one.
+    calibrated = make_settings(classifier_safety_unsafe_threshold_gpu=0.6)
+    assert calibrated.classifier_safety_unsafe_threshold_gpu == 0.6
+    with pytest.raises(ValidationError, match=r"within \[0\.0, 1\.0\]"):
+        make_settings(classifier_safety_unsafe_threshold_gpu=1.5)
+
+
 def test_vault_key_must_decode_to_32_bytes() -> None:
     short_key = base64.b64encode(b"sixteen-byte-key").decode()
     with pytest.raises(ValidationError, match="exactly 32 bytes"):

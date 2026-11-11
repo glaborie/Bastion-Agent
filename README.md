@@ -345,13 +345,20 @@ corpus is a calibration set, not held-out evidence.
 
 Latency is measured, not assumed: `scripts/measure_classifier_latency.py`
 reports percentiles per prompt on the configured provider and samples GPU
-memory. On the 2026-11-10 run the ensemble costs 22–40 ms p50 (p95 ≤ 51 ms) on
-the CPU for prompt-sized input and ~1.6 s for a 1,000-token memo that is
-windowed; a CUDA session was 1.4–2× *slower*, because `MatMulInteger` and
-`DynamicQuantizeLinear` fall back to the CPU and the copies cost more than the
-matmuls they surround. `CLASSIFIER_EXECUTION_PROVIDER` therefore defaults to
-`cpu`; `cuda` is opt-in, needs `onnxruntime-gpu`, and fails closed without it
-(ADR-011 records the numbers and the 1.24 GiB VRAM peak).
+memory, and `scripts/benchmark_classifier_goldens.py` times `classify()` over
+the whole golden corpus. On the 2026-11-10 run the int8 ensemble costs 22–40 ms
+p50 (p95 ≤ 51 ms) on the CPU for prompt-sized input and ~1.6 s for a
+1,000-token memo that is windowed. The int8 graphs are *slower* on CUDA, because
+`MatMulInteger` and `DynamicQuantizeLinear` fall back to the CPU and the copies
+cost more than the matmuls they surround; the pinned repositories also ship
+fp32 graphs with real CUDA kernels, and those report p95 40.5 ms over the
+corpus on an RTX 3060 Ti (2026-11-11). `CLASSIFIER_EXECUTION_PROVIDER`
+therefore defaults to `cpu`; a GPU deployment builds the `runtime-gpu` image
+variant and uses `docker-compose.gpu.yml`, which sets `auto` and the fp32
+graphs (`CLASSIFIER_*_MODEL_GPU_PATH`) with the separately calibrated
+`CLASSIFIER_SAFETY_UNSAFE_THRESHOLD_GPU=0.6`. `cuda` needs `onnxruntime-gpu`
+and fails closed without it; the fp32 sessions reserve ~1.27 GiB, so only the
+gateway opens them (ADR-011 records the numbers).
 
 Demo the whole thing with:
 

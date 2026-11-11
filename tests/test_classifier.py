@@ -17,7 +17,9 @@ from agent.routing.classifier import (
     Sensitivity,
     SensitivityClassifier,
     _execution_providers,
+    _graph_for_provider,
     _OnnxGraph,
+    _operating_unsafe_threshold,
     _sigmoid,
     _softmax,
     _windows,
@@ -489,3 +491,49 @@ def test_auto_prefers_cuda_and_falls_back_to_cpu(monkeypatch: pytest.MonkeyPatch
         "CPUExecutionProvider",
     ]
     assert _execution_providers(_FakeOrt("CPUExecutionProvider")) == ["CPUExecutionProvider"]
+
+
+def test_cuda_selects_the_fp32_graph_and_cpu_keeps_the_int8_one() -> None:
+    cpu = ("models/search/onnx/model_quantized.onnx", "cpu-digest")
+    gpu = ("models/search/onnx/model.onnx", "gpu-digest")
+
+    def select(provider: str, gpu_path: str | None = gpu[0]) -> tuple[str, str | None]:
+        return _graph_for_provider(
+            provider=provider,
+            cpu_path=cpu[0],
+            cpu_sha256=cpu[1],
+            gpu_path=gpu_path,
+            gpu_sha256=gpu[1],
+        )
+
+    assert select("cpu") == cpu
+    assert select("cuda") == gpu
+    # A CUDA session without a configured GPU graph keeps the configured one
+    # rather than failing: slower, but the route still classifies.
+    assert select("cuda", gpu_path=None) == cpu
+
+
+def test_unsafe_threshold_follows_the_selected_graph() -> None:
+    def threshold(
+        provider: str | None,
+        gpu_graph_configured: bool,
+        *,
+        explicit: float | None = None,
+        gpu: float | None = 0.6,
+    ) -> float:
+        return _operating_unsafe_threshold(
+            provider=provider,
+            gpu_graph_configured=gpu_graph_configured,
+            explicit=explicit,
+            gpu=gpu,
+            default=0.5,
+        )
+
+    assert threshold("cpu", True) == 0.5
+    assert threshold("cuda", False) == 0.5
+    assert threshold(None, True) == 0.5
+    assert threshold("cuda", True) == 0.6
+    # An explicit caller value wins over the graph-specific calibration.
+    assert threshold("cuda", True, explicit=0.7) == 0.7
+    # No GPU calibration keeps the CPU value on CUDA too.
+    assert threshold("cuda", True, gpu=None) == 0.5

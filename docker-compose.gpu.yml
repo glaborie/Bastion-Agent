@@ -1,0 +1,32 @@
+# =============================================================================
+# GPU override for the Bastion-Agent stack (ADR-011)
+# -----------------------------------------------------------------------------
+# Adds the CUDA-capable image variant and exposes the device to the app tier:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# The classifier lives in the gateway (the worker only closes the router on
+# shutdown), but both services get the device so a future tool-side call does
+# not need a compose change. `CLASSIFIER_EXECUTION_PROVIDER=auto` selects CUDA
+# when the interpreter and a device provide it and falls back to the CPU
+# execution provider otherwise; a CUDA session selects the fp32 graphs, which
+# are the ones with real CUDA kernels and meet the 50 ms budget (ADR-011).
+#
+# Do not use this file on a host without an NVIDIA device: `gpus: all` fails
+# the container start. The base file stays the CPU-only deployment.
+# =============================================================================
+
+services:
+  gateway:
+    build:
+      target: runtime-gpu
+    gpus: all
+    environment:
+      CLASSIFIER_EXECUTION_PROVIDER: ${CLASSIFIER_EXECUTION_PROVIDER:-auto}
+
+  worker:
+    build:
+      target: runtime-gpu
+    gpus: all
+    environment:
+      CLASSIFIER_EXECUTION_PROVIDER: ${CLASSIFIER_EXECUTION_PROVIDER:-auto}
