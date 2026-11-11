@@ -37,7 +37,7 @@ from tests.conftest import requires_database
 pytestmark = [pytest.mark.integration, requires_database]
 
 KEY = b"a" * 32
-PREFIX = "CANARY-"
+PREFIX = "BASTION-CANARY-"
 CONVERSATION = "conv-1"
 
 ALICE = Principal(subject="alice-sub", username="alice", roles=frozenset({"operator"}))
@@ -90,7 +90,7 @@ class StubRouter:
         resolved = decision or self._decision()
         if self.echo_canary:
             system = next(message for message in messages if message.role == "system")
-            match = re.search(r"CANARY-[0-9a-f-]{36}", system.content)
+            match = re.search(rf"{re.escape(PREFIX)}[0-9a-f-]{{36}}", system.content)
             content = match.group(0) if match else "no canary found"
         elif self.echo_last_user:
             content = next(
@@ -200,7 +200,7 @@ async def test_public_turn_is_restored_and_fully_audited(chat_api: Harness) -> N
 
     sent = chat_api.stub.sent[0]
     system = next(message for message in sent if message.role == "system")
-    assert "CANARY-" in system.content
+    assert PREFIX in system.content
     user = next(message for message in sent if message.role == "user")
     assert "alice@example.com" not in user.content
     assert "{{ENTITY:EMAIL_ADDRESS_1}}" in user.content
@@ -262,7 +262,7 @@ async def test_canary_leak_is_blocked_quarantined_and_audited(chat_api: Harness)
     response = await chat_api.client.post("/v1/chat", json=body("What is the capital of Peru?"))
 
     assert response.status_code == 502
-    assert "CANARY-" not in response.text
+    assert PREFIX not in response.text
     records = await events(chat_api)
     filtered = [r for r in records if r.event_type is AuditEventType.EGRESS_FILTERED]
     incidents = [r for r in records if r.event_type is AuditEventType.SECURITY_INCIDENT]

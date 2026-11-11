@@ -608,7 +608,7 @@ docker compose exec -T gateway python - < scripts/demo_egress.py
 
 Point out, in order:
 
-1. **One marker per session.** `CANARY-<uuid4>` is stable across turns and
+1. **One marker per session.** `BASTION-CANARY-<uuid4>` is stable across turns and
    different for a second session. The session key is derived from
    `actor_id + conversation_id`, never chosen by the caller.
 2. **Leak block.** The output repeats the marker: the delivered text is empty,

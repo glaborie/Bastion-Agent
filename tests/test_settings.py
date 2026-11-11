@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from settings import (
+    CANARY_PREFIX_MIN_LENGTH,
     DEV_APPROVAL_HMAC_SECRET,
     DEV_VAULT_MASTER_KEY,
     Settings,
@@ -24,6 +25,20 @@ def test_defaults_are_valid_for_local_development() -> None:
     assert len(settings.vault_key_bytes) == 32
     assert settings.vault_ttl_seconds == 1800
     assert settings.approval_ttl_seconds == 900
+    assert settings.canary_prefix == "BASTION-CANARY-"
+    assert len(settings.canary_prefix) >= CANARY_PREFIX_MIN_LENGTH
+
+
+@pytest.mark.parametrize("prefix", ["", "C", "CANARY-"])
+def test_canary_prefix_must_be_at_least_eight_characters(prefix: str) -> None:
+    with pytest.raises(ValidationError, match=r"CANARY_PREFIX must be at least 8"):
+        make_settings(canary_prefix=prefix)
+
+
+def test_canary_prefix_at_the_floor_is_accepted() -> None:
+    prefix = "EIGHTCHR"
+    assert len(prefix) == CANARY_PREFIX_MIN_LENGTH
+    assert make_settings(canary_prefix=prefix).canary_prefix == prefix
 
 
 def test_vault_key_must_decode_to_32_bytes() -> None:

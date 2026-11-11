@@ -454,7 +454,7 @@ one.
 
 ### Canary and quarantine
 
-Every session gets one `CANARY-<uuid4>` in Redis (30-minute TTL) and the marker
+Every session gets one `BASTION-CANARY-<uuid4>` in Redis (30-minute TTL) and the marker
 is appended to the system instructions with an explicit "never repeat this"
 rule. `inspect()` blocks on **any** token with the configured prefix, discards
 the response, and quarantines the session for `EGRESS_TRIP_TTL_SECONDS`

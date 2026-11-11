@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import functools
-from typing import Literal
+from typing import Final, Literal
 from urllib.parse import quote
 
 from pydantic import SecretStr, computed_field, field_validator, model_validator
@@ -23,6 +23,11 @@ DEV_APPROVAL_HMAC_SECRET = "dev-only-approval-hmac-secret-change-me"
 DEV_KEYCLOAK_CLIENT_SECRET = "dev-only-keycloak-client-secret"
 
 Environment = Literal["local", "ci", "staging", "production"]
+
+#: Minimum length of ``CANARY_PREFIX``. ``inspect()`` blocks any output that
+#: matches the configured prefix, so a short marker would quarantine ordinary
+#: text; the floor is enforced at startup rather than at the first request.
+CANARY_PREFIX_MIN_LENGTH: Final[int] = 8
 
 
 class Settings(BaseSettings):
@@ -223,8 +228,10 @@ class Settings(BaseSettings):
 
     # -- Egress sanitizer --------------------------------------------------
     #: Marker prefix embedded in the system instructions and scanned for in
-    #: model output. A hit quarantines the session.
-    canary_prefix: str = "CANARY-"
+    #: model output. A hit quarantines the session. Must be at least
+    #: :data:`CANARY_PREFIX_MIN_LENGTH` characters; a short marker matches
+    #: ordinary text and would quarantine benign answers.
+    canary_prefix: str = "BASTION-CANARY-"
     #: Quarantine window after a canary leak. Longer than one request and short
     #: enough that a false positive does not lock a conversation out for long.
     egress_trip_ttl_seconds: int = 900
@@ -252,6 +259,16 @@ class Settings(BaseSettings):
     def _blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("canary_prefix")
+    @classmethod
+    def _validate_canary_prefix(cls, value: str) -> str:
+        if len(value) < CANARY_PREFIX_MIN_LENGTH:
+            raise ValueError(
+                f"CANARY_PREFIX must be at least {CANARY_PREFIX_MIN_LENGTH} characters; "
+                f"got {len(value)}"
+            )
         return value
 
     @field_validator("vault_master_key")

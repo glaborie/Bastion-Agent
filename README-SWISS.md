@@ -69,7 +69,7 @@ Bastion-Agent is **designed from the ground up** for Swiss-regulated environment
 
 - **Presidio DLP** detects PII categories (PERSON, EMAIL_ADDRESS, PHONE_NUMBER, IBAN, IP_ADDRESS, API_KEY, CREDIT_CARD, AWS_ACCESS_KEY_ID, GITHUB_TOKEN, PRIVATE_KEY)
 - **Reversible token vault** (Redis AES-256-GCM, 30-min TTL)
-- **Canary token injection** — session-unique `CANARY-<uuid4>` in system prompt
+- **Canary token injection** — session-unique `BASTION-CANARY-<uuid4>` in system prompt
 - **Egress filter** scans tool outputs for canary presence before return
 
 ### 5. **Swiss Banking Act Art. 47 (Banking Secrecy) Enforcement**

@@ -32,7 +32,7 @@ from agent.egress.sanitizer import EgressSanitizer
 
 REDIS_TEST_URL: Final[str] = os.getenv("REDIS_TEST_URL", "")
 KEY: Final[bytes] = b"r" * 32
-PREFIX: Final[str] = "CANARY-"
+PREFIX: Final[str] = "BASTION-CANARY-"
 
 requires_redis = pytest.mark.skipif(
     not REDIS_TEST_URL,

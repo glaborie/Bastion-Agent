@@ -2,7 +2,7 @@
 
 Three controls sit between the model and the client (HANDOVER_SPEC §3.4):
 
-* **Canary tripwire** — every session carries a `CANARY-<uuid4>` marker injected
+* **Canary tripwire** — every session carries a `BASTION-CANARY-<uuid4>` marker injected
   into the system instructions. The model is told never to repeat it. If the
   marker (or any token with the configured prefix) reaches the response, the
   response is discarded, the session is quarantined for a fixed window and the
@@ -37,7 +37,7 @@ from redis.exceptions import RedisError
 
 from agent.dlp.vault import TOKEN_PATTERN, TokenVault, VaultError, get_vault
 from db.redis import get_redis
-from settings import get_settings
+from settings import CANARY_PREFIX_MIN_LENGTH, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +86,15 @@ class EgressSanitizer:
         settings = get_settings()
         self._vault = vault
         self._redis = redis
-        self._canary_prefix = canary_prefix or settings.canary_prefix
-        if not self._canary_prefix or not self._canary_prefix.strip():
-            raise ValueError("canary_prefix must not be empty")
+        self._canary_prefix = settings.canary_prefix if canary_prefix is None else canary_prefix
+        # A short prefix would match ordinary text and quarantine benign output,
+        # so the floor is shared with Settings (ADR-012) and enforced here too:
+        # an explicit override must not bypass the startup check.
+        if len(self._canary_prefix) < CANARY_PREFIX_MIN_LENGTH:
+            raise ValueError(
+                f"canary_prefix must be at least {CANARY_PREFIX_MIN_LENGTH} characters "
+                f"(CANARY_PREFIX); got {self._canary_prefix!r}"
+            )
         # Match the configured prefix, not a hard-coded one: an operator may
         # rename it, and scanning for the wrong string would disable the gate.
         self._canary_pattern = re.compile(re.escape(self._canary_prefix) + r"[0-9A-Za-z-]{6,}")

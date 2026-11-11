@@ -167,10 +167,10 @@ Bastion-Agent/
   - If public/non-sensitive: sets model alias to `cloud-primary` (dispatched by OmniRoute to OpenRouter).
 
 ### 3.4 Egress Filter & Indirect Prompt Injection Defense (`agent/egress/`)
-- Embed a session-unique UUID canary token (e.g., `CANARY-<uuid4>`) inside system instructions.
+- Embed a session-unique UUID canary token (e.g., `BASTION-CANARY-<uuid4>`) inside system instructions.
 - Sandboxes untrusted retrieved text and tool call outputs inside explicit `<untrusted_content>` XML fences.
 - Inspects model output before delivering to client:
-  - If `CANARY-` string is present in model output: immediately blocks response and flags security incident.
+  - If a token with the configured `CANARY_PREFIX` is present in model output: immediately blocks response and flags security incident.
   - Reversibly restores entity placeholders (`{{ENTITY:PERSON_1}}` -> `Alice`) from Redis vault for the authorized client's response.
 
 ### 3.5 Cryptographic Audit Trail (`db/models.py`)

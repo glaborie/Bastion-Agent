@@ -36,7 +36,7 @@ MODEL: Final[str] = os.getenv("LLAMA_CPP_MODEL", "local-model")
 API_KEY: Final[str] = os.getenv("LLAMA_CPP_API_KEY", "dev-only-llama-api-key")
 TIMEOUT: Final[float] = float(os.getenv("LLAMA_CPP_TIMEOUT_SECONDS", "120"))
 KEY: Final[bytes] = b"m" * 32
-PREFIX: Final[str] = "CANARY-"
+PREFIX: Final[str] = "BASTION-CANARY-"
 
 requires_model = pytest.mark.skipif(
     not BASE_URL,

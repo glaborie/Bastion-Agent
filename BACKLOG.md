@@ -29,10 +29,9 @@ must not be edited by hand.
 - `IDEA-015` P2 v0.3 security - Detect or prevent semantic system-prompt disclosure at egress
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 
-### Ready (2)
+### Ready (1)
 
 - `IDEA-003` P1 v0.2 agent - Route the ONNX ensemble to GPU to meet the 50 ms classify budget
-- `IDEA-005` P1 v0.2 security - Reject canary prefixes shorter than eight characters at startup
 
 ### Active (0)
 
@@ -42,8 +41,9 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (3)
+### Done (4)
 
+- `IDEA-005` P1 v0.2 security - Reject canary prefixes shorter than eight characters at startup
 - `IDEA-006` P3 v0.2 docs - Add a deterministic egress canary demo
 - `IDEA-008` P1 v0.2 evals - Make the eval gate bit-reproducible across hosted runners
 - `IDEA-011` P1 v0.2 docs - Reconcile the CONTROL.md dashboard rate-limit claim with the gateway
@@ -60,7 +60,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-002 | inbox | P1 | v0.2 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
 | IDEA-003 | ready | P1 | v0.2 | agent | Route the ONNX ensemble to GPU to meet the 50 ms classify budget |
 | IDEA-004 | blocked | P2 | v0.3 | db | Export the audit ledger asynchronously for retention |
-| IDEA-005 | ready | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
+| IDEA-005 | done | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
 | IDEA-006 | done | P3 | v0.2 | docs | Add a deterministic egress canary demo |
 | IDEA-007 | inbox | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
 | IDEA-008 | done | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
@@ -207,7 +207,7 @@ with a manifest, and verification can be rerun against an exported segment.
 
 ### IDEA-005: Reject canary prefixes shorter than eight characters at startup
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.2
 - area: security
@@ -215,26 +215,34 @@ with a manifest, and verification can be rerun against an exported segment.
 - depends-on: -
 - spec: ADR-012
 - created: 2026-11-10
-- updated: 2026-11-10
-- source: review of EGRESS_CANARY_PREFIX handling
+- updated: 2026-11-11
+- source: review of CANARY_PREFIX handling
 
 **Problem**
 
-`EGRESS_CANARY_PREFIX` is read from the environment and used as the
+`CANARY_PREFIX` is read from the environment and used as the
 match token for `inspect()`. An empty or one-character prefix either blocks every
-response or matches arbitrary text, and nothing rejects it at startup.
+response or matches arbitrary text, and nothing rejected it at startup.
 
 **Outcome**
 
 Settings refuse a prefix shorter than eight characters, the failure is
-explicit at boot rather than at the first request, and a test pins the minimum.
+explicit at boot rather than at the first request, and tests pin the minimum.
 
 **Acceptance**
 
-- [ ] Settings validation rejects prefixes shorter than 8 characters
-- [ ] Startup failure names the variable and the minimum length
-- [ ] A test covers empty, one-character and valid prefixes
-- [ ] `.env.example` documents the constraint
+- [x] Settings validation rejects prefixes shorter than 8 characters
+- [x] Startup failure names the variable and the minimum length
+- [x] A test covers empty, one-character and valid prefixes
+- [x] `.env.example` documents the constraint
+
+**Notes**
+
+- The acceptance floor of 8 exposed a conflict: the shipped default `CANARY-` is 7 characters, so enforcing it as written would have made the default configuration unstartable. The default is now `BASTION-CANARY-` (15 characters); the alternative of lowering the floor to 7 was rejected because it leaves the shipped marker one character above the dangerous range. Recorded in ADR-012 decision 1.
+- The floor is enforced twice: `Settings._validate_canary_prefix` rejects it at startup with `CANARY_PREFIX must be at least 8 characters; got N`, and `EgressSanitizer` applies the same check to an explicit `canary_prefix=` override so a test fixture or script cannot bypass the boot check. `canary_prefix=""` now raises instead of silently falling back to the configured default.
+- Upgrade note: canaries already in Redis keep the old `CANARY-` format until their 30-minute TTL lapses, and the new pattern does not match them. Restarting a deployment with the new default therefore leaves a TTL-bounded window in which a pre-upgrade marker would not trip the gate; drain sessions or accept the window. Recorded in ADR-012 decision 1.
+- Files changed: `settings.py` (constant, default, validator), `agent/egress/sanitizer.py` (floor and override handling), `.env.example`, `docker-compose.yml`, the five test modules that pin the prefix, `scripts/demo_egress.py`, and the ADR/README/SECURITY/THREAT_MODEL/DEMO/HANDOVER_SPEC references to the marker format.
+- Verification: `ruff check .` clean, `ruff format --check .` clean, `mypy` clean on the gate targets, `pylint` 10.00/10, full `pytest` 609 passed / 2 skipped (the two `model_integration` probes, no `LLAMA_CPP_BASE_URL`), and `check_adrs.py`, `validate_tool_catalog.py --check`, `validate_rbac.py`, `recalculate_dread.py --check` all pass.
 
 ### IDEA-006: Add a deterministic egress canary demo
 

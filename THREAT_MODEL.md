@@ -134,7 +134,7 @@ Two facts shape the model:
 - References: `LLM08:2026` (Hidden Context Exposure), `AML.T0056`
 - Attack: the user coaxes the model into revealing its instructions.
 - Controls:
-  - LIVE: one `CANARY-<uuid4>` per vault session. It is random, not derived from the session id.
+  - LIVE: one `BASTION-CANARY-<uuid4>` per vault session. It is random, not derived from the session id.
   - LIVE: the output scan matches any token with the configured prefix, not only the current session's value. A hit discards the response, writes a `SECURITY_INCIDENT` and quarantines the session (default 900 s). The quarantine check runs before the next inference call.
   - LIVE: if Redis is unreachable the gateway returns 503. It never delivers an unscanned response.
 - Residual risk: the canary detects verbatim leakage only. Paraphrased or partial extraction is not detected. The system prompt contains no secrets by design, which limits the impact.

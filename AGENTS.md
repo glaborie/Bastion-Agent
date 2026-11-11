@@ -42,7 +42,7 @@ Your task is to build out the entire repository from scratch according to `HANDO
 
 ### Milestone 5: Egress Sanitizer, Canary Tripwires & Audit Logger
 1. Implement `agent/egress/sanitizer.py`:
-   - Injects session-unique `CANARY-<uuid>` into system prompts.
+   - Injects session-unique `BASTION-CANARY-<uuid>` into system prompts.
    - Wraps external/tool outputs in `<untrusted_content>` isolation boundaries.
    - Scans output for canary string; trips circuit breaker if leaked.
    - Restores reversible entity tokens for authorized recipient.

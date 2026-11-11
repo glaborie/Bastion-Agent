@@ -68,7 +68,7 @@ Bastion-Agent is a **high-assurance, zero-trust AI agent harness** designed for 
 - **No plaintext PII** in audit logs or model outputs
 
 ### Canary Injection
-- **Mechanism**: Session-unique `CANARY-<uuid4>` in system prompt
+- **Mechanism**: Session-unique `BASTION-CANARY-<uuid4>` in system prompt
 - **Detection**: Egress filter scans tool outputs for canary presence
 - **Response**: Circuit breaker trips; response blocked
 
