@@ -20,7 +20,7 @@ OTEL_DIR: Final[Path] = Path("config/otel")
 BASE: Final[Path] = OTEL_DIR / "otel-collector-config.yaml"
 EXPORT: Final[Path] = OTEL_DIR / "otel-collector-export.yaml"
 NO_EXPORT: Final[Path] = OTEL_DIR / "otel-collector-no-export.yaml"
-OPENLIT: Final[Path] = OTEL_DIR / "otel-collector-openlit.yaml"
+OPIK: Final[Path] = OTEL_DIR / "otel-collector-opik.yaml"
 COMPOSE: Final[Path] = Path("docker-compose.yml")
 
 
@@ -39,7 +39,7 @@ def pipeline_exporters(document: dict[str, Any]) -> list[str]:
 def test_base_definition_owns_the_remote_exporter_settings() -> None:
     """The overlays only choose *which* exporters run; the base defines them."""
     exporters = load(BASE)["exporters"]
-    assert set(exporters) >= {"debug", "otlphttp/langfuse", "otlphttp/arize", "otlphttp/openlit"}
+    assert set(exporters) >= {"debug", "otlphttp/langfuse", "otlphttp/arize", "otlphttp/opik"}
 
     langfuse = exporters["otlphttp/langfuse"]
     assert langfuse["endpoint"] == "${env:LANGFUSE_OTLP_ENDPOINT}"
@@ -54,28 +54,31 @@ def test_base_definition_owns_the_remote_exporter_settings() -> None:
     assert arize["compression"] == "none"
     assert arize["headers"]["x-project-name"] == "${env:ARIZE_PROJECT_NAME}"
 
-    # OpenLit is a real OTLP collector, so it takes the exporter defaults
-    # (protobuf, gzip) — only the endpoint and API-key header are set here.
-    openlit = exporters["otlphttp/openlit"]
-    assert openlit["endpoint"] == "${env:OPENLIT_OTLP_ENDPOINT}"
-    assert openlit["headers"]["x-openlit-api-key"] == "${env:OPENLIT_OTLP_AUTH}"
+    # Opik Cloud is a real OTLP endpoint, so it takes the exporter defaults
+    # (protobuf, gzip) — only the endpoint and the three routing/auth headers.
+    opik = exporters["otlphttp/opik"]
+    assert opik["endpoint"] == "${env:OPIK_OTLP_ENDPOINT}"
+    assert opik["headers"]["Authorization"] == "${env:OPIK_API_KEY}"
+    assert opik["headers"]["Comet-Workspace"] == "${env:OPIK_WORKSPACE}"
+    assert opik["headers"]["projectName"] == "${env:OPIK_PROJECT_NAME}"
 
 
-def test_openlit_overlay_stays_on_the_host() -> None:
-    """The local fan-out must be selectable without touching the cloud files."""
-    assert pipeline_exporters(load(OPENLIT)) == ["debug", "otlphttp/openlit"]
+def test_opik_overlay_sends_traces_off_the_host() -> None:
+    """Opik Cloud is the cloud option, selected without touching the base file."""
+    assert pipeline_exporters(load(OPIK)) == ["debug", "otlphttp/opik"]
 
     text = COMPOSE.read_text(encoding="utf-8")
-    # OpenLit is published on the host, so the collector needs the mapping.
-    assert '"host.docker.internal:host-gateway"' in text
-    assert "OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-http://host.docker.internal:4320}" in (
-        text
+    assert (
+        "OPIK_OTLP_ENDPOINT: ${OPIK_OTLP_ENDPOINT:-https://www.comet.com/opik/api/v1/private/otel}"
+        in (text)
     )
+    assert "OPIK_API_KEY: ${OPIK_API_KEY:-}" in text
+    # The endpoint is a cloud URL; no host-gateway mapping is needed for it, and
+    # keeping one would suggest a local collector that no longer exists.
+    assert "host.docker.internal" not in text
 
 
-@pytest.mark.parametrize(
-    "overlay", [EXPORT, NO_EXPORT, OPENLIT], ids=["export", "no-export", "openlit"]
-)
+@pytest.mark.parametrize("overlay", [EXPORT, NO_EXPORT, OPIK], ids=["export", "no-export", "opik"])
 def test_overlays_only_name_exporters_the_base_defines(overlay: Path) -> None:
     defined = set(load(BASE)["exporters"])
     named = set(pipeline_exporters(load(overlay)))
@@ -114,6 +117,25 @@ def test_pipeline_drops_caller_controlled_noise() -> None:
 
     pipeline = load(BASE)["service"]["pipelines"]["traces"]["processors"]
     assert pipeline.index("filter/noise") < pipeline.index("batch"), pipeline
+
+
+def test_opik_endpoint_stays_a_base_url() -> None:
+    """The exporter appends /v1/traces; the SDK-doc form is a silent no-op.
+
+    Opik's SDK examples set ``OTEL_EXPORTER_OTLP_ENDPOINT`` to the signal URL
+    (``.../otel/v1/traces``) because the Python exporter does not append the
+    path. The collector's ``otlphttp`` exporter does, so copying that value
+    yields ``.../otel/v1/traces/v1/traces`` and every batch is rejected.
+    """
+    text = COMPOSE.read_text(encoding="utf-8")
+    match = re.search(r"OPIK_OTLP_ENDPOINT: \$\{OPIK_OTLP_ENDPOINT:-([^}]+)\}", text)
+    assert match, "docker-compose.yml no longer defaults OPIK_OTLP_ENDPOINT"
+    assert match.group(1).rstrip("/").endswith("/api/v1/private/otel"), match.group(1)
+    example = Path(".env.example").read_text(encoding="utf-8")
+    assert "\nOPIK_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel\n" in example
+    assert "\nOPIK_API_KEY=\n" in example
+    assert "\nOPIK_WORKSPACE=default\n" in example
+    assert "\nOPIK_PROJECT_NAME=bastion\n" in example
 
 
 def test_arize_endpoint_stays_a_base_url() -> None:

@@ -830,7 +830,7 @@ combo. It requires `OPENROUTER_API_KEY` in `.env`.
 
 ---
 
-## Observability (Langfuse Cloud + Arize AX + local OpenLit)
+## Observability (Langfuse Cloud + Arize AX + Opik Cloud)
 
 The gateway and worker export OTLP/HTTP spans to `otel-collector`. The base
 config (`config/otel/otel-collector-config.yaml`) owns the receiver,
@@ -842,7 +842,7 @@ setting lives in one place.
 | Overlay (`OTEL_REMOTE_EXPORT_CONFIG`) | Egress |
 |---|---|
 | `otel-collector-no-export.yaml` (default) | collector log only |
-| `otel-collector-openlit.yaml` | collector log + self-hosted OpenLit |
+| `otel-collector-opik.yaml` | collector log + Opik Cloud (traces leave the host) |
 | `otel-collector-export.yaml` | collector log + Langfuse + Arize |
 
 Local-only is the default so a checkout without backend credentials never posts
@@ -921,31 +921,41 @@ content, an instruction-extraction probe, and a three-turn thread that keeps one
 conversation id. Each line reports the classification, route and confidence the
 classifier produced; the model's text is not printed, only its length.
 
-### Local OpenLit instead of a cloud backend
+### Opik Cloud instead of the Langfuse/Arize fan-out
 
-A self-hosted OpenLit is the unmetered option: traces never leave the host and
-its UI stays queryable. Point the collector at the OpenLit OTLP/HTTP port with
-`OPENLIT_OTLP_ENDPOINT` / `OPENLIT_OTLP_AUTH` in `.env`, select the OpenLit
-overlay, and recreate the collector:
+Opik is the evaluation workbench this repository uses for traces and experiments,
+so the collector can ship the same payload-free spans there instead of (or
+alongside) the other backends. Selecting its overlay is an egress decision:
+traces leave the host and Opik Cloud is metered. Put the base endpoint, the API
+key and the routing headers in `.env`, select the Opik overlay, and recreate the
+collector:
 
 ```dotenv
-OTEL_REMOTE_EXPORT_CONFIG=otel-collector-openlit.yaml
-OPENLIT_OTLP_ENDPOINT=http://host.docker.internal:4320   # OpenLit 4320 -> 4318
-OPENLIT_OTLP_AUTH=<OpenLit API key, sent as x-openlit-api-key>
+OTEL_REMOTE_EXPORT_CONFIG=otel-collector-opik.yaml
+OPIK_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel
+OPIK_API_KEY=<Opik API key, sent verbatim in Authorization>
+OPIK_WORKSPACE=<workspace>        # Comet-Workspace header
+OPIK_PROJECT_NAME=bastion         # projectName header
 ```
 
 ```bash
 docker compose up -d --force-recreate otel-collector
 ```
 
-Two things are easy to get wrong. The collector runs in a container while
-OpenLit publishes its OTLP port on the host, so the endpoint is
-`host.docker.internal`, which `docker-compose.yml` maps explicitly for Linux
-(`extra_hosts: host-gateway`). And these variables must not reuse the
-`OTEL_EXPORTER_*` names: the app reads `OTEL_EXPORTER_OTLP_ENDPOINT` itself, so a
-second definition of it would win for host-run processes and bypass the
-collector. OpenLit is a real OTLP collector, so it takes the exporter defaults
-(protobuf, gzip) — no `encoding: json` workaround like Arize needs.
+Three things are easy to get wrong. `OPIK_OTLP_ENDPOINT` is the **base** URL —
+the collector appends `/v1/traces`, so adding the signal path yourself (the
+`.../otel/v1/traces` form the SDK docs show) makes every batch fail. The
+`Authorization` header takes the raw key, not `Bearer <key>`. And these
+variables must not reuse the `OTEL_EXPORTER_*` names: the app reads
+`OTEL_EXPORTER_OTLP_ENDPOINT` itself, so a second definition of it would win for
+host-run processes and bypass the collector. Opik ingests JSON and protobuf, so
+it takes the exporter defaults — no `encoding: json` workaround like Arize
+needs.
+
+OpenLit is no longer wired. Its exporter, overlay, compose variables and
+`.env.example` block were removed in favour of Opik; the self-hosted option is
+now the `debug` exporter (`otel-collector-no-export.yaml`) plus a local Opik
+deployment if one is wanted later.
 
 ### What is not exported
 

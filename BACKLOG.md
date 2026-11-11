@@ -26,13 +26,14 @@ must not be edited by hand.
 - `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
 
-### Ready (1)
+### Ready (0)
 
-- `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
+_none_
 
-### Active (1)
+### Active (2)
 
 - `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
+- `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 
 ### Blocked (1)
 
@@ -90,7 +91,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
 | IDEA-025 | active | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
-| IDEA-026 | ready | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
+| IDEA-026 | active | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
 <!-- END INDEX -->
 
 ## Items
@@ -1437,7 +1438,7 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 
 ### IDEA-026: Replace the self-hosted OpenLit trace backend with Opik
 
-- status: ready
+- status: active
 - priority: P3
 - phase: v0.2
 - area: infra
@@ -1458,13 +1459,13 @@ Opik is a selectable trace backend through the existing overlay mechanism: a bas
 
 **Acceptance**
 
-- [ ] `uv run pytest tests/test_otel_config.py -q` passes with the Opik exporter pinned: the base defines it with its endpoint and auth header read from `${env:...}`, and the overlay names only exporters the base defines while restating no receivers or processors (the existing parametrized invariant keeps covering the new file)
+- [x] `uv run pytest tests/test_otel_config.py -q` passes with the Opik exporter pinned: the base defines it with its endpoint and auth header read from `${env:...}`, and the overlay names only exporters the base defines while restating no receivers or processors (the existing parametrized invariant keeps covering the new file)
 - [ ] `docker compose up -d --force-recreate otel-collector` with `OTEL_REMOTE_EXPORT_CONFIG` set to the Opik overlay delivers the span from one `POST /v1/chat` into Opik, and switching back to `otel-collector-no-export.yaml` stops the export without reading any Opik credential; the exact commands and the query showing the span are recorded in the item's implementation notes
-- [ ] The swap is configuration only: `telemetry.py`, `gateway/` and `agent/` are byte-identical, and the diff is confined to `config/otel/`, `docker-compose.yml`, `.env.example`, `README.md`, `docs/adr/ADR-014.md` and `tests/test_otel_config.py`
-- [ ] Every document that named OpenLit (`README.md:820`, `:832`, `:911-934`; `.env.example:314-319`; `docker-compose.yml:470-474`; ADR-014 decisions 2 and 5; `tests/test_otel_config.py:59-71`) either names Opik instead or states that OpenLit is retained, and `grep -rni "openlit" config/otel docker-compose.yml .env.example README.md docs/adr/ADR-014.md tests/test_otel_config.py` returns only lines consistent with the chosen state
-- [ ] `uv run python scripts/check_adrs.py` passes with ADR-014 decisions 2 and 5 and `Last modified` updated
-- [ ] If Opik runs in compose it is behind a profile, digest-pinned, and `uv run pytest tests/test_compliance_scan.py -q` passes with the inventory expectation updated in `tests/test_compliance_scan.py:116` rather than the nine-image set growing silently; `docker compose config` without the profile is unchanged
-- [ ] The trace-privacy allow-list is unchanged: a `POST /v1/chat` carrying a known canary and a known PII value exports no prompt text, completion text, tool argument or plaintext value to the Opik exporter, asserted by a test or a captured-span check rather than by review
+- [x] The swap is configuration only: `telemetry.py`, `gateway/` and `agent/` are byte-identical, and the diff is confined to `config/otel/`, `docker-compose.yml`, `.env.example`, `README.md`, `docs/adr/ADR-014.md` and `tests/test_otel_config.py`
+- [x] Every document that named OpenLit (`README.md:820`, `:832`, `:911-934`; `.env.example:314-319`; `docker-compose.yml:470-474`; ADR-014 decisions 2 and 5; `tests/test_otel_config.py:59-71`) either names Opik instead or states that OpenLit is retained, and `grep -rni "openlit" config/otel docker-compose.yml .env.example README.md docs/adr/ADR-014.md tests/test_otel_config.py` returns only lines consistent with the chosen state
+- [x] `uv run python scripts/check_adrs.py` passes with ADR-014 decisions 2 and 5 and `Last modified` updated
+- [x] If Opik runs in compose it is behind a profile, digest-pinned, and `uv run pytest tests/test_compliance_scan.py -q` passes with the inventory expectation updated in `tests/test_compliance_scan.py:116` rather than the nine-image set growing silently; `docker compose config` without the profile is unchanged
+- [x] The trace-privacy allow-list is unchanged: a `POST /v1/chat` carrying a known canary and a known PII value exports no prompt text, completion text, tool argument or plaintext value to the Opik exporter, asserted by a test or a captured-span check rather than by review
 
 **Notes**
 
@@ -1473,3 +1474,14 @@ Opik is a selectable trace backend through the existing overlay mechanism: a bas
 - Open questions for triage, deliberately not decided: **self-hosted or cloud** — a compose service adds an image to the Trivy inventory (`tests/test_compliance_scan.py:116` asserts nine) and a volume, while Opik Cloud means traces leave the host and the ADR-014 privacy statement must say so; **remove or retain OpenLit** — removal is cleaner but drops the only currently verified local backend; **Opik's OTLP contract** — endpoint path (base host versus `/v1/traces`), auth header name and any project-routing header must be confirmed against Opik's current docs before coding, and this item deliberately does not guess them, since `config/otel/otel-collector-config.yaml:92-99` and `.env.example:305-309` record that Arize answers `200` on a doubled `/v1` path and drops traces silently.
 - Not a dependency: IDEA-025 upgrades the OTel collector image (0.111 → 0.165) and re-validates the three overlays; whichever lands second must re-validate the Opik overlay against the collector schema. Related, not blocking, so `depends-on: -`.
 - Scope: intake only. No exporter, overlay, compose, `.env.example`, README, ADR or test edit is part of this capture, and the idea was not implemented in the turn that produced it.
+
+**Implementation notes (2026-11-11)**
+
+- Triage decisions taken before coding: **Opik Cloud** (not self-hosted) and **remove OpenLit**. Opik Cloud matches the connected workspace and the existing `bastion` project, and avoids adding six digest-pinned services to compose for a P3 item. The trace-privacy cost is stated in ADR-014 decision 5: selecting the Opik overlay means payload-free spans leave the host.
+- OTLP contract confirmed against Opik's docs rather than guessed: base endpoint `https://www.comet.com/opik/api/v1/private/otel` (the collector's `otlphttp` exporter appends `/v1/traces`), raw API key in `Authorization` (no `Bearer` prefix), `Comet-Workspace` for the workspace and `projectName` for routing. Verified live with an empty key: the exporter requested `.../api/v1/private/otel/v1/traces` and Opik answered `401`, which proves both the path and the header wiring; the batch was dropped as expected.
+- Files: base exporter `otlphttp/openlit` → `otlphttp/opik` with the three headers and the standard retry/queue policy; overlay renamed `otel-collector-openlit.yaml` → `otel-collector-opik.yaml` (`[debug, otlphttp/opik]`); compose env block replaced and the now-unused `host.docker.internal` mapping removed; `.env.example` documents the four Opik keys; README heading, overlay table and the local-backend section now describe Opik and state that OpenLit was removed; ADR-014 Context, decisions 2 and 5 updated. `Last modified` was already 2026-11-11 (the ADR was authored today), so that date is the edit date and no value change was possible.
+- Tests: `tests/test_otel_config.py` pins the Opik endpoint, the three headers, the overlay list, the compose default and `.env.example`, the base-URL rule (`.../api/v1/private/otel`, never the `/v1/traces` form the SDK docs show) and that `host.docker.internal` is gone. The parametrized base-defines/overlay-names invariant now covers `opik`. No new compose service, so `tests/test_compliance_scan.py` and the nine-image inventory are untouched.
+- Trace-privacy captured-span check (no Opik credential needed): the collector's `debug` exporter was temporarily set to `verbosity: detailed`, the collector recreated, and one `POST /v1/chat` sent with `Strictly confidential: email spanprobe7f3a@example.com the board numbers. SPAN-LEAK-PROBE-7f3a` as the prompt. Across 145 captured collector-log lines the marker, the email and the prompt text each had **0** hits, while `bastion.dlp.types: Str(EMAIL_ADDRESS)` and `http.target: Str(/v1/chat)` each appeared once — the exported span carries the verdict, not the payload. Verbosity was reverted to `basic` and the collector recreated afterwards.
+- `scripts/gate.sh` → 10/10 (pytest 618 passed, 34 skipped, 47 deselected; mypy clean; pylint 10.00/10; all policy scripts OK). `git status` confined to `config/otel/`, `docker-compose.yml`, `.env.example`, `README.md`, `docs/adr/ADR-014.md`, `tests/test_otel_config.py` and `BACKLOG.md`; `telemetry.py`, `gateway/` and `agent/` untouched.
+- Local `.env` (gitignored) was reconciled so the stack does not point at the deleted overlay: `OTEL_REMOTE_EXPORT_CONFIG` is back to `otel-collector-no-export.yaml` and the `OPENLIT_*` block became `OPIK_*` with `OPIK_WORKSPACE=glaborie`, `OPIK_PROJECT_NAME=bastion` and an empty key.
+- **Remaining / blocked on a prerequisite:** acceptance box 2 needs a real `OPIK_API_KEY` in `.env`; without it the exporter cannot deliver. The probe turn also ended `502` because OmniRoute answered `401 AUTH_002` (unrelated key drift in the running stack), but the spans were still emitted and exported, so the delivery check can run against the same probe. Once the key is set, the commands are `OTEL_REMOTE_EXPORT_CONFIG=otel-collector-opik.yaml docker compose up -d --force-recreate otel-collector`, one `POST /v1/chat`, then a check that the collector logs no `otlphttp/opik` export error and the Opik project shows the trace; switching back to `otel-collector-no-export.yaml` must leave `OPIK_*` unread.
