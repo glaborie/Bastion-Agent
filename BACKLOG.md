@@ -1048,7 +1048,7 @@ no-socket rule are recorded in an ADR.
   - The scanner is `ghcr.io/aquasecurity/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c` (manifest-list digest) because Docker Hub denied the anonymous pull from this host.
   - CI scans on every push as the acceptance requires; the CUDA image makes the worst case a ~45-minute job. Moving the image half to a nightly run is a change to ADR-015, not a silent workflow edit.
   - Two live-run fixes are in the script: `docker save` writes `0600` under the development umask, and the scanner has no `DAC_OVERRIDE` because of `cap_drop: ALL`, so tarballs are chmod 0644 and the reports directory is a 0777 scratch path under `artifacts/`.
-  - Live verification: the documented command scanned `alpine:3.20`, produced a 15-component CycloneDX SBOM and 0 CRITICAL, and exited 0; the failing path is covered by `tests/test_compliance_scan.py` (15 tests).
+  - Live verification: the documented command scanned `alpine:3.20`, produced a 15-component CycloneDX SBOM and 0 CRITICAL, and exited 0; the failing path is covered by `tests/test_compliance_scan.py` (16 tests). The inventory reads the project `.env` like Compose (process environment wins over the file), and `--no-env-file` keeps the file's defaults reproducible so a developer override such as `LLAMA_CPP_IMAGE` cannot make the suite environment-dependent.
 
 ### IDEA-020: Load production secrets from OpenBao instead of the process environment
 
