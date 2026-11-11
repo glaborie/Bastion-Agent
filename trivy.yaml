@@ -1,0 +1,20 @@
+# Bastion-Agent image-scan policy.
+#
+# This file is read by scripts/check_trivy_report.py, NOT by Trivy. Trivy runs
+# with explicit flags and no --ignorefile, so every suppression is applied by
+# the gate after the finding is reported: a CVE cannot be hidden before the
+# gate sees it, and each entry is scoped to an image and expires.
+#
+# Schema (no other keys are accepted):
+#   version: 1
+#   ignore:
+#     - id: CVE-YYYY-NNNNN        # Trivy vulnerability id
+#       images: [<image slug>]    # scripts/image_inventory.py --slug <image>; "*" allowed
+#       statement: "<why>"        # at least 10 characters, reviewed
+#       expires: YYYY-MM-DD       # the entry stops suppressing after this date
+#
+# An expired entry fails the gate even if no finding matches it, so a stale
+# acceptance cannot outlive its review.
+
+version: 1
+ignore: []
