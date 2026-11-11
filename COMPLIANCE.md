@@ -48,12 +48,13 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 | Requirement | Evidence Source | Bastion-Agent Implementation | Status |
 |-------------|-----------------|-------------------------------|--------|
 | **Non-repudiable audit trail** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | PostgreSQL `audit_logs` with SHA-256 `record_hash` chaining, verification endpoint `/api/audit/verify` | ✅ Implemented |
+| **Runtime detection** | ADR-017, `SECURITY.md` §Incident Response | Opt-in Falco syscall rules for shells, workspace escapes, egress and sensitive writes; JSON alerts in `artifacts/falco/` | ⚠️ Partial (opt-in) |
 | **Deterministic authorization** | ADR-009, `SECURITY.md` §Tool Governance & RBAC | Four-gate runtime model, JWT RBAC, tool catalog allow-list, source-side entitlement | ✅ Implemented |
 | **Least privilege access** | ADR-003, ADR-009, `SECURITY.md` §Authentication & Authorization | Four-tier roles (`admin`, `operator`, `analyst`, `readonly`), `@tool(required_role="operator")`, read-only allow list | ✅ Implemented |
 | **Segregation of duties** | ADR-003, ADR-009, `SECURITY.md` §Kill Switch Tiers | Four-eyes HITL approval, `approver_id != initiator_id`, time-bound operator roles | ✅ Implemented |
 | **Data minimization** | ADR-002, `SECURITY.md` §Data Protection & DLP | Presidio DLP, reversible tokenization, canary injection, OTel redaction allowlist | ✅ Implemented |
 | **Change control** | ADR-006, ADR-008, `SECURITY.md` §Secure Development Lifecycle | Golden regression suite with 1.0 recall gate, CI/CD gates, semantic versioning, 6-phase roadmap | ✅ Implemented |
-| **Incident response** | `SECURITY.md` §Incident Response | Escalation path (Tier 1/2/3), containment procedures, 24/7/365 monitoring | ✅ Implemented |
+| **Incident response** | `SECURITY.md` §Incident Response | Escalation path (Tier 1/2/3), containment procedures, opt-in runtime detection (ADR-017) | ✅ Implemented |
 | **Transparency & explainability** | ADR-005, ADR-007, `SECURITY.md` §Observability & Telemetry | Hash-chained audit logs, Command Control dashboard, OTel spans with redaction allowlist | ✅ Implemented |
 | **Fail-closed design** | ADR-001, ADR-004, `SECURITY.md` §Fail-Closed by Default | If safety layer down, requests blocked, never forwarded unscanned | ✅ Implemented |
 | **Vendor lock-in avoidance** | ADR-004, ADR-008, `SECURITY.md` §Deployment Security | OmniRoute model routing, local fallback, drop-in Docker Compose upgrades, multi-provider config | ✅ Implemented |
@@ -101,7 +102,7 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 | **CC6.2: The entity restricts the transmission, movement, and removal of information to authorized internal and external users and processes** | ADR-002, ADR-004, `SECURITY.md` §Data Protection & DLP | Presidio DLP, reversible tokenization, local fallback, fail-closed design | ✅ Implemented |
 | **CC6.7: The entity implements logical segregation of duties for systems that have multiple users** | ADR-003, ADR-009, `SECURITY.md` §Kill Switch Tiers | Four-eyes HITL approval, `approver_id != initiator_id`, time-bound operator roles | ✅ Implemented |
 | **CC7.2: The entity uses detection and monitoring procedures to identify (1) changes to configurations that result in the introduction of new vulnerabilities, and (2) susceptibilities to newly discovered vulnerabilities** | ADR-006, ADR-016, `SECURITY.md` §Vulnerability Management | Golden regression suite, CI/CD gates, OSV audit of `uv.lock`, Trivy image scan and CycloneDX SBOM in the `supply-chain` job (`scripts/scan_images.sh`, artifacts under `artifacts/compliance/`) | ✅ Implemented |
-| **CC7.4: The entity responds to identified security incidents by executing a defined incident response program** | `SECURITY.md` §Incident Response | Escalation path, containment procedures, 24/7/365 monitoring, 72-hour regulator reporting | ✅ Implemented |
+| **CC7.4: The entity responds to identified security incidents by executing a defined incident response program** | ADR-017, `SECURITY.md` §Incident Response | Escalation path, containment procedures, opt-in Falco runtime detection, 72-hour regulator reporting | ✅ Implemented |
 | **CC9.1: The entity communicates roles, responsibilities, and authorities for managing information security to internal and external users** | ADR-003, ADR-009, `SECURITY.md` §Authentication & Authorization | Four-tier roles, tool catalog allow-list, RBAC matrix, kill switch tiers | ✅ Implemented |
 | **CC9.2: The entity communicates information about its information security policies and procedures to internal and external users** | `SECURITY.md`, `COMPLIANCE.md`, ADR-Index.md | Security policy, compliance matrix, ADR catalog | ✅ Implemented |
 
@@ -113,7 +114,7 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 |----------------------|-----------------|-------------------------------|--------|
 | **§4.2 Outsourcing** | ADR-001, ADR-004, `SECURITY.md` §Deployment Security | Single FastAPI ingress, deterministic DLP, local fallback, fail-closed design | ✅ Compliant |
 | **§4.3 Segregation of Duties** | ADR-003, ADR-009, `SECURITY.md` §Kill Switch Tiers | Four-eyes HITL approval, `approver_id != initiator_id`, time-bound operator roles | ✅ Compliant |
-| **§4.4 Monitoring** | ADR-007, `SECURITY.md` §Observability & Telemetry | Command Control dashboard, OTel spans, real-time approvals | ✅ Compliant |
+| **§4.4 Monitoring** | ADR-007, ADR-017, `SECURITY.md` §Observability & Telemetry | Command Control dashboard, OTel spans, real-time approvals, opt-in Falco runtime alerts | ⚠️ Partial (opt-in) |
 | **§4.5 Audit Trail** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, 7-year retention | ✅ Compliant |
 | **§4.6 Change Management** | ADR-006, ADR-008, `SECURITY.md` §Secure Development Lifecycle | Golden regression suite, CI/CD gates, semantic versioning, 6-phase roadmap | ✅ Compliant |
 
@@ -143,7 +144,7 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 | EU AI Act Article | Evidence Source | Bastion-Agent Implementation | Status |
 |-------------------|-----------------|-------------------------------|--------|
 | **Art. 10 Transparency** | ADR-001, ADR-009, `SECURITY.md` §Transparency & Explainability | Single FastAPI ingress, deterministic controls, hash-chained audit logs | ✅ Compliant |
-| **Art. 15 Risk Management** | ADR-006, ADR-016, `SECURITY.md` §Vulnerability Management | Golden regression suite, CI/CD gates, OSV audit and Trivy image scan with a published SBOM | ✅ Compliant |
+| **Art. 15 Risk Management** | ADR-006, ADR-016, ADR-017, `SECURITY.md` §Vulnerability Management | Golden regression suite, CI/CD gates, OSV audit and Trivy image scan with a published SBOM, opt-in runtime detection | ✅ Compliant |
 | **Annex III High-Risk AI Systems** | ADR-001, ADR-004, `SECURITY.md` §Fail-Closed by Default | Fail-closed design, deterministic controls, auditability | ✅ Compliant |
 
 ---

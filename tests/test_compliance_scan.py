@@ -139,7 +139,9 @@ def test_inventory_grows_with_a_new_image_line(tmp_path: Path) -> None:
     assert after.stdout.splitlines() == ["alpine:3.20", "busybox:1.36", "redis:7-alpine"]
 
 
-def test_inventory_excludes_a_service_that_only_exists_behind_compliance(tmp_path: Path) -> None:
+def test_inventory_excludes_services_that_only_exist_behind_tooling_profiles(
+    tmp_path: Path,
+) -> None:
     compose = tmp_path / "docker-compose.yml"
     compose.write_text(
         "services:\n"
@@ -410,11 +412,9 @@ def test_aggregate_refuses_an_empty_raw_directory(tmp_path: Path) -> None:
 
 
 def test_scanner_service_has_no_docker_socket_and_is_pinned() -> None:
-    text = COMPOSE.read_text(encoding="utf-8")
-    assert "docker.sock" not in text
-
-    compose = yaml.safe_load(text)
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     scanner = compose["services"]["trivy-scan"]
+    assert not any("docker.sock" in str(volume) for volume in scanner.get("volumes", []))
     assert scanner["profiles"] == ["compliance"]
     assert scanner["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in scanner["security_opt"]

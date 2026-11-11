@@ -812,6 +812,47 @@ TEST_DATABASE_URL=postgresql+asyncpg://bastion:bastion@localhost:55433/bastion_t
 
 ---
 
+## Runtime detection (opt-in)
+
+Falco watches the stack's syscalls with modern eBPF and appends one JSON alert
+per line to `artifacts/falco/events.json`. It is not in the default stack
+because the probe needs a privileged container; the carved-out access is
+documented in ADR-017.
+
+```bash
+docker compose --profile security up -d falco
+tail -f artifacts/falco/events.json
+./scripts/falco_smoke.sh          # deterministic triggers + negative cases
+```
+
+Rules live in `config/falco/bastion_rules.yaml`; every baseline exception is
+reviewed in `config/falco/ALLOWLIST.md`. On a native Linux host the full rule set
+and allowlist are verifiable. On Docker Desktop the syscall rules fire but
+`/proc` metadata can be missing, so the data-container healthcheck exceptions
+are noisy there.
+
+## Runtime detection (opt-in)
+
+Falco watches container syscalls with modern eBPF and writes one JSON line per
+alert. It is not in the default stack because the probe needs a privileged
+container:
+
+```bash
+docker compose --profile security up -d falco
+tail -f artifacts/falco/events.json
+./scripts/falco_smoke.sh
+```
+
+Rules live in `config/falco/bastion_rules.yaml`; every exception is reviewed in
+`config/falco/ALLOWLIST.md`; the decision and its Docker Desktop limits are in
+ADR-017. The rules cover a shell in the app tier, a worker write outside its
+workspace, gateway egress outside the internal allowlist, a shell in `db` or
+`redis`, sensitive-file writes and `/app` modification.
+
+On Docker Desktop the shell, write and egress rules work, but `/proc` metadata
+can be unavailable, so the data-container entrypoint and healthcheck exceptions
+are effective on a native Linux host only. Falco detects; it does not contain.
+
 ## Routing bootstrap (OmniRoute)
 
 `scripts/omniroute_bootstrap.py` reconciles the routing contract in

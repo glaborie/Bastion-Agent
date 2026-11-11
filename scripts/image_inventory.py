@@ -87,17 +87,18 @@ def _blocks(text: str) -> list[tuple[str, list[str]]]:
     return blocks
 
 
-def _is_scanner_only(body: list[str]) -> bool:
-    """True when a service exists only behind the compliance profile.
+def _is_tooling_only(body: list[str]) -> bool:
+    """True when a service exists only behind a tooling profile.
 
-    The Trivy scanner is tooling, not a shipped image: it is digest-pinned and
-    excluded from the SBOM so the artifact describes what the stack serves.
+    The Trivy scanner (`compliance`) and Falco (`security`) are controls, not
+    shipped service images: they are digest-pinned and excluded from the SBOM
+    so the artifact describes what the stack serves.
     """
     for line in body:
         match = PROFILES_LINE.match(line)
         if match is not None:
             profiles = {item.strip() for item in match.group("profiles").split(",")}
-            return profiles == {"compliance"}
+            return profiles in ({"compliance"}, {"security"})
     return False
 
 
@@ -145,7 +146,7 @@ def read_images(
 
     images: list[str] = []
     for _name, body in _blocks(text):
-        if _is_scanner_only(body):
+        if _is_tooling_only(body):
             continue
         for line in body:
             if line.lstrip().startswith("#"):

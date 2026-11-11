@@ -21,6 +21,7 @@ a file in this directory; this page is the index and the process guide.
 | 014 | Observability & Trace Privacy | Accepted |
 | 015 | Tenant Isolation for Keys, Rows and Queries | Accepted |
 | 016 | Container Image Scanning & SBOM Publication | Accepted |
+| 017 | Runtime Detection with Falco | Accepted |
 
 ---
 
