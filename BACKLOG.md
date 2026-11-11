@@ -27,9 +27,9 @@ must not be edited by hand.
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
 - `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 
-### Ready (1)
+### Ready (0)
 
-- `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
+_none_
 
 ### Active (1)
 
@@ -39,7 +39,7 @@ must not be edited by hand.
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (15)
+### Done (16)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -49,6 +49,7 @@ must not be edited by hand.
 - `IDEA-007` P1 v0.2 agent - Route corporate-confidential documents without explicit markers to the local model
 - `IDEA-008` P1 v0.2 evals - Make the eval gate bit-reproducible across hosted runners
 - `IDEA-009` P2 v0.2 security - Author ADR-014 for observability and trace privacy
+- `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-011` P1 v0.2 docs - Reconcile the CONTROL.md dashboard rate-limit claim with the gateway
 - `IDEA-012` P2 v0.3 gateway - Add a dashboard demo console that runs the demo scenarios
 - `IDEA-013` P2 v0.2 agent - Add a Presidio recognizer for Swiss AHV/AVS numbers
@@ -74,7 +75,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-007 | done | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
 | IDEA-008 | done | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
 | IDEA-009 | done | P2 | v0.2 | security | Author ADR-014 for observability and trace privacy |
-| IDEA-010 | ready | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
+| IDEA-010 | done | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
 | IDEA-011 | done | P1 | v0.2 | docs | Reconcile the CONTROL.md dashboard rate-limit claim with the gateway |
 | IDEA-012 | done | P2 | v0.3 | gateway | Add a dashboard demo console that runs the demo scenarios |
 | IDEA-013 | done | P2 | v0.2 | agent | Add a Presidio recognizer for Swiss AHV/AVS numbers |
@@ -512,7 +513,7 @@ switching backend is a config change, not a code change. The ADR is indexed in
 
 ### IDEA-010: Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.2
 - area: docs
@@ -533,17 +534,25 @@ ADR-006 decision 5 states the rule the code enforces: a gate is never green mere
 
 **Acceptance**
 
-- [ ] `docs/adr/ADR-006.md` decision 5 names `scripts/check_classifier_dispatch.py`, the `reference` / `dispatch_anomaly` verdict, `--dispatch-verdict` and `exempt_gates`, and links ADR-011 instead of restating its rationale
-- [ ] The text keeps the never-green rule for missing evidence and says explicitly that a failed row is never exempted and a partial skip still fails the gate
-- [ ] ADR-006 `Last modified` is bumped to the edit date
-- [ ] `uv run python scripts/check_adrs.py` passes
-- [ ] No change to `scripts/run_evals.py`, `scripts/check_classifier_dispatch.py`, `agent/routing/dispatch.py` or any test in the same change
+- [x] `docs/adr/ADR-006.md` decision 5 names `scripts/check_classifier_dispatch.py`, the `reference` / `dispatch_anomaly` verdict, `--dispatch-verdict` and `exempt_gates`, and links ADR-011 instead of restating its rationale
+- [x] The text keeps the never-green rule for missing evidence and says explicitly that a failed row is never exempted and a partial skip still fails the gate
+- [x] ADR-006 `Last modified` is bumped to the edit date
+- [x] `uv run python scripts/check_adrs.py` passes
+- [x] No change to `scripts/run_evals.py`, `scripts/check_classifier_dispatch.py`, `agent/routing/dispatch.py` or any test in the same change
 
 **Notes**
 
 - Duplicate check: IDEA-008 (done) built the exemption itself and its acceptance ticked only "`docs/adr/ADR-011.md` records the choice"; no open or done backlog item mentions ADR-006, so this item is the ADR-006 documentation correction, not a second run at the gate work.
 - Classified P1 because an Accepted ADR that misstates a security-relevant gate rule is a governance defect, not cosmetic; triage may downgrade if it disagrees.
 - Related drift seen while checking: ADR-012 decision 6 repeats "an unverified gate is not a pass" for the same `scripts/run_evals.py` gates. Left out of this item's scope (ADR-006 owns the rule); it becomes a separate correction if triage wants the corpus consistent.
+
+**Implementation notes (2026-11-11)**
+
+- Rewrote only decision 5's CI paragraph in `docs/adr/ADR-006.md`: the never-green sentence is kept and now begins "A gate is never green merely because no evidence was produced", followed by one paragraph that names `scripts/check_classifier_dispatch.py`, `reference` / `dispatch_anomaly`, `--dispatch-verdict` and `exempt_gates`, and points at ADR-011 for the rationale and the accepted asymmetry. `Last modified` bumped 2026-11-10 → 2026-11-11.
+- The narrowness is stated against the code, not paraphrased from ADR-011: `scripts/run_evals.py::summarise` records an exemption only for `ClassifierGoldenGate`, only when the flag took effect (a test in that gate skipped) and never when any test in the gate failed — a failed row leaves the failure standing, the metric at `0.0` and `exempt_gates` empty (`tests/test_eval_runner.py::test_the_exemption_never_covers_a_failed_row`, `test_an_exemption_without_a_skip_is_not_recorded`).
+- Acceptance box 2's "a partial skip still fails the gate" is written as "a partial mismatch (one benign row, a lost positive) still falls through and fails the gate", matching the item's own Outcome wording and ADR-011's dispatch note. A partial *skip* inside the exempted gate is precisely what the shipped runner accepts (`tests/test_eval_runner.py::test_a_mixed_gate_records_the_exemption`), so claiming otherwise in the ADR would have documented behaviour the code does not have. The never-green rule and "a failed row is never exempted" are both stated explicitly.
+- The Outcome's pointer to "ADR-011 decision 7" was dropped: decision 7 owns the thresholds, while the exemption's rationale and its accepted asymmetry live in ADR-011's Consequences ("exempt the ratio assertions by host verdict"). ADR-006 links ADR-011 without naming a decision so the reference is correct without editing ADR-011.
+- Docs-only, as scoped: `git status` shows `docs/adr/ADR-006.md` and `BACKLOG.md` only; no change to the runner, the dispatch script, `agent/routing/dispatch.py` or any test. `uv run python scripts/check_adrs.py` → `OK: 16 ADRs, index consistent, no machine-local paths`. ADR-012's matching "an unverified gate is not a pass" sentence is left for a separate item, per the Notes above.
 
 ### IDEA-011: Reconcile the CONTROL.md dashboard rate-limit claim with the gateway
 
