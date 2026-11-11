@@ -136,8 +136,9 @@ Two facts shape the model:
 - Controls:
   - LIVE: one `BASTION-CANARY-<uuid4>` per vault session. It is random, not derived from the session id.
   - LIVE: the output scan matches any token with the configured prefix, not only the current session's value. A hit discards the response, writes a `SECURITY_INCIDENT` and quarantines the session (default 900 s). The quarantine check runs before the next inference call.
+  - LIVE: an answer that claims to disclose its instructions ("here is the system prompt", "my instructions are", "I was instructed to") is recorded as `disclosure_claim` on `EGRESS_FILTERED` and on the span, and is still delivered. The claim may be fabricated; it is a verdict, not a block (ADR-012 decision 9).
   - LIVE: if Redis is unreachable the gateway returns 503. It never delivers an unscanned response.
-- Residual risk: the canary detects verbatim leakage only. Paraphrased or partial extraction is not detected. The system prompt contains no secrets by design, which limits the impact.
+- Residual risk: the canary detects verbatim leakage only, and the claim detector names a sentence that admits to disclosure rather than proving one. A silent paraphrase, a partial extraction or a rewritten instruction is not detected by either control. The system prompt contains no secrets by design, which limits the impact; the trust harm of a fabricated disclosure (a caller is told a disclosure happened) is now visible in the ledger instead of unflagged.
 - Verification: `tests/test_egress_sanitizer.py`, `tests/test_chat.py`.
 
 ### T4. Sensitive data disclosure to a cloud model or in responses

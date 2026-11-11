@@ -47,6 +47,46 @@ _MARKER_PLACEHOLDER: Final[str] = "[redacted-security-marker]"
 _MAX_SESSION_ID_LENGTH: Final[int] = 256
 _SOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"[^A-Za-z0-9._-]")
 
+#: First-person claims that the model is disclosing its instructions. The canary
+#: catches the marker, not the sentence: a model can announce "here is the system
+#: prompt" and fabricate one, which is a trust problem even though no secret
+#: crossed the boundary (ADR-012 decision 9). The patterns are deliberately
+#: narrow — a first-person or "here is" form followed by the instruction noun —
+#: so an answer that merely explains what a system prompt is stays unflagged.
+_DISCLOSURE_CLAIMS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
+    (
+        "system_prompt",
+        re.compile(
+            r"(?i)\b(?:here(?:'s| is)|below is|the following is)\b[^\n]{0,60}?"
+            r"\b(?:system prompt|system message|system instructions|"
+            r"initial instructions|developer message)\b"
+        ),
+    ),
+    (
+        "instructions",
+        re.compile(
+            r"(?i)\bmy (?:system prompt|system message|system instructions|"
+            r"initial instructions|developer message|instructions) "
+            r"(?:is|are|says?|reads?|were|was)\b"
+        ),
+    ),
+    (
+        "instructed",
+        re.compile(
+            r"(?i)\bI (?:was|am|have been|'ve been) "
+            r"(?:instructed|programmed|configured|told) (?:to|that)\b"
+        ),
+    ),
+)
+
+
+def _disclosure_claim(text: str) -> str | None:
+    """Return the name of the first disclosure claim in ``text``, if any."""
+    for name, pattern in _DISCLOSURE_CLAIMS:
+        if pattern.search(text):
+            return name
+    return None
+
 
 class EgressError(RuntimeError):
     """Base class for egress-sanitizer failures."""
@@ -69,6 +109,10 @@ class EgressResult:
     reason: str | None = None
     restored_tokens: int = 0
     unresolved_tokens: int = 0
+    #: Set when the model claimed to disclose its instructions (``system_prompt``,
+    #: ``instructions`` or ``instructed``). A verdict, not a block: the claim may
+    #: be fabricated and the text is delivered (ADR-012 decision 9).
+    disclosure_claim: str | None = None
 
 
 class EgressSanitizer:
@@ -213,10 +257,17 @@ class EgressSanitizer:
             await self.trip(session_id, "vault_error")
             return EgressResult(text="", blocked=True, reason="vault_error")
         unresolved = len(TOKEN_PATTERN.findall(restored))
+        claim = _disclosure_claim(restored)
+        if claim is not None:
+            logger.warning(
+                "Model claimed to disclose its instructions",
+                extra={"claim": claim, "session": "redacted"},
+            )
         return EgressResult(
             text=restored,
             restored_tokens=max(0, markers - unresolved),
             unresolved_tokens=unresolved,
+            disclosure_claim=claim,
         )
 
     async def restore(self, text: str, session_id: str) -> str:

@@ -12,7 +12,7 @@ Bastion-Agent is an enterprise-grade agent runtime designed for high-security an
 - 🚦 **Confidentiality Routing**: Low-latency sequence classification routes confidential business prompts to a local CUDA `llama.cpp` instance (Qwen 2.5 7B on RTX 3060 Ti) via OmniRoute, and general queries to cloud providers.
 - 👤 **SSO & Declarative RBAC**: Keycloak OIDC integration with role-based tool visibility and access control (`admin`, `operator`, `analyst`, `readonly`).
 - 🛑 **Four-Eyes HITL Governance**: Asynchronous suspension of mutating (`read_only=False`) actions requiring secondary operator approval via an embedded HTMX Command Control Center.
-- 🐤 **Egress Canary Tripwires**: Ephemeral canary tokens and XML fence isolation to detect and block prompt extraction and indirect prompt injection attacks.
+- 🐤 **Egress Canary Tripwires**: Ephemeral canary tokens and XML fence isolation block any answer that repeats the marker — the deterministic proof of verbatim prompt extraction; an answer that merely *claims* to disclose its instructions is flagged, not blocked.
 - 📜 **Tamper-Evident Audit Ledger**: SHA-256 cryptographically chained audit logging in PostgreSQL for non-repudiable compliance auditing.
 - 📊 **Dual Observability**: OpenTelemetry Collector exporting OTLP spans to Langfuse, Arize Phoenix, or Better Stack.
 - 🧪 **Eval-Driven Gating**: DeepEval golden benchmark test suite enforcing 100% recall on secret redactions before CI merges.
@@ -497,6 +497,15 @@ the response, and quarantines the session for `EGRESS_TRIP_TTL_SECONDS`
 shared by every gateway replica. Redis is a hard dependency: if it is
 unreachable the endpoint returns `503` rather than delivering an unscanned
 answer.
+
+A model can also answer "here is the system prompt" and fabricate one. No
+marker appears in that text, so the canary cannot see it: the egress stage runs a
+deterministic claim detector instead and records `disclosure_claim`
+(`system_prompt`, `instructions` or `instructed`) on the `EGRESS_FILTERED` row and
+as `bastion.egress.disclosure_claim` on the span. The answer is delivered, not
+blocked — the claim is evidence about the model's behaviour, not proof about the
+prompt, and a legitimate discussion of prompt engineering must stay answerable.
+A silent paraphrase is not detected by either control (ADR-012 decision 9).
 
 ### Fencing and restoration
 

@@ -475,6 +475,7 @@ async def chat(
             "reason": egress.reason,
             "restored_tokens": egress.restored_tokens,
             "unresolved_tokens": egress.unresolved_tokens,
+            "disclosure_claim": egress.disclosure_claim,
             "model": completion.model,
             "route": decision.alias,
         },
@@ -486,6 +487,7 @@ async def chat(
             "bastion.egress.reason": egress.reason,
             "bastion.egress.restored_tokens": egress.restored_tokens,
             "bastion.egress.unresolved_tokens": egress.unresolved_tokens,
+            "bastion.egress.disclosure_claim": egress.disclosure_claim,
         }
     )
 
