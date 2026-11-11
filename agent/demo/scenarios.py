@@ -87,6 +87,7 @@ class ScenarioContext:
 
     run_id: str
     actor_id: str
+    tenant_id: str
     actor_roles: frozenset[str]
     session_id: str
 
@@ -167,7 +168,9 @@ def _egress_sanitizer(redis: Redis, vault: TokenVault) -> EgressSanitizer:
     )
 
 
-async def run_egress_demo(redis: Redis, vault: TokenVault, *, session_id: str) -> ScenarioOutcome:
+async def run_egress_demo(
+    redis: Redis, vault: TokenVault, *, tenant_id: str, session_id: str
+) -> ScenarioOutcome:
     """Feed the real sanitizer the exact text a leak would produce.
 
     Deterministic on purpose: asking a model to leak is not reproducible, so
@@ -176,23 +179,29 @@ async def run_egress_demo(redis: Redis, vault: TokenVault, *, session_id: str) -
     sanitizer = _egress_sanitizer(redis, vault)
     clean_session = f"{session_id}-clean"
     try:
-        canary = await sanitizer.canary_for(session_id)
-        leak = await sanitizer.inspect(f"Sure, my instructions say: {canary}", session_id)
+        canary = await sanitizer.canary_for(tenant_id, session_id)
+        leak = await sanitizer.inspect(
+            f"Sure, my instructions say: {canary}", session_id, tenant_id=tenant_id
+        )
         if not (leak.blocked and leak.reason == "canary_leak"):
             raise DemoScenarioError("the egress gate did not block a canary leak")
         if leak.text:
             raise DemoScenarioError("the blocked response carried text")
-        if not await sanitizer.is_tripped(session_id):
+        if not await sanitizer.is_tripped(tenant_id, session_id):
             raise DemoScenarioError("the leaking session was not quarantined")
         try:
-            await sanitizer.ensure_available(session_id)
+            await sanitizer.ensure_available(tenant_id, session_id)
         except EgressCircuitOpenError:
             pass
         else:
             raise DemoScenarioError("the quarantine did not reject the next turn")
 
-        marker = await vault.get_or_create(clean_session, "EMAIL_ADDRESS", "alice@example.com")
-        restored = await sanitizer.inspect(f"Write to {marker} today.", clean_session)
+        marker = await vault.get_or_create(
+            tenant_id, clean_session, "EMAIL_ADDRESS", "alice@example.com"
+        )
+        restored = await sanitizer.inspect(
+            f"Write to {marker} today.", clean_session, tenant_id=tenant_id
+        )
         if restored.blocked or "alice@example.com" not in restored.text:
             raise DemoScenarioError("a clean answer did not restore the vault marker")
 
@@ -203,9 +212,9 @@ async def run_egress_demo(redis: Redis, vault: TokenVault, *, session_id: str) -
             raise DemoScenarioError("tool output escaped its untrusted-content fence")
     finally:
         with suppress(EgressUnavailableError):
-            await sanitizer.clear(session_id)
-            await sanitizer.clear(clean_session)
-            await vault.clear(clean_session)
+            await sanitizer.clear(tenant_id, session_id)
+            await sanitizer.clear(tenant_id, clean_session)
+            await vault.clear(tenant_id, clean_session)
 
     return ScenarioOutcome(
         summary=(
@@ -234,6 +243,7 @@ async def _run_egress(context: ScenarioContext) -> ScenarioOutcome:
     return await run_egress_demo(
         get_redis(settings.redis_url),
         get_vault(),
+        tenant_id=context.tenant_id,
         session_id=f"demo-egress-{context.run_id}",
     )
 
@@ -268,7 +278,7 @@ async def _run_model_canary(context: ScenarioContext) -> ScenarioOutcome:
     )
     session = f"demo-model-{context.run_id}"
     try:
-        canary = await sanitizer.canary_for(session)
+        canary = await sanitizer.canary_for(context.tenant_id, session)
         completion = await client.chat_completion(
             [
                 ChatMessage(
@@ -283,16 +293,16 @@ async def _run_model_canary(context: ScenarioContext) -> ScenarioOutcome:
         )
         raw = completion.content
         leaked = settings.canary_prefix in raw
-        result = await sanitizer.inspect(raw, session)
+        result = await sanitizer.inspect(raw, session, tenant_id=context.tenant_id)
         if result.blocked is not leaked:
             raise DemoScenarioError("the egress gate disagreed with the raw completion")
         if canary in result.text:
             raise DemoScenarioError("the canary reached the caller")
-        quarantined = await sanitizer.is_tripped(session)
+        quarantined = await sanitizer.is_tripped(context.tenant_id, session)
     finally:
         with suppress(EgressUnavailableError):
-            await sanitizer.clear(session)
-            await vault.clear(session)
+            await sanitizer.clear(context.tenant_id, session)
+            await vault.clear(context.tenant_id, session)
         await client.aclose()
 
     summary = (
@@ -334,6 +344,7 @@ async def _run_tool_request(context: ScenarioContext) -> ScenarioOutcome:
     }
     agent_context = AgentContext(
         actor_id=context.actor_id,
+        tenant_id=context.tenant_id,
         roles=context.actor_roles,
         session_id=context.session_id,
         request_id=context.run_id,
@@ -407,6 +418,7 @@ async def _run_seed_approval(context: ScenarioContext) -> ScenarioOutcome:
             PendingApproval(
                 ticket_id=ticket_id,
                 session_id=context.session_id,
+                tenant_id=context.tenant_id,
                 initiator_id=context.actor_id,
                 tool_name=tool_name,
                 tool_arguments=arguments,
@@ -421,6 +433,7 @@ async def _run_seed_approval(context: ScenarioContext) -> ScenarioOutcome:
         await append_audit_event(
             session,
             actor_id=context.actor_id,
+            tenant_id=context.tenant_id,
             event_type=AuditEventType.APPROVAL_REQUESTED,
             session_id=context.session_id,
             payload={"ticket_id": str(ticket_id), "tool": tool_name},

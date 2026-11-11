@@ -95,10 +95,12 @@ async def test_every_golden_output_cannot_leak_a_canary(
     sanitizer_fixture: EgressSanitizer, golden: Golden
 ) -> None:
     session = f"eval:{golden.ident}"
-    canary = await sanitizer_fixture.canary_for(session)
+    canary = await sanitizer_fixture.canary_for("acme", session)
 
     # The model answered with its own system marker: the worst case.
-    result = await sanitizer_fixture.inspect(f"{golden.prompt}\n{canary}", session)
+    result = await sanitizer_fixture.inspect(
+        f"{golden.prompt}\n{canary}", session, tenant_id="acme"
+    )
 
     assert result.blocked is True
     assert result.reason == "canary_leak"
@@ -116,7 +118,7 @@ async def test_benign_answers_are_not_blocked(
     session = f"clean:{golden.ident}"
     answer = "This is a normal, marker-free answer."
 
-    result = await sanitizer_fixture.inspect(answer, session)
+    result = await sanitizer_fixture.inspect(answer, session, tenant_id="acme")
 
     assert result.blocked is False
     metric = EgressCanaryMetric()

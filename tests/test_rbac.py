@@ -21,10 +21,16 @@ from gateway.auth.rbac import (
 from gateway.auth.roles import any_satisfied, is_satisfied, normalise_roles
 from gateway.auth.session import SessionRecord
 
-ALICE = Principal(subject="alice-sub", username="alice", roles=frozenset({"operator"}))
-BOB = Principal(subject="bob-sub", username="bob", roles=frozenset({"operator", "analyst"}))
-CAROL = Principal(subject="carol-sub", username="carol", roles=frozenset({"analyst"}))
-ROOT = Principal(subject="root-sub", username="root", roles=frozenset({"admin"}))
+ALICE = Principal(
+    subject="alice-sub", tenant_id="acme", username="alice", roles=frozenset({"operator"})
+)
+BOB = Principal(
+    subject="bob-sub", tenant_id="acme", username="bob", roles=frozenset({"operator", "analyst"})
+)
+CAROL = Principal(
+    subject="carol-sub", tenant_id="acme", username="carol", roles=frozenset({"analyst"})
+)
+ROOT = Principal(subject="root-sub", tenant_id="acme", username="root", roles=frozenset({"admin"}))
 
 
 def _session(principal: Principal, csrf_token: str = "csrf-token") -> SessionRecord:

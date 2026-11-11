@@ -39,7 +39,9 @@ def workspace(tmp_path, monkeypatch):
 
 
 def context(actor: str = "alice", roles: tuple[str, ...] = ("operator",)) -> AgentContext:
-    return AgentContext(actor_id=actor, roles=frozenset(roles), session_id="sess-tools")
+    return AgentContext(
+        actor_id=actor, tenant_id="acme", roles=frozenset(roles), session_id="sess-tools"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +179,7 @@ def test_arguments_are_copied_not_aliased() -> None:
 def test_context_normalises_and_drops_unknown_roles() -> None:
     ctx = AgentContext(
         actor_id="  alice  ",
+        tenant_id="acme",
         roles=frozenset({"OPERATOR", "offline_access"}),
         session_id="s",
     )
@@ -186,9 +189,11 @@ def test_context_normalises_and_drops_unknown_roles() -> None:
 
 def test_context_requires_identity_and_session() -> None:
     with pytest.raises(ValueError, match="actor_id"):
-        AgentContext(actor_id="", roles=frozenset({"operator"}), session_id="s")
+        AgentContext(actor_id="", tenant_id="acme", roles=frozenset({"operator"}), session_id="s")
     with pytest.raises(ValueError, match="session_id"):
-        AgentContext(actor_id="alice", roles=frozenset({"operator"}), session_id=" ")
+        AgentContext(
+            actor_id="alice", tenant_id="acme", roles=frozenset({"operator"}), session_id=" "
+        )
 
 
 def test_result_payload_is_json_shaped() -> None:

@@ -19,6 +19,7 @@ a file in this directory; this page is the index and the process guide.
 | 012 | Egress Canary Tripwires, Untrusted-Content Fencing & Chat Lifecycle | Accepted |
 | 013 | Per-Principal Rate Limiting | Accepted |
 | 014 | Observability & Trace Privacy | Accepted |
+| 015 | Tenant Isolation for Keys, Rows and Queries | Accepted |
 
 ---
 

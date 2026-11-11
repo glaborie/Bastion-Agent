@@ -71,6 +71,7 @@ class SessionRecord:
                 "session_id": self.session_id,
                 "principal": {
                     "subject": self.principal.subject,
+                    "tenant_id": self.principal.tenant_id,
                     "username": self.principal.username,
                     "email": self.principal.email,
                     "roles": sorted(self.principal.roles),
@@ -100,6 +101,7 @@ class SessionRecord:
             session_id=_require_str(raw, "session_id"),
             principal=Principal(
                 subject=_require_str(principal_raw, "subject"),
+                tenant_id=_require_str(principal_raw, "tenant_id"),
                 username=_optional_str(principal_raw.get("username")),
                 email=_optional_str(principal_raw.get("email")),
                 roles=normalise_roles(roles if isinstance(roles, list) else []),

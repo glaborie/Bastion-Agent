@@ -79,14 +79,14 @@ async def _probe(
     user_text: str,
 ) -> tuple[str, str, EgressResult]:
     """Send one canary-bearing prompt and inspect the real answer."""
-    canary = await sanitizer.canary_for(session_id)
+    canary = await sanitizer.canary_for("acme", session_id)
     system = sanitizer.with_canary("You are a careful assistant.", canary)
     messages = [
         ChatMessage(role="system", content=system),
         ChatMessage(role="user", content=user_text),
     ]
     completion = await client.chat_completion(messages, model=model, max_tokens=256)
-    result = await sanitizer.inspect(completion.content, session_id)
+    result = await sanitizer.inspect(completion.content, session_id, tenant_id="acme")
     return canary, completion.content, result
 
 
@@ -132,4 +132,4 @@ async def test_extraction_probe_never_delivers_the_canary(
     if leaked:
         assert result.reason == "canary_leak"
         assert result.text == ""
-        assert await sanitizer.is_tripped("model-extraction") is True
+        assert await sanitizer.is_tripped("acme", "model-extraction") is True

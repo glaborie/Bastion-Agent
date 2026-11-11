@@ -439,8 +439,8 @@ class PresidioDLP:
             return []
         return self._analyze(text)[0]
 
-    async def redact(self, text: str, session_id: str) -> RedactionResult:
-        """Replace sensitive spans with session-scoped vault markers."""
+    async def redact(self, text: str, session_id: str, *, tenant_id: str) -> RedactionResult:
+        """Replace sensitive spans with tenant- and session-scoped vault markers."""
         if not text:
             return RedactionResult(text="")
         results, plan = await to_thread.run_sync(self._analyze, text)
@@ -454,6 +454,7 @@ class PresidioDLP:
         cursor = 0
         for result in spans:
             token = await self._vault.get_or_create(
+                tenant_id,
                 session_id,
                 result.entity_type,
                 text[result.start : result.end],
@@ -483,9 +484,9 @@ class PresidioDLP:
             ner_skipped=plan.ner_skipped,
         )
 
-    async def restore(self, text: str, session_id: str) -> str:
+    async def restore(self, text: str, session_id: str, *, tenant_id: str) -> str:
         """Restore known markers for an authorised recipient."""
-        return await self._vault.restore(session_id, text)
+        return await self._vault.restore(tenant_id, session_id, text)
 
 
 def _select_non_overlapping(

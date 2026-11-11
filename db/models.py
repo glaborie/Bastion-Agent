@@ -239,6 +239,12 @@ class AuditLog(Base):
         server_default=text("now()"),
     )
     session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: Access scope from the authenticated identity (ADR-015). Not part of the
+    #: record hash, which ADR-005 keeps stable; the append-only trigger prevents
+    #: reassigning it.
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, server_default=text("'default'")
+    )
     actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
     event_type: Mapped[AuditEventType] = mapped_column(
         _enum_column("audit_event_type", AuditEventType), nullable=False
@@ -255,6 +261,7 @@ class AuditLog(Base):
         CheckConstraint("previous_hash ~ '^[0-9a-f]{64}$'", name="previous_hash_is_sha256_hex"),
         CheckConstraint("payload_hash ~ '^[0-9a-f]{64}$'", name="payload_hash_is_sha256_hex"),
         Index("ix_audit_logs_timestamp_id", "timestamp", "id"),
+        Index("ix_audit_logs_tenant_timestamp_id", "tenant_id", "timestamp", "id"),
         Index("ix_audit_logs_session_id", "session_id"),
         Index("ix_audit_logs_actor_id", "actor_id"),
         Index("ix_audit_logs_event_type", "event_type"),
@@ -432,6 +439,10 @@ class PendingApproval(Base):
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     session_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: Tenant of the initiator; the approver must be in the same tenant.
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, server_default=text("'default'")
+    )
     initiator_id: Mapped[str] = mapped_column(String(128), nullable=False)
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
     tool_arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
@@ -492,6 +503,12 @@ class PendingApproval(Base):
             name="approval_token_hash_is_sha256_hex",
         ),
         Index("ix_pending_approvals_status_expires", "status", "token_expires_at"),
+        Index(
+            "ix_pending_approvals_tenant_status_expires",
+            "tenant_id",
+            "status",
+            "token_expires_at",
+        ),
         Index("ix_pending_approvals_initiator_id", "initiator_id"),
         Index("ix_pending_approvals_session_id", "session_id"),
     )
@@ -530,3 +547,27 @@ class PendingApproval(Base):
             f"PendingApproval(ticket_id={self.ticket_id!r}, tool={self.tool_name!r}, "
             f"status={self.status!r})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tenant-scope upgrade path (ADR-015)
+# ---------------------------------------------------------------------------
+
+#: ``create_all`` only creates missing tables, so an existing v0.2 database
+#: needs the tenant columns added in place. ``ADD COLUMN ... DEFAULT`` is a
+#: metadata-only change on PostgreSQL 11+; the indexes are created idempotently
+#: on boot (a large production ledger should use an explicit online migration).
+#: Rows that predate ADR-015 are assigned ``default``; new application writes
+#: always pass a validated tenant explicitly.
+TENANT_SCOPE_DDL: Final[tuple[str, ...]] = (
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS "
+    "tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'",
+    "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS "
+    "tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'",
+    "CREATE INDEX IF NOT EXISTS ix_audit_logs_tenant_id ON audit_logs (tenant_id)",
+    "CREATE INDEX IF NOT EXISTS ix_audit_logs_tenant_timestamp_id "
+    "ON audit_logs (tenant_id, timestamp, id)",
+    "CREATE INDEX IF NOT EXISTS ix_pending_approvals_tenant_id ON pending_approvals (tenant_id)",
+    "CREATE INDEX IF NOT EXISTS ix_pending_approvals_tenant_status_expires "
+    "ON pending_approvals (tenant_id, status, token_expires_at)",
+)

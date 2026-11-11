@@ -50,7 +50,7 @@ async def test_the_recorded_transcript_produces_a_named_verdict(
     sanitizer: EgressSanitizer,
 ) -> None:
     """It is delivered — there is no marker — but no longer unflagged."""
-    result = await sanitizer.inspect(RECORDED_COMPLETION, "session-recorded")
+    result = await sanitizer.inspect(RECORDED_COMPLETION, "session-recorded", tenant_id="acme")
 
     assert result.blocked is False
     assert result.disclosure_claim == "system_prompt"
@@ -58,10 +58,10 @@ async def test_the_recorded_transcript_produces_a_named_verdict(
 
 
 async def test_a_claim_does_not_quarantine_the_session(sanitizer: EgressSanitizer) -> None:
-    await sanitizer.inspect(RECORDED_COMPLETION, "session-no-trip")
-    assert await sanitizer.is_tripped("session-no-trip") is False
+    await sanitizer.inspect(RECORDED_COMPLETION, "session-no-trip", tenant_id="acme")
+    assert await sanitizer.is_tripped("acme", "session-no-trip") is False
 
-    second = await sanitizer.inspect("A normal answer.", "session-no-trip")
+    second = await sanitizer.inspect("A normal answer.", "session-no-trip", tenant_id="acme")
     assert second.blocked is False
     assert second.disclosure_claim is None
 
@@ -74,7 +74,7 @@ async def test_instruction_and_instructed_claims_are_named(
         ("I was instructed to keep this confidential.", "instructed"),
         ("I have been programmed to answer in French.", "instructed"),
     ):
-        result = await sanitizer.inspect(text, f"session-{expected}")
+        result = await sanitizer.inspect(text, f"session-{expected}", tenant_id="acme")
         assert result.disclosure_claim == expected, text
         assert result.blocked is False
 
@@ -87,7 +87,7 @@ async def test_benign_explanations_are_not_claimed(sanitizer: EgressSanitizer) -
         "The article explains how system prompts are written.",
         "In one sentence, a canary token is a tripwire for leaked prompts.",
     ):
-        result = await sanitizer.inspect(text, f"session-benign-{hash(text)}")
+        result = await sanitizer.inspect(text, f"session-benign-{hash(text)}", tenant_id="acme")
         assert result.disclosure_claim is None, text
 
 
@@ -95,11 +95,13 @@ async def test_a_canary_leak_still_blocks_and_reports_no_claim(
     sanitizer: EgressSanitizer,
 ) -> None:
     """The marker path is unchanged: discard, quarantine, no text."""
-    canary = await sanitizer.canary_for("session-leak")
-    result = await sanitizer.inspect(f"{RECORDED_COMPLETION} {canary}", "session-leak")
+    canary = await sanitizer.canary_for("acme", "session-leak")
+    result = await sanitizer.inspect(
+        f"{RECORDED_COMPLETION} {canary}", "session-leak", tenant_id="acme"
+    )
 
     assert result.blocked is True
     assert result.reason == "canary_leak"
     assert result.text == ""
     assert result.disclosure_claim is None
-    assert await sanitizer.is_tripped("session-leak") is True
+    assert await sanitizer.is_tripped("acme", "session-leak") is True

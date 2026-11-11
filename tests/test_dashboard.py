@@ -38,10 +38,18 @@ from tests.conftest import requires_database
 
 pytestmark = [pytest.mark.integration, requires_database]
 
-ALICE = Principal(subject="alice-sub", username="alice", roles=frozenset({"operator"}))
-BOB = Principal(subject="bob-sub", username="bob", roles=frozenset({"operator", "analyst"}))
-CAROL = Principal(subject="carol-sub", username="carol", roles=frozenset({"analyst"}))
-DAVE = Principal(subject="dave-sub", username="dave", roles=frozenset({"readonly"}))
+ALICE = Principal(
+    subject="alice-sub", tenant_id="acme", username="alice", roles=frozenset({"operator"})
+)
+BOB = Principal(
+    subject="bob-sub", tenant_id="acme", username="bob", roles=frozenset({"operator", "analyst"})
+)
+CAROL = Principal(
+    subject="carol-sub", tenant_id="acme", username="carol", roles=frozenset({"analyst"})
+)
+DAVE = Principal(
+    subject="dave-sub", tenant_id="acme", username="dave", roles=frozenset({"readonly"})
+)
 
 ARGUMENTS: dict[str, Any] = {"path": "/srv/reports/q3.csv", "content": "revenue"}
 SECRET = "integration-test-hmac-secret"
@@ -66,6 +74,7 @@ def build_ticket(
     return PendingApproval(
         ticket_id=identifier,
         session_id="session-four-eyes",
+        tenant_id="acme",
         initiator_id=initiator_id,
         tool_name="execute_file_write",
         tool_arguments=ARGUMENTS,
@@ -280,6 +289,7 @@ async def test_audit_filters_and_pagination(
             await append_audit_event(
                 session,
                 actor_id="alice-sub",
+                tenant_id="acme",
                 event_type=AuditEventType.INPUT_RECEIVED,
                 session_id="session-audit",
                 payload={"n": index},
@@ -287,6 +297,7 @@ async def test_audit_filters_and_pagination(
         await append_audit_event(
             session,
             actor_id="bob-sub",
+            tenant_id="acme",
             event_type=AuditEventType.EGRESS_FILTERED,
             session_id="session-audit",
             payload={"clean": True},
@@ -331,6 +342,7 @@ async def test_dashboard_shows_recent_security_incidents(
         await append_audit_event(
             session,
             actor_id="bob-sub",
+            tenant_id="acme",
             event_type=AuditEventType.SECURITY_INCIDENT,
             session_id="conv-canary",
             metadata_json={"reason": "canary_leak", "stage": "egress", "route": "local-llama"},
@@ -338,6 +350,7 @@ async def test_dashboard_shows_recent_security_incidents(
         await append_audit_event(
             session,
             actor_id="alice-sub",
+            tenant_id="acme",
             event_type=AuditEventType.SECURITY_INCIDENT,
             session_id="conv-quarantine",
             metadata_json={"reason": "circuit_open", "stage": "preflight"},
@@ -346,6 +359,7 @@ async def test_dashboard_shows_recent_security_incidents(
         await append_audit_event(
             session,
             actor_id="bob-sub",
+            tenant_id="acme",
             event_type=AuditEventType.INPUT_RECEIVED,
             session_id="conv-clean",
             payload={"not_an_incident": True},
@@ -382,6 +396,7 @@ async def test_incident_panel_fragment_and_empty_state(
         await append_audit_event(
             session,
             actor_id="bob-sub",
+            tenant_id="acme",
             event_type=AuditEventType.SECURITY_INCIDENT,
             session_id="conv-fragment",
             metadata_json={"reason": "vault_error", "stage": "egress"},
@@ -461,6 +476,7 @@ async def test_audit_page_and_session_inspector(
         await append_audit_event(
             session,
             actor_id="bob-sub",
+            tenant_id="acme",
             event_type=AuditEventType.INPUT_RECEIVED,
             session_id="session-inspector",
             payload={"n": 1},

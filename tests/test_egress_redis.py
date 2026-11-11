@@ -64,7 +64,7 @@ async def redis_env() -> AsyncIterator[tuple[EgressSanitizer, TokenVault, Redis,
         await client.ping()
         yield sanitizer, vault, client, session_id
     finally:
-        await sanitizer.clear(session_id)
+        await sanitizer.clear("acme", session_id)
         await client.aclose()
 
 
@@ -72,7 +72,7 @@ async def test_canary_is_shared_between_replicas_with_the_vault_ttl(
     redis_env: tuple[EgressSanitizer, TokenVault, Redis, str],
 ) -> None:
     sanitizer, vault, client, session_id = redis_env
-    first = await sanitizer.canary_for(session_id)
+    first = await sanitizer.canary_for("acme", session_id)
 
     # A second worker (separate sanitizer, separate connection) must read the
     # same marker, because the value lives in Redis rather than process memory.
@@ -83,7 +83,7 @@ async def test_canary_is_shared_between_replicas_with_the_vault_ttl(
         canary_ttl_seconds=60,
         trip_ttl_seconds=60,
     )
-    assert await other.canary_for(session_id) == first
+    assert await other.canary_for("acme", session_id) == first
 
     ttl = await client.ttl(_key("canary", session_id))
     assert 0 < ttl <= 60
@@ -95,7 +95,7 @@ async def test_concurrent_first_turns_converge_on_one_canary(
     sanitizer, _vault, client, session_id = redis_env
 
     values = await asyncio.gather(
-        *(sanitizer.canary_for(session_id) for _ in range(8)),
+        *(sanitizer.canary_for("acme", session_id) for _ in range(8)),
     )
 
     assert len(set(values)) == 1
@@ -107,9 +107,9 @@ async def test_canary_leak_sets_a_quarantine_key_with_a_ttl(
     redis_env: tuple[EgressSanitizer, TokenVault, Redis, str],
 ) -> None:
     sanitizer, _vault, client, session_id = redis_env
-    canary = await sanitizer.canary_for(session_id)
+    canary = await sanitizer.canary_for("acme", session_id)
 
-    result = await sanitizer.inspect(f"Here is the marker: {canary}", session_id)
+    result = await sanitizer.inspect(f"Here is the marker: {canary}", session_id, tenant_id="acme")
 
     assert result.blocked is True
     assert result.reason == "canary_leak"
@@ -117,7 +117,7 @@ async def test_canary_leak_sets_a_quarantine_key_with_a_ttl(
     ttl = await client.ttl(_key("trip", session_id))
     assert 0 < ttl <= 60
     # The quarantine is shared by every replica, not held in process memory.
-    assert await sanitizer.is_tripped(session_id) is True
+    assert await sanitizer.is_tripped("acme", session_id) is True
 
 
 async def test_quarantine_expires_without_a_cleanup_job(
@@ -132,14 +132,14 @@ async def test_quarantine_expires_without_a_cleanup_job(
         trip_ttl_seconds=1,
     )
 
-    await fast.trip(session_id, "canary_leak")
-    assert await fast.is_tripped(session_id) is True
+    await fast.trip("acme", session_id, "canary_leak")
+    assert await fast.is_tripped("acme", session_id) is True
 
     # Redis expires the key itself; no sweeper or application timer is involved.
     await asyncio.sleep(1.2)
 
-    assert await fast.is_tripped(session_id) is False
-    await fast.ensure_available(session_id)
+    assert await fast.is_tripped("acme", session_id) is False
+    await fast.ensure_available("acme", session_id)
 
 
 async def test_clear_removes_only_this_sessions_keys(
@@ -148,14 +148,14 @@ async def test_clear_removes_only_this_sessions_keys(
     sanitizer, _vault, client, session_id = redis_env
     other_session = f"redis-test:{uuid.uuid4()}"
     try:
-        await sanitizer.canary_for(session_id)
-        await sanitizer.trip(session_id, "canary_leak")
-        await sanitizer.canary_for(other_session)
+        await sanitizer.canary_for("acme", session_id)
+        await sanitizer.trip("acme", session_id, "canary_leak")
+        await sanitizer.canary_for("acme", other_session)
 
-        await sanitizer.clear(session_id)
+        await sanitizer.clear("acme", session_id)
 
         assert await client.exists(_key("canary", session_id)) == 0
         assert await client.exists(_key("trip", session_id)) == 0
         assert await client.exists(_key("canary", other_session)) == 1
     finally:
-        await sanitizer.clear(other_session)
+        await sanitizer.clear("acme", other_session)

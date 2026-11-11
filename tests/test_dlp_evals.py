@@ -80,7 +80,7 @@ def test_corpus_covers_every_identifier_family() -> None:
 
 @pytest.mark.parametrize("golden", REDACTION_CASES, ids=lambda item: item.ident)
 async def test_golden_redaction_is_zero_tolerance(dlp: PresidioDLP, golden: Golden) -> None:
-    result = await dlp.redact(golden.prompt, f"golden-{golden.ident}")
+    result = await dlp.redact(golden.prompt, f"golden-{golden.ident}", tenant_id="acme")
     metric = DLPRedactionMetric(golden.expected_redactions)
     case = LLMTestCase(input=golden.prompt, actual_output=result.text)
     score = metric.measure(case, result)
@@ -91,5 +91,5 @@ async def test_golden_redaction_is_zero_tolerance(dlp: PresidioDLP, golden: Gold
 
 @pytest.mark.parametrize("golden", CLEAN_CASES, ids=lambda item: item.ident)
 async def test_benign_prompts_are_not_over_redacted(dlp: PresidioDLP, golden: Golden) -> None:
-    result = await dlp.redact(golden.prompt, f"clean-{golden.ident}")
+    result = await dlp.redact(golden.prompt, f"clean-{golden.ident}", tenant_id="acme")
     assert not result.redacted, f"{golden.ident}: unexpected {result.entity_types}"

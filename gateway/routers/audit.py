@@ -65,7 +65,7 @@ async def list_audit(
         before_id=before_id,
         limit=limit,
     )
-    page = await list_records(session, filters)
+    page = await list_records(session, filters, tenant_id=context.tenant_id)
     if is_htmx(request):
         return _render_records(
             request,
@@ -118,7 +118,7 @@ async def timeline(
 ) -> Any:
     if not session_id or len(session_id) > 128:
         raise HTTPException(status_code=422, detail="invalid session id")
-    records = await session_timeline(session, session_id)
+    records = await session_timeline(session, session_id, tenant_id=context.tenant_id)
     if is_htmx(request):
         return _render_records(
             request,

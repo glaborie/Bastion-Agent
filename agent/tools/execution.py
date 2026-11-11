@@ -128,6 +128,7 @@ async def record_tool_refusal(
     await append_audit_event(
         session,
         actor_id=context.actor_id,
+        tenant_id=context.tenant_id,
         event_type=AuditEventType.TOOL_REQUESTED,
         session_id=context.session_id,
         payload=payload,
@@ -244,6 +245,7 @@ async def resume_approved_tool(
 
     context = AgentContext(
         actor_id=ticket.initiator_id,
+        tenant_id=ticket.tenant_id,
         roles=frozenset({ticket.required_role}),
         session_id=ticket.session_id,
         request_id=f"ticket:{ticket.ticket_id}",
@@ -260,6 +262,7 @@ async def resume_approved_tool(
             session,
             definition,
             actor_id=ticket.initiator_id,
+            tenant_id=ticket.tenant_id,
             session_id=ticket.session_id,
             moment=moment,
             outcome="failed",
@@ -289,6 +292,7 @@ async def resume_approved_tool(
         session,
         definition,
         actor_id=ticket.initiator_id,
+        tenant_id=ticket.tenant_id,
         session_id=ticket.session_id,
         moment=moment,
         outcome="ok",
@@ -433,6 +437,7 @@ async def _record_accepted(
     await append_audit_event(
         session,
         actor_id=context.actor_id,
+        tenant_id=context.tenant_id,
         event_type=AuditEventType.TOOL_REQUESTED,
         session_id=context.session_id,
         payload={"tool": definition.name, "arguments": arguments},
@@ -495,6 +500,7 @@ async def _execute_now(
             session,
             definition,
             actor_id=context.actor_id,
+            tenant_id=context.tenant_id,
             session_id=context.session_id,
             moment=moment,
             outcome="failed",
@@ -507,6 +513,7 @@ async def _execute_now(
         session,
         definition,
         actor_id=context.actor_id,
+        tenant_id=context.tenant_id,
         session_id=context.session_id,
         moment=moment,
         outcome="ok",
@@ -536,6 +543,7 @@ async def _suspend(
     ticket = PendingApproval(
         ticket_id=ticket_id,
         session_id=context.session_id,
+        tenant_id=context.tenant_id,
         initiator_id=context.actor_id,
         tool_name=definition.name,
         tool_arguments=arguments,
@@ -551,6 +559,7 @@ async def _suspend(
     await append_audit_event(
         session,
         actor_id=context.actor_id,
+        tenant_id=context.tenant_id,
         event_type=AuditEventType.APPROVAL_REQUESTED,
         session_id=context.session_id,
         payload={
@@ -589,6 +598,7 @@ async def _record_execution(
     definition: ToolDefinition,
     *,
     actor_id: str,
+    tenant_id: str,
     session_id: str | None,
     moment: datetime,
     outcome: str,
@@ -600,6 +610,7 @@ async def _record_execution(
     await append_audit_event(
         session,
         actor_id=actor_id,
+        tenant_id=tenant_id,
         event_type=AuditEventType.TOOL_EXECUTED,
         session_id=session_id,
         payload={
@@ -623,6 +634,7 @@ async def _record_incident(session: AsyncSession, ticket: PendingApproval, reaso
     await append_audit_event(
         session,
         actor_id=SYSTEM_ACTOR,
+        tenant_id=ticket.tenant_id,
         event_type=AuditEventType.SECURITY_INCIDENT,
         session_id=ticket.session_id,
         payload={

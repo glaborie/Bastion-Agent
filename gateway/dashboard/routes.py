@@ -78,9 +78,10 @@ async def dashboard_page(
         session,
         viewer_id=context.actor_id,
         viewer_roles=context.principal.roles,
+        tenant_id=context.tenant_id,
         limit=settings.approval_page_size,
     )
-    incidents = await recent_security_incidents(session)
+    incidents = await recent_security_incidents(session, tenant_id=context.tenant_id)
     return render(
         request,
         "dashboard.html",
@@ -102,7 +103,7 @@ async def incidents_panel(
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     """Live ``SECURITY_INCIDENT`` panel fragment polled by the dashboard (ADR-012)."""
-    incidents = await recent_security_incidents(session)
+    incidents = await recent_security_incidents(session, tenant_id=context.tenant_id)
     return render(
         request,
         "partials/incident_panel.html",
@@ -181,7 +182,7 @@ async def audit_page(
             status_code=422,
         )
 
-    page = await list_records(session, filters)
+    page = await list_records(session, filters, tenant_id=context.tenant_id)
     return render(
         request,
         "audit.html",
@@ -211,7 +212,7 @@ async def session_page(
         return render_error(
             request, title="Invalid session", detail="Malformed session id.", status_code=422
         )
-    events = await session_timeline(session, session_id)
+    events = await session_timeline(session, session_id, tenant_id=context.tenant_id)
     return render(
         request,
         "session.html",

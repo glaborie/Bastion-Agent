@@ -90,6 +90,7 @@ async def start_demo_run(
             run_id=run_id,
             scenario_id=scenario.id,
             actor_id=context.actor_id,
+            tenant_id=context.tenant_id,
             roles=sorted(context.principal.roles),
             session_id=run.session_id,
         )

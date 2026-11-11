@@ -43,9 +43,9 @@ async def test_canary_is_stable_per_session_and_unique_across_sessions(
     env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis],
 ) -> None:
     sanitizer, _vault, _redis = env
-    first = await sanitizer.canary_for("session-a")
-    second = await sanitizer.canary_for("session-a")
-    other = await sanitizer.canary_for("session-b")
+    first = await sanitizer.canary_for("acme", "session-a")
+    second = await sanitizer.canary_for("acme", "session-a")
+    other = await sanitizer.canary_for("acme", "session-b")
     assert first == second
     assert first != other
     assert first.startswith(PREFIX)
@@ -56,18 +56,18 @@ async def test_output_containing_the_canary_is_blocked_and_quarantines(
     env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis],
 ) -> None:
     sanitizer, _vault, _redis = env
-    canary = await sanitizer.canary_for("session-a")
+    canary = await sanitizer.canary_for("acme", "session-a")
 
-    result = await sanitizer.inspect(f"Here is the marker: {canary}", "session-a")
+    result = await sanitizer.inspect(f"Here is the marker: {canary}", "session-a", tenant_id="acme")
 
     assert result.blocked is True
     assert result.reason == "canary_leak"
     assert result.text == ""
-    assert await sanitizer.is_tripped("session-a") is True
+    assert await sanitizer.is_tripped("acme", "session-a") is True
     with pytest.raises(EgressCircuitOpenError):
-        await sanitizer.ensure_available("session-a")
+        await sanitizer.ensure_available("acme", "session-a")
     # A different session is unaffected.
-    await sanitizer.ensure_available("session-b")
+    await sanitizer.ensure_available("acme", "session-b")
 
 
 async def test_any_token_with_the_prefix_trips_the_session(
@@ -75,7 +75,7 @@ async def test_any_token_with_the_prefix_trips_the_session(
 ) -> None:
     sanitizer, _vault, _redis = env
     leaked = f"leaked {PREFIX}01234567-89ab-cdef-0123-456789abcdef"
-    result = await sanitizer.inspect(leaked, "s")
+    result = await sanitizer.inspect(leaked, "s", tenant_id="acme")
     assert result.blocked is True
     assert result.reason == "canary_leak"
 
@@ -84,9 +84,9 @@ async def test_clean_output_restores_this_sessions_tokens(
     env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis],
 ) -> None:
     sanitizer, vault, _redis = env
-    marker = await vault.get_or_create("session-a", "EMAIL_ADDRESS", "alice@example.com")
+    marker = await vault.get_or_create("acme", "session-a", "EMAIL_ADDRESS", "alice@example.com")
 
-    result = await sanitizer.inspect(f"Write to {marker} today.", "session-a")
+    result = await sanitizer.inspect(f"Write to {marker} today.", "session-a", tenant_id="acme")
 
     assert result.blocked is False
     assert result.text == "Write to alice@example.com today."
@@ -98,9 +98,9 @@ async def test_markers_are_not_restored_for_another_session(
     env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis],
 ) -> None:
     sanitizer, vault, _redis = env
-    marker = await vault.get_or_create("session-a", "EMAIL_ADDRESS", "alice@example.com")
+    marker = await vault.get_or_create("acme", "session-a", "EMAIL_ADDRESS", "alice@example.com")
 
-    result = await sanitizer.inspect(f"Write to {marker} today.", "session-b")
+    result = await sanitizer.inspect(f"Write to {marker} today.", "session-b", tenant_id="acme")
 
     assert result.text == f"Write to {marker} today."
     assert result.restored_tokens == 0
@@ -111,7 +111,9 @@ async def test_expired_markers_are_counted_not_guessed(
     env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis],
 ) -> None:
     sanitizer, _vault, _redis = env
-    result = await sanitizer.inspect("value {{ENTITY:EMAIL_ADDRESS_99}} here", "session-a")
+    result = await sanitizer.inspect(
+        "value {{ENTITY:EMAIL_ADDRESS_99}} here", "session-a", tenant_id="acme"
+    )
     assert result.text == "value {{ENTITY:EMAIL_ADDRESS_99}} here"
     assert result.unresolved_tokens == 1
     assert result.restored_tokens == 0
@@ -160,14 +162,14 @@ async def test_clear_removes_the_canary_and_quarantine(
     env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis],
 ) -> None:
     sanitizer, _vault, _redis = env
-    first = await sanitizer.canary_for("session-a")
-    await sanitizer.trip("session-a", "canary_leak")
-    assert await sanitizer.is_tripped("session-a") is True
+    first = await sanitizer.canary_for("acme", "session-a")
+    await sanitizer.trip("acme", "session-a", "canary_leak")
+    assert await sanitizer.is_tripped("acme", "session-a") is True
 
-    await sanitizer.clear("session-a")
+    await sanitizer.clear("acme", "session-a")
 
-    assert await sanitizer.is_tripped("session-a") is False
-    assert await sanitizer.canary_for("session-a") != first
+    assert await sanitizer.is_tripped("acme", "session-a") is False
+    assert await sanitizer.canary_for("acme", "session-a") != first
 
 
 async def test_redis_failure_raises_instead_of_passing(
@@ -193,9 +195,9 @@ async def test_redis_failure_raises_instead_of_passing(
         trip_ttl_seconds=60,
     )
     with pytest.raises(EgressUnavailableError):
-        await sanitizer.canary_for("session-a")
+        await sanitizer.canary_for("acme", "session-a")
     with pytest.raises(EgressUnavailableError):
-        await sanitizer.is_tripped("session-a")
+        await sanitizer.is_tripped("acme", "session-a")
 
 
 def test_ttls_must_be_positive(env: tuple[EgressSanitizer, TokenVault, FakeAsyncRedis]) -> None:

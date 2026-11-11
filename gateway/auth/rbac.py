@@ -53,6 +53,11 @@ class AuthContext:
         return self.principal.subject
 
     @property
+    def tenant_id(self) -> str:
+        """Tenant scope every read and write must carry (ADR-015)."""
+        return self.principal.tenant_id
+
+    @property
     def csrf_token(self) -> str | None:
         return self.session.csrf_token if self.session is not None else None
 
@@ -82,6 +87,7 @@ def get_token_validator() -> TokenValidator:
         client_id=settings.keycloak_client_id,
         jwks=get_jwks_client(),
         leeway_seconds=settings.keycloak_leeway_seconds,
+        tenant_claim=settings.tenant_claim,
     )
 
 

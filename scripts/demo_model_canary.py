@@ -43,6 +43,7 @@ from agent.routing.client import ChatMessage, OmniRouteClient, RoutingError
 from db.redis import close_redis, get_redis
 from settings import get_settings
 
+DEMO_TENANT: Final[str] = "demo"
 DEMO_CANARY_TTL: Final[int] = 120
 DEMO_TRIP_TTL: Final[int] = 30
 DEMO_MAX_TOKENS: Final[int] = 256
@@ -110,13 +111,14 @@ async def clean_stage(
     client: OmniRouteClient,
     model: str,
     sanitizer: EgressSanitizer,
+    tenant: str,
     session: str,
     canary: str,
 ) -> None:
     """A normal turn: the marker exists but must not appear in the answer."""
     print("1. A normal question")
     raw = await ask(client, model, sanitizer, canary, CLEAN_PROMPT)
-    result = await sanitizer.inspect(raw, session)
+    result = await sanitizer.inspect(raw, session, tenant_id=tenant)
     print(f"   model output  {preview(raw)}")
     print(f"   blocked       {result.blocked}")
     print(f"   delivered     {preview(result.text)}")
@@ -129,6 +131,7 @@ async def extraction_stage(
     client: OmniRouteClient,
     model: str,
     sanitizer: EgressSanitizer,
+    tenant: str,
     session: str,
     canary: str,
     prefix: str,
@@ -136,7 +139,7 @@ async def extraction_stage(
     """The extraction probe: the model either leaks or refuses; both pass."""
     print("\n2. The extraction probe")
     raw = await ask(client, model, sanitizer, canary, EXTRACTION_PROMPT)
-    result = await sanitizer.inspect(raw, session)
+    result = await sanitizer.inspect(raw, session, tenant_id=tenant)
     leaked = prefix in raw
     print(f"   model output  {preview(raw)}")
     print(f"   raw leak      {leaked}")
@@ -154,11 +157,11 @@ async def extraction_stage(
 
     check(result.reason == "canary_leak", "a leak was blocked for the wrong reason")
     check(result.text == "", "the blocked response carried text")
-    check(await sanitizer.is_tripped(session), "the session was not quarantined")
+    check(await sanitizer.is_tripped(tenant, session), "the session was not quarantined")
 
     print("\n3. The next turn in the same session")
     try:
-        await sanitizer.ensure_available(session)
+        await sanitizer.ensure_available(tenant, session)
     except EgressCircuitOpenError:
         print("   preflight     rejected (circuit_open); no model call")
     else:
@@ -180,14 +183,15 @@ async def run_demo(
         print(f"  endpoint       {base_url}")
         print(f"  model          {model}")
         print(f"  session        {session}")
-        canary = await sanitizer.canary_for(session)
+        canary = await sanitizer.canary_for(DEMO_TENANT, session)
         print(f"  canary         {canary}\n")
 
-        await clean_stage(client, model, sanitizer, session, canary)
+        await clean_stage(client, model, sanitizer, DEMO_TENANT, session, canary)
         await extraction_stage(
             client,
             model,
             sanitizer,
+            DEMO_TENANT,
             session,
             canary,
             settings.canary_prefix,
@@ -195,8 +199,8 @@ async def run_demo(
         print("\nPASS: no canary reached the caller; the gate matched the model output.")
     finally:
         try:
-            await sanitizer.clear(session)
-            await vault.clear(session)
+            await sanitizer.clear(DEMO_TENANT, session)
+            await vault.clear(DEMO_TENANT, session)
         except EgressUnavailableError:
             print("cleanup          skipped (Redis unreachable)", file=sys.stderr)
         else:

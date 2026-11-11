@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from db.models import AUDIT_APPEND_ONLY_DDL, SCHEMA_INIT_LOCK_ID, Base
+from db.models import AUDIT_APPEND_ONLY_DDL, SCHEMA_INIT_LOCK_ID, TENANT_SCOPE_DDL, Base
 from settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,10 @@ async def init_models(engine: AsyncEngine | None = None) -> None:
         # `after_create` only fires for new tables; re-apply the audit guard so
         # upgraded databases enforce append-only too.
         for statement in AUDIT_APPEND_ONLY_DDL:
+            await connection.execute(text(statement))
+        # ADR-015: create_all cannot add columns to an existing table, so the
+        # tenant columns and indexes are applied idempotently on every boot.
+        for statement in TENANT_SCOPE_DDL:
             await connection.execute(text(statement))
     logger.info(
         "Database schema ready",

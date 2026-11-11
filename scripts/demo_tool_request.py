@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tool", required=True, help="registered tool name")
     parser.add_argument("--actor-sub", required=True, help="initiator OIDC subject (JWT sub)")
     parser.add_argument(
+        "--tenant-id",
+        default="default",
+        help="tenant scope of the initiator (default: default)",
+    )
+    parser.add_argument(
         "--role",
         action="append",
         default=[],
@@ -93,6 +98,7 @@ async def run(args: argparse.Namespace) -> int:
             "execute_tool_job",
             tool_name=args.tool,
             actor_id=args.actor_sub,
+            tenant_id=args.tenant_id,
             roles=list(args.role),
             session_id=session_id,
             arguments=_arguments(args.arg),

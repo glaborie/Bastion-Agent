@@ -31,6 +31,7 @@ from db.models import (
     hash_payload,
     utcnow,
 )
+from db.tenancy import TenantIdError, normalise_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ async def append_audit_event(
     session: AsyncSession,
     *,
     actor_id: str,
+    tenant_id: str,
     event_type: AuditEventType,
     session_id: str | None = None,
     payload: Any | None = None,
@@ -74,6 +76,10 @@ async def append_audit_event(
     """
     if not actor_id or not actor_id.strip():
         raise AuditChainError("actor_id is required for every audit record")
+    try:
+        tenant = normalise_tenant_id(tenant_id)
+    except TenantIdError as exc:
+        raise AuditChainError("tenant_id is required for every audit record") from exc
     if payload is not None and payload_hash is not None:
         raise AuditChainError("pass either payload or payload_hash, not both")
 
@@ -97,6 +103,7 @@ async def append_audit_event(
         id=int(record_id),
         timestamp=issued_at,
         session_id=session_id,
+        tenant_id=tenant,
         actor_id=actor_id,
         event_type=event_type,
         payload_hash=resolved_payload_hash,

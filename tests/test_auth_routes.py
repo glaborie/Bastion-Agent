@@ -25,7 +25,7 @@ from gateway.auth.rbac import (
 from gateway.auth.session import SESSION_KEY_PREFIX, SessionManager
 from gateway.main import create_app
 
-BOB = Principal(subject="bob-sub", username="bob", roles=frozenset({"operator"}))
+BOB = Principal(subject="bob-sub", tenant_id="acme", username="bob", roles=frozenset({"operator"}))
 
 
 class StubValidator:

@@ -90,6 +90,7 @@ async def test_append_links_records_into_a_verifiable_chain(
     first = await append_audit_event(
         session,
         actor_id="alice",
+        tenant_id="acme",
         event_type=AuditEventType.INPUT_RECEIVED,
         session_id="sess-1",
         payload={"prompt": "hello"},
@@ -98,6 +99,7 @@ async def test_append_links_records_into_a_verifiable_chain(
     second = await append_audit_event(
         session,
         actor_id="alice",
+        tenant_id="acme",
         event_type=AuditEventType.DLP_REDACTION,
         session_id="sess-1",
         payload={"entities": 2},
@@ -105,6 +107,7 @@ async def test_append_links_records_into_a_verifiable_chain(
     third = await append_audit_event(
         session,
         actor_id="gateway",
+        tenant_id="acme",
         event_type=AuditEventType.EGRESS_FILTERED,
         session_id="sess-1",
         payload={"canary_found": False},
@@ -127,13 +130,25 @@ async def test_tampering_with_payload_hash_breaks_verification(
     session: AsyncSession,
 ) -> None:
     await append_audit_event(
-        session, actor_id="alice", event_type=AuditEventType.INPUT_RECEIVED, payload={"n": 1}
+        session,
+        actor_id="alice",
+        tenant_id="acme",
+        event_type=AuditEventType.INPUT_RECEIVED,
+        payload={"n": 1},
     )
     target = await append_audit_event(
-        session, actor_id="alice", event_type=AuditEventType.DLP_REDACTION, payload={"n": 2}
+        session,
+        actor_id="alice",
+        tenant_id="acme",
+        event_type=AuditEventType.DLP_REDACTION,
+        payload={"n": 2},
     )
     await append_audit_event(
-        session, actor_id="alice", event_type=AuditEventType.EGRESS_FILTERED, payload={"n": 3}
+        session,
+        actor_id="alice",
+        tenant_id="acme",
+        event_type=AuditEventType.EGRESS_FILTERED,
+        payload={"n": 3},
     )
     await session.commit()
 
@@ -157,13 +172,25 @@ async def test_tampering_with_payload_hash_breaks_verification(
 @requires_database
 async def test_deleting_a_record_breaks_the_chain(session: AsyncSession) -> None:
     await append_audit_event(
-        session, actor_id="alice", event_type=AuditEventType.INPUT_RECEIVED, payload={"n": 1}
+        session,
+        actor_id="alice",
+        tenant_id="acme",
+        event_type=AuditEventType.INPUT_RECEIVED,
+        payload={"n": 1},
     )
     middle = await append_audit_event(
-        session, actor_id="alice", event_type=AuditEventType.DLP_REDACTION, payload={"n": 2}
+        session,
+        actor_id="alice",
+        tenant_id="acme",
+        event_type=AuditEventType.DLP_REDACTION,
+        payload={"n": 2},
     )
     tail = await append_audit_event(
-        session, actor_id="alice", event_type=AuditEventType.EGRESS_FILTERED, payload={"n": 3}
+        session,
+        actor_id="alice",
+        tenant_id="acme",
+        event_type=AuditEventType.EGRESS_FILTERED,
+        payload={"n": 3},
     )
     await session.commit()
 
@@ -183,7 +210,11 @@ async def test_deleting_a_record_breaks_the_chain(session: AsyncSession) -> None
 async def test_database_rejects_update_and_delete(session: AsyncSession) -> None:
     """ADR-005: append-only is enforced by the database, not by convention."""
     record = await append_audit_event(
-        session, actor_id="alice", event_type=AuditEventType.INPUT_RECEIVED, payload={"n": 1}
+        session,
+        actor_id="alice",
+        tenant_id="acme",
+        event_type=AuditEventType.INPUT_RECEIVED,
+        payload={"n": 1},
     )
     record_id = record.id
     await session.commit()
@@ -213,6 +244,7 @@ async def test_windowed_verification_checks_only_the_tail(session: AsyncSession)
         await append_audit_event(
             session,
             actor_id="alice",
+            tenant_id="acme",
             event_type=AuditEventType.INPUT_RECEIVED,
             payload={"n": index},
         )
@@ -233,6 +265,7 @@ async def test_concurrent_appends_never_fork_the_chain(
             await append_audit_event(
                 db_session,
                 actor_id=f"actor-{index}",
+                tenant_id="acme",
                 event_type=AuditEventType.TOOL_REQUESTED,
                 session_id="sess-concurrent",
                 payload={"index": index},

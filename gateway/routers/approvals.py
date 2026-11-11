@@ -99,9 +99,10 @@ async def _queue_view(
         session,
         viewer_id=context.actor_id,
         viewer_roles=context.principal.roles,
+        tenant_id=context.tenant_id,
         limit=get_settings().approval_page_size,
     )
-    recent = await list_recently_decided(session)
+    recent = await list_recently_decided(session, tenant_id=context.tenant_id)
     return approvals, recent
 
 
@@ -139,6 +140,7 @@ async def decide_approval(
             ticket_id=ticket_id,
             actor_id=context.actor_id,
             actor_roles=context.principal.roles,
+            tenant_id=context.tenant_id,
             action=decision,
             reason=reason,
         )
@@ -146,7 +148,7 @@ async def decide_approval(
             # Commit before enqueueing: the worker must never observe an
             # APPROVED ticket that the database has not durably stored yet.
             await session.commit()
-            await enqueue_tool_resume(str(ticket.ticket_id))
+            await enqueue_tool_resume(context.tenant_id, str(ticket.ticket_id))
     except ApprovalDecisionError as exc:
         # A refused decision is a security event, not noise: keep the ticket
         # join key and the refusal code even though the request failed.

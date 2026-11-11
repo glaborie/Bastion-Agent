@@ -40,8 +40,12 @@ KEY = b"a" * 32
 PREFIX = "BASTION-CANARY-"
 CONVERSATION = "conv-1"
 
-ALICE = Principal(subject="alice-sub", username="alice", roles=frozenset({"operator"}))
-READONLY = Principal(subject="dave-sub", username="dave", roles=frozenset({"readonly"}))
+ALICE = Principal(
+    subject="alice-sub", tenant_id="acme", username="alice", roles=frozenset({"operator"})
+)
+READONLY = Principal(
+    subject="dave-sub", tenant_id="acme", username="dave", roles=frozenset({"readonly"})
+)
 
 PUBLIC = Classification(Sensitivity.PUBLIC, 0.99, "stub-classifier", reason="public_content")
 CONFIDENTIAL = Classification(

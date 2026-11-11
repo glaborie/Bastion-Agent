@@ -42,6 +42,7 @@ from jwt.exceptions import (
     PyJWTError,
 )
 
+from db.tenancy import TenantIdError, normalise_tenant_id
 from gateway.auth.roles import normalise_roles
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,8 @@ class Principal:
     """The authenticated identity derived from a validated access token."""
 
     subject: str
+    #: Tenant scope carried by every derived key and database row (ADR-015).
+    tenant_id: str
     username: str | None = None
     email: str | None = None
     roles: frozenset[str] = frozenset()
@@ -272,6 +275,7 @@ class TokenValidator:
         client_id: str,
         jwks: JWKSClient,
         leeway_seconds: int = 30,
+        tenant_claim: str = "tenant_id",
     ) -> None:
         if not issuer:
             raise ValueError("issuer must not be empty")
@@ -282,6 +286,7 @@ class TokenValidator:
         self._client_id = client_id
         self._jwks = jwks
         self._leeway = timedelta(seconds=max(0, leeway_seconds))
+        self._tenant_claim = tenant_claim.strip() or "tenant_id"
 
     async def validate_access_token(self, token: str) -> Principal:
         """Validate an RS256 access token and derive the caller's identity."""
@@ -295,10 +300,12 @@ class TokenValidator:
             raise TokenValidationError("missing_claim", "token has no subject")
 
         roles = _extract_roles(claims)
+        tenant_id = _extract_tenant(claims, self._tenant_claim)
         username = _optional_str(claims.get("preferred_username"))
         email = _optional_str(claims.get("email"))
         return Principal(
             subject=subject,
+            tenant_id=tenant_id,
             username=username,
             email=email,
             roles=roles,
@@ -401,6 +408,17 @@ class TokenValidator:
 
 def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
+
+
+def _extract_tenant(claims: dict[str, Any], claim_name: str) -> str:
+    """Resolve the tenant claim, failing closed when it is absent or unusable."""
+    raw = claims.get(claim_name)
+    if raw is None:
+        raise TokenValidationError("missing_tenant", "token has no tenant claim")
+    try:
+        return normalise_tenant_id(raw)
+    except TenantIdError as exc:
+        raise TokenValidationError("invalid_tenant", "token tenant claim is invalid") from exc
 
 
 def _extract_roles(claims: dict[str, Any]) -> frozenset[str]:

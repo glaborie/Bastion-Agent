@@ -221,6 +221,7 @@ async def me(context: AuthContext = Depends(get_auth_context)) -> dict[str, Any]
     principal = context.principal
     return {
         "subject": principal.subject,
+        "tenant_id": principal.tenant_id,
         "username": principal.username,
         "email": principal.email,
         "roles": sorted(principal.roles),

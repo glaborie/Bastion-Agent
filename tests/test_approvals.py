@@ -31,6 +31,7 @@ def build_ticket(
     ttl_seconds: int = 900,
     ticket_id: uuid.UUID | None = None,
     initiator_id: str = "alice",
+    tenant_id: str = "acme",
     tool_name: str = "execute_file_write",
     arguments: dict[str, Any] | None = None,
 ) -> tuple[PendingApproval, str]:
@@ -49,6 +50,7 @@ def build_ticket(
     ticket = PendingApproval(
         ticket_id=identifier,
         session_id="sess-four-eyes",
+        tenant_id=tenant_id,
         initiator_id=initiator_id,
         tool_name=tool_name,
         tool_arguments=tool_arguments,

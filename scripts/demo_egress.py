@@ -36,6 +36,7 @@ from agent.egress.sanitizer import (
 from db.redis import close_redis, get_redis
 from settings import get_settings
 
+DEMO_TENANT: Final[str] = "demo"
 DEMO_CANARY_TTL: Final[int] = 120
 DEMO_TRIP_TTL: Final[int] = 30
 
@@ -50,31 +51,33 @@ def check(condition: bool, message: str) -> None:
         raise DemoFailure(message)
 
 
-async def _leak_stage(sanitizer: EgressSanitizer, session: str, canary: str) -> None:
+async def _leak_stage(sanitizer: EgressSanitizer, tenant: str, session: str, canary: str) -> None:
     print("1. The model repeats its system marker")
     leaked = f"Sure, my instructions say: {canary}"
     print(f"   upstream      {leaked}")
-    result = await sanitizer.inspect(leaked, session)
+    result = await sanitizer.inspect(leaked, session, tenant_id=tenant)
     print(f"   blocked       {result.blocked} ({result.reason})")
     print(f"   delivered     {result.text!r} ({len(result.text)} chars)")
     check(result.blocked and result.reason == "canary_leak", "leak was not blocked")
     check(result.text == "", "the blocked response carried text")
     check(canary not in result.text, "the canary reached the client")
-    check(await sanitizer.is_tripped(session), "session was not quarantined")
+    check(await sanitizer.is_tripped(tenant, session), "session was not quarantined")
 
     print("\n2. The next turn in the same session")
     try:
-        await sanitizer.ensure_available(session)
+        await sanitizer.ensure_available(tenant, session)
     except EgressCircuitOpenError:
         print("   preflight     rejected (circuit_open); no model call")
     else:
         raise DemoFailure("quarantine did not reject the next turn")
 
 
-async def _clean_stage(sanitizer: EgressSanitizer, vault: TokenVault, clean: str) -> None:
+async def _clean_stage(
+    sanitizer: EgressSanitizer, vault: TokenVault, tenant: str, clean: str
+) -> None:
     print("\n3. A clean turn with a vault marker")
-    marker = await vault.get_or_create(clean, "EMAIL_ADDRESS", "alice@example.com")
-    result = await sanitizer.inspect(f"Write to {marker} today.", clean)
+    marker = await vault.get_or_create(tenant, clean, "EMAIL_ADDRESS", "alice@example.com")
+    result = await sanitizer.inspect(f"Write to {marker} today.", clean, tenant_id=tenant)
     print(f"   model output  Write to {marker} today.")
     print(f"   delivered     {result.text!r}")
     check(not result.blocked, "a clean answer was blocked")
@@ -99,21 +102,27 @@ async def run_demo(sanitizer: EgressSanitizer, vault: TokenVault) -> None:
     try:
         print("Egress canary demo (ADR-012)\n")
         print(f"  session        {session}")
-        canary = await sanitizer.canary_for(session)
+        canary = await sanitizer.canary_for(DEMO_TENANT, session)
         print(f"  canary         {canary}")
-        check(await sanitizer.canary_for(session) == canary, "canary is not stable")
-        check(await sanitizer.canary_for(peer) != canary, "two sessions share a canary")
+        check(
+            await sanitizer.canary_for(DEMO_TENANT, session) == canary,
+            "canary is not stable",
+        )
+        check(
+            await sanitizer.canary_for(DEMO_TENANT, peer) != canary,
+            "two sessions share a canary",
+        )
         print("  stable/unique  yes\n")
 
-        await _leak_stage(sanitizer, session, canary)
-        await _clean_stage(sanitizer, vault, clean)
+        await _leak_stage(sanitizer, DEMO_TENANT, session, canary)
+        await _clean_stage(sanitizer, vault, DEMO_TENANT, clean)
         _fence_stage(sanitizer)
         print("\nPASS: leak blocked and quarantined, clean answer restored.")
     finally:
         try:
             for target in (session, peer, clean):
-                await sanitizer.clear(target)
-            await vault.clear(clean)
+                await sanitizer.clear(DEMO_TENANT, target)
+            await vault.clear(DEMO_TENANT, clean)
         except EgressUnavailableError:
             print("cleanup          skipped (Redis unreachable)", file=sys.stderr)
         else:

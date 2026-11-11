@@ -37,6 +37,7 @@ from redis.exceptions import RedisError
 
 from agent.dlp.vault import TOKEN_PATTERN, TokenVault, VaultError, get_vault
 from db.redis import get_redis
+from db.tenancy import normalise_tenant_id
 from settings import CANARY_PREFIX_MIN_LENGTH, get_settings
 
 logger = logging.getLogger(__name__)
@@ -152,14 +153,14 @@ class EgressSanitizer:
             raise ValueError("canary and quarantine TTLs must be positive")
 
     # -- canary lifecycle -------------------------------------------------
-    async def canary_for(self, session_id: str) -> str:
-        """Return the session's canary, creating it on first use.
+    async def canary_for(self, tenant_id: str, session_id: str) -> str:
+        """Return the tenant/session canary, creating it on first use.
 
         The value is generated once per session so every turn of a conversation
         carries the same tripwire; a fresh marker per turn would also work but
         would make the value useless for post-incident correlation.
         """
-        key = self._key("canary", session_id)
+        key = self._key(tenant_id, "canary", session_id)
         value = await self._redis_get(key)
         if value:
             return value
@@ -172,22 +173,24 @@ class EgressSanitizer:
         winner = await self._redis_get(key)
         return winner or candidate
 
-    async def is_tripped(self, session_id: str) -> bool:
-        """Whether the session is quarantined after a detected leak."""
+    async def is_tripped(self, tenant_id: str, session_id: str) -> bool:
+        """Whether the tenant/session is quarantined after a detected leak."""
         try:
-            return int(await self._redis.exists(self._key("trip", session_id))) == 1
+            return int(await self._redis.exists(self._key(tenant_id, "trip", session_id))) == 1
         except RedisError as exc:
             raise EgressUnavailableError("quarantine store is unreachable") from exc
 
-    async def ensure_available(self, session_id: str) -> None:
-        """Raise when the session is quarantined (fail fast, before inference)."""
-        if await self.is_tripped(session_id):
+    async def ensure_available(self, tenant_id: str, session_id: str) -> None:
+        """Raise when the tenant/session is quarantined (fail fast, before inference)."""
+        if await self.is_tripped(tenant_id, session_id):
             raise EgressCircuitOpenError("session is quarantined by the egress circuit breaker")
 
-    async def trip(self, session_id: str, reason: str) -> None:
-        """Quarantine the session for the configured window."""
+    async def trip(self, tenant_id: str, session_id: str, reason: str) -> None:
+        """Quarantine the tenant/session for the configured window."""
         try:
-            await self._redis.set(self._key("trip", session_id), reason[:64], ex=self._trip_ttl)
+            await self._redis.set(
+                self._key(tenant_id, "trip", session_id), reason[:64], ex=self._trip_ttl
+            )
         except RedisError as exc:
             # The response is already being blocked; failing to record the trip
             # must not turn the block into a release.
@@ -198,14 +201,17 @@ class EgressSanitizer:
             return
         logger.warning("Egress circuit tripped", extra={"reason": reason})
 
-    async def clear(self, session_id: str) -> None:
-        """Delete the canary and quarantine keys for a session.
+    async def clear(self, tenant_id: str, session_id: str) -> None:
+        """Delete the canary and quarantine keys for a tenant/session.
 
         Used by the demo and by incident response. The next turn issues a new
         marker, so clearing is a deliberate reset, not a silent bypass.
         """
         try:
-            await self._redis.delete(self._key("canary", session_id), self._key("trip", session_id))
+            await self._redis.delete(
+                self._key(tenant_id, "canary", session_id),
+                self._key(tenant_id, "trip", session_id),
+            )
         except RedisError as exc:
             raise EgressUnavailableError("canary registry is unreachable") from exc
 
@@ -240,21 +246,21 @@ class EgressSanitizer:
         return f'<{_FENCE_TAG} source="{safe_source}">\n{neutralised}\n</{_FENCE_TAG}>'
 
     # -- output inspection -------------------------------------------------
-    async def inspect(self, text: str, session_id: str) -> EgressResult:
-        """Block canary leaks, then restore this session's entity markers."""
-        if await self.is_tripped(session_id):
+    async def inspect(self, text: str, session_id: str, *, tenant_id: str) -> EgressResult:
+        """Block canary leaks, then restore this tenant/session's entity markers."""
+        if await self.is_tripped(tenant_id, session_id):
             return EgressResult(text="", blocked=True, reason="circuit_open")
 
         if self._canary_pattern.search(text):
-            await self.trip(session_id, "canary_leak")
+            await self.trip(tenant_id, session_id, "canary_leak")
             logger.warning("Canary detected in model output", extra={"session": "redacted"})
             return EgressResult(text="", blocked=True, reason="canary_leak")
 
         markers = len(TOKEN_PATTERN.findall(text))
         try:
-            restored = await self._vault.restore(session_id, text)
+            restored = await self._vault.restore(tenant_id, session_id, text)
         except VaultError:
-            await self.trip(session_id, "vault_error")
+            await self.trip(tenant_id, session_id, "vault_error")
             return EgressResult(text="", blocked=True, reason="vault_error")
         unresolved = len(TOKEN_PATTERN.findall(restored))
         claim = _disclosure_claim(restored)
@@ -270,18 +276,19 @@ class EgressSanitizer:
             disclosure_claim=claim,
         )
 
-    async def restore(self, text: str, session_id: str) -> str:
+    async def restore(self, text: str, session_id: str, *, tenant_id: str) -> str:
         """Restore markers for an authorised recipient (no canary scan)."""
-        return await self._vault.restore(session_id, text)
+        return await self._vault.restore(tenant_id, session_id, text)
 
     # -- internals ---------------------------------------------------------
-    def _key(self, kind: str, session_id: str) -> str:
+    def _key(self, tenant_id: str, kind: str, session_id: str) -> str:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("session_id must be a non-empty string")
         if len(session_id) > _MAX_SESSION_ID_LENGTH:
             raise ValueError(f"session_id must be at most {_MAX_SESSION_ID_LENGTH} characters")
+        tenant = normalise_tenant_id(tenant_id)
         digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        return f"egress:{kind}:{digest}"
+        return f"egress:{tenant}:{kind}:{digest}"
 
     async def _redis_get(self, key: str) -> str | None:
         try:

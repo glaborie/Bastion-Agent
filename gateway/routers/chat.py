@@ -141,13 +141,14 @@ def get_chat_sanitizer() -> EgressSanitizer:
     return get_egress_sanitizer()
 
 
-def _vault_session(actor_id: str, conversation_id: str) -> str:
+def _vault_session(tenant_id: str, actor_id: str, conversation_id: str) -> str:
     """Derive a session key that cannot be chosen by another caller.
 
-    A caller may reuse a conversation id, but the actor is bound in, so two
-    principals with the same id never share vault entries or a canary.
+    A caller may reuse a conversation id, but the tenant and actor are bound in,
+    so two principals (or two tenants) with the same id never share vault entries
+    or a canary (ADR-015).
     """
-    digest = hashlib.sha256(f"{actor_id}\x00{conversation_id}".encode()).hexdigest()
+    digest = hashlib.sha256(f"{tenant_id}\x00{actor_id}\x00{conversation_id}".encode()).hexdigest()
     return f"chat:{digest}"
 
 
@@ -198,6 +199,7 @@ async def _record(
     session: AsyncSession,
     *,
     actor_id: str,
+    tenant_id: str,
     event_type: AuditEventType,
     conversation_id: str,
     payload: object | None = None,
@@ -212,6 +214,7 @@ async def _record(
     await append_audit_event(
         session,
         actor_id=actor_id,
+        tenant_id=tenant_id,
         event_type=event_type,
         session_id=conversation_id,
         payload=payload,
@@ -223,6 +226,7 @@ async def _record(
 async def _redact_messages(
     dlp: PresidioDLP,
     messages: list[ChatTurn],
+    tenant_id: str,
     vault_session: str,
 ) -> tuple[list[ChatMessage], set[str], int]:
     """Run the deterministic DLP stage over every turn."""
@@ -230,7 +234,7 @@ async def _redact_messages(
     entity_types: set[str] = set()
     entity_count = 0
     for turn in messages:
-        result = await dlp.redact(turn.content, vault_session)
+        result = await dlp.redact(turn.content, vault_session, tenant_id=tenant_id)
         entity_types.update(entity.entity_type for entity in result.entities)
         entity_count += len(result.entities)
         redacted.append(ChatMessage(role=turn.role, content=result.text, name=turn.name))
@@ -263,8 +267,9 @@ async def chat(
 ) -> ChatResponse:
     """Run one guarded turn from ingress to sanitized egress."""
     actor_id = context.actor_id
+    tenant_id = context.tenant_id
     conversation_id = request.conversation_id or uuid.uuid4().hex
-    vault_session = _vault_session(actor_id, conversation_id)
+    vault_session = _vault_session(tenant_id, actor_id, conversation_id)
 
     total_chars = sum(len(turn.content) for turn in request.messages)
     if total_chars > MAX_TOTAL_CHARS:
@@ -276,6 +281,7 @@ async def chat(
     await _record(
         session,
         actor_id=actor_id,
+        tenant_id=tenant_id,
         event_type=AuditEventType.INPUT_RECEIVED,
         conversation_id=conversation_id,
         payload=[turn.model_dump(exclude_none=True) for turn in request.messages],
@@ -298,7 +304,7 @@ async def chat(
     # -- stage 1: deterministic DLP ---------------------------------------
     try:
         redacted, entity_types, entity_count = await _redact_messages(
-            dlp, request.messages, vault_session
+            dlp, request.messages, tenant_id, vault_session
         )
     except (DLPUnavailableError, VaultError) as exc:
         logger.error("DLP stage failed", extra={"error": type(exc).__name__})
@@ -313,6 +319,7 @@ async def chat(
     await _record(
         session,
         actor_id=actor_id,
+        tenant_id=tenant_id,
         event_type=AuditEventType.DLP_REDACTION,
         conversation_id=conversation_id,
         metadata={
@@ -342,6 +349,7 @@ async def chat(
     await _record(
         session,
         actor_id=actor_id,
+        tenant_id=tenant_id,
         event_type=AuditEventType.ROUTING_DECISION,
         conversation_id=conversation_id,
         metadata={
@@ -367,12 +375,13 @@ async def chat(
 
     # -- stage 3: canary + untrusted fences -------------------------------
     try:
-        await sanitizer.ensure_available(vault_session)
-        canary = await sanitizer.canary_for(vault_session)
+        await sanitizer.ensure_available(tenant_id, vault_session)
+        canary = await sanitizer.canary_for(tenant_id, vault_session)
     except EgressCircuitOpenError as exc:
         await _record(
             session,
             actor_id=actor_id,
+            tenant_id=tenant_id,
             event_type=AuditEventType.EGRESS_FILTERED,
             conversation_id=conversation_id,
             metadata={"blocked": True, "reason": "circuit_open"},
@@ -380,6 +389,7 @@ async def chat(
         await _record(
             session,
             actor_id=actor_id,
+            tenant_id=tenant_id,
             event_type=AuditEventType.SECURITY_INCIDENT,
             conversation_id=conversation_id,
             metadata={"reason": "circuit_open", "stage": "preflight"},
@@ -441,6 +451,7 @@ async def chat(
                 await _record(
                     session,
                     actor_id=actor_id,
+                    tenant_id=tenant_id,
                     event_type=AuditEventType.SECURITY_INCIDENT,
                     conversation_id=conversation_id,
                     metadata={
@@ -461,13 +472,14 @@ async def chat(
 
     # -- stage 4: egress inspection ---------------------------------------
     try:
-        egress = await sanitizer.inspect(completion.content, vault_session)
+        egress = await sanitizer.inspect(completion.content, vault_session, tenant_id=tenant_id)
     except EgressUnavailableError as exc:
         raise _blocked(status.HTTP_503_SERVICE_UNAVAILABLE, "egress sanitizer unavailable") from exc
 
     await _record(
         session,
         actor_id=actor_id,
+        tenant_id=tenant_id,
         event_type=AuditEventType.EGRESS_FILTERED,
         conversation_id=conversation_id,
         metadata={
@@ -495,6 +507,7 @@ async def chat(
         await _record(
             session,
             actor_id=actor_id,
+            tenant_id=tenant_id,
             event_type=AuditEventType.SECURITY_INCIDENT,
             conversation_id=conversation_id,
             metadata={

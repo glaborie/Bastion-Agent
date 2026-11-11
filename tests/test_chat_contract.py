@@ -64,8 +64,9 @@ def test_failover_to_another_model_is_marked_not_hidden() -> None:
 
 def test_vault_sessions_are_actor_scoped() -> None:
     """Reusing another caller's conversation id must not share the vault."""
-    assert _vault_session("alice", "conv-1") != _vault_session("bob", "conv-1")
-    assert _vault_session("alice", "conv-1") == _vault_session("alice", "conv-1")
+    assert _vault_session("acme", "alice", "conv-1") != _vault_session("acme", "bob", "conv-1")
+    assert _vault_session("acme", "alice", "conv-1") == _vault_session("acme", "alice", "conv-1")
+    assert _vault_session("acme", "alice", "conv-1") != _vault_session("globex", "alice", "conv-1")
 
 
 def test_unknown_fields_are_rejected() -> None:

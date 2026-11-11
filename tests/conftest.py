@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from db.models import Base
+from db.models import TENANT_SCOPE_DDL, Base
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "")
 
@@ -58,6 +58,9 @@ async def db_engine() -> AsyncIterator[AsyncEngine]:
     engine = create_async_engine(url, poolclass=NullPool)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        # Upgrade a reused test database that predates ADR-015.
+        for statement in TENANT_SCOPE_DDL:
+            await connection.execute(text(statement))
         await connection.execute(
             text("TRUNCATE TABLE audit_logs, pending_approvals RESTART IDENTITY CASCADE")
         )

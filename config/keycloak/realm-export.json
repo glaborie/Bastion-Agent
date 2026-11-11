@@ -90,6 +90,20 @@
             "id.token.claim": "false",
             "introspection.token.claim": "true"
           }
+        },
+        {
+          "name": "bastion-tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
         }
       ]
     },
@@ -123,6 +137,20 @@
             "id.token.claim": "false",
             "introspection.token.claim": "true"
           }
+        },
+        {
+          "name": "bastion-tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
         }
       ]
     }
@@ -130,6 +158,7 @@
   "users": [
     {
       "username": "breakglass",
+      "attributes": {"tenant": ["platform"]},
       "enabled": true,
       "emailVerified": true,
       "firstName": "Break-glass",
@@ -147,6 +176,7 @@
     },
     {
       "username": "alice",
+      "attributes": {"tenant": ["acme"]},
       "enabled": true,
       "emailVerified": true,
       "firstName": "Alice",
@@ -164,6 +194,7 @@
     },
     {
       "username": "bob",
+      "attributes": {"tenant": ["acme"]},
       "enabled": true,
       "emailVerified": true,
       "firstName": "Bob",
@@ -181,6 +212,7 @@
     },
     {
       "username": "carol",
+      "attributes": {"tenant": ["globex"]},
       "enabled": true,
       "emailVerified": true,
       "firstName": "Carol",
@@ -198,6 +230,7 @@
     },
     {
       "username": "dave",
+      "attributes": {"tenant": ["globex"]},
       "enabled": true,
       "emailVerified": true,
       "firstName": "Dave",

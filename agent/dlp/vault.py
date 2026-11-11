@@ -3,13 +3,14 @@
 Detected values are replaced with ``{{ENTITY:TYPE_INDEX}}`` markers. The
 plaintext never appears in Redis:
 
-* ``vault:<session-digest>`` holds ``token -> AES-256-GCM(nonce || ciphertext)``;
-  the AAD binds the ciphertext to the session id and the token, so a value
-  copied into another session/token fails authentication.
-* ``vault:<session-digest>:rev`` holds
+* ``vault:<tenant>:<session-digest>`` holds
+  ``token -> AES-256-GCM(nonce || ciphertext)``; the AAD binds the ciphertext to
+  the tenant, session id and token, so a value copied into another
+  tenant/session/token fails authentication (ADR-015).
+* ``vault:<tenant>:<session-digest>:rev`` holds
   ``HMAC-SHA256(vault_key, "vault-index" || type || value) -> token`` so repeated
   values reuse the same marker without storing the value.
-* ``vault:<session-digest>:seq`` supplies per-entity counters.
+* ``vault:<tenant>:<session-digest>:seq`` supplies per-entity counters.
 
 All three keys share the 30-minute TTL, refreshed whenever the session creates
 or restores a token. Session ids are hashed before use as Redis keys, so callers
@@ -32,6 +33,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from redis.asyncio import Redis
 
 from db.redis import get_redis
+from db.tenancy import normalise_tenant_id
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -87,14 +89,17 @@ class TokenVault:
         self._aes = AESGCM(key)
 
     # -- public API -------------------------------------------------------
-    async def get_or_create(self, session_id: str, entity_type: str, value: str) -> str:
+    async def get_or_create(
+        self, tenant_id: str, session_id: str, entity_type: str, value: str
+    ) -> str:
         """Return the stable marker for ``value``, creating it if necessary."""
+        tenant = normalise_tenant_id(tenant_id)
         self._validate_session(session_id)
         entity = self._validate_entity_type(entity_type)
         if not isinstance(value, str) or not value:
             raise ValueError("entity value must be a non-empty string")
 
-        vault_key, reverse_key, seq_key = self._keys(session_id)
+        vault_key, reverse_key, seq_key = self._keys(tenant, session_id)
         digest = self._value_digest(entity, value)
 
         existing = await self._redis.hget(reverse_key, digest)
@@ -104,7 +109,7 @@ class TokenVault:
 
         index = await self._redis.hincrby(seq_key, entity, 1)
         token = f"{{{{ENTITY:{entity}_{index}}}}}"
-        ciphertext = self._encrypt(session_id, token, value)
+        ciphertext = self._encrypt(tenant, session_id, token, value)
 
         # Store the ciphertext before publishing the reverse index entry, so a
         # concurrent reader can never resolve a token that has no value yet.
@@ -127,19 +132,21 @@ class TokenVault:
         await self._refresh(vault_key, reverse_key, seq_key)
         return token
 
-    async def get(self, session_id: str, token: str) -> str | None:
-        """Decrypt one marker; ``None`` when the session never created it."""
+    async def get(self, tenant_id: str, session_id: str, token: str) -> str | None:
+        """Decrypt one marker; ``None`` when the tenant/session never created it."""
+        tenant = normalise_tenant_id(tenant_id)
         self._validate_session(session_id)
         if not TOKEN_PATTERN.fullmatch(token):
             return None
-        vault_key, _reverse_key, _seq_key = self._keys(session_id)
+        vault_key, _reverse_key, _seq_key = self._keys(tenant, session_id)
         ciphertext = await self._redis.hget(vault_key, token)
         if not isinstance(ciphertext, str):
             return None
-        return self._decrypt(session_id, token, ciphertext)
+        return self._decrypt(tenant, session_id, token, ciphertext)
 
-    async def restore(self, session_id: str, text: str) -> str:
+    async def restore(self, tenant_id: str, session_id: str, text: str) -> str:
         """Replace every known marker in ``text`` with its plaintext."""
+        tenant = normalise_tenant_id(tenant_id)
         self._validate_session(session_id)
         if not isinstance(text, str) or not text:
             return text
@@ -147,33 +154,35 @@ class TokenVault:
         if not tokens:
             return text
 
-        vault_key, reverse_key, seq_key = self._keys(session_id)
+        vault_key, reverse_key, seq_key = self._keys(tenant, session_id)
         restored: dict[str, str] = {}
         for token in tokens:
             ciphertext = await self._redis.hget(vault_key, token)
             if isinstance(ciphertext, str):
-                restored[token] = self._decrypt(session_id, token, ciphertext)
+                restored[token] = self._decrypt(tenant, session_id, token, ciphertext)
         if not restored:
             return text
         await self._refresh(vault_key, reverse_key, seq_key)
         return TOKEN_PATTERN.sub(lambda match: restored.get(match.group(0), match.group(0)), text)
 
-    async def clear(self, session_id: str) -> None:
-        """Delete every mapping for the session immediately."""
+    async def clear(self, tenant_id: str, session_id: str) -> None:
+        """Delete every mapping for the tenant/session immediately."""
+        tenant = normalise_tenant_id(tenant_id)
         self._validate_session(session_id)
-        vault_key, reverse_key, seq_key = self._keys(session_id)
+        vault_key, reverse_key, seq_key = self._keys(tenant, session_id)
         await self._redis.delete(vault_key, reverse_key, seq_key)
 
-    async def ttl(self, session_id: str) -> int:
-        """Remaining lifetime of the session's mappings, in seconds."""
+    async def ttl(self, tenant_id: str, session_id: str) -> int:
+        """Remaining lifetime of the tenant/session mappings, in seconds."""
+        tenant = normalise_tenant_id(tenant_id)
         self._validate_session(session_id)
-        vault_key, _reverse_key, _seq_key = self._keys(session_id)
+        vault_key, _reverse_key, _seq_key = self._keys(tenant, session_id)
         return int(await self._redis.ttl(vault_key))
 
     # -- internals --------------------------------------------------------
-    def _keys(self, session_id: str) -> tuple[str, str, str]:
+    def _keys(self, tenant_id: str, session_id: str) -> tuple[str, str, str]:
         digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        base = f"{self._prefix}{digest}"
+        base = f"{self._prefix}{normalise_tenant_id(tenant_id)}:{digest}"
         return base, f"{base}:rev", f"{base}:seq"
 
     def _value_digest(self, entity_type: str, value: str) -> str:
@@ -182,15 +191,17 @@ class TokenVault:
         )
         return hmac.new(self._key, material, hashlib.sha256).hexdigest()
 
-    def _aad(self, session_id: str, token: str) -> bytes:
-        return f"{session_id}|{token}".encode()
+    def _aad(self, tenant_id: str, session_id: str, token: str) -> bytes:
+        return f"{tenant_id}|{session_id}|{token}".encode()
 
-    def _encrypt(self, session_id: str, token: str, value: str) -> str:
+    def _encrypt(self, tenant_id: str, session_id: str, token: str, value: str) -> str:
         nonce = os.urandom(_NONCE_BYTES)
-        ciphertext = self._aes.encrypt(nonce, value.encode("utf-8"), self._aad(session_id, token))
+        ciphertext = self._aes.encrypt(
+            nonce, value.encode("utf-8"), self._aad(tenant_id, session_id, token)
+        )
         return base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
 
-    def _decrypt(self, session_id: str, token: str, encoded: str) -> str:
+    def _decrypt(self, tenant_id: str, session_id: str, token: str, encoded: str) -> str:
         try:
             payload = base64.urlsafe_b64decode(encoded.encode("ascii"))
         except (ValueError, TypeError) as exc:
@@ -199,7 +210,9 @@ class TokenVault:
             raise VaultDecryptionError("vault ciphertext is too short")
         nonce, ciphertext = payload[:_NONCE_BYTES], payload[_NONCE_BYTES:]
         try:
-            plaintext = self._aes.decrypt(nonce, ciphertext, self._aad(session_id, token))
+            plaintext = self._aes.decrypt(
+                nonce, ciphertext, self._aad(tenant_id, session_id, token)
+            )
         except InvalidTag as exc:
             raise VaultDecryptionError(
                 "vault ciphertext failed authentication (tampered or wrong session)"

@@ -51,6 +51,7 @@ from agent.tools.errors import (
     ToolNotFoundError,
     ToolNotInCatalogError,
 )
+from db.tenancy import normalise_tenant_id
 from gateway.auth.roles import ROLE_NAMES, is_satisfied, normalise_roles
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class AgentContext:
     """
 
     actor_id: str
+    tenant_id: str
     roles: frozenset[str]
     session_id: str
     request_id: str | None = None
@@ -106,6 +108,7 @@ class AgentContext:
         if not session:
             raise ValueError("session_id is required for a tool context")
         object.__setattr__(self, "actor_id", actor)
+        object.__setattr__(self, "tenant_id", normalise_tenant_id(self.tenant_id))
         object.__setattr__(self, "session_id", session)
         object.__setattr__(self, "roles", normalise_roles(self.roles))
 

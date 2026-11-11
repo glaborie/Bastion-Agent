@@ -28,7 +28,7 @@ from gateway.rate_limit import (
 )
 from settings import reset_settings_cache
 
-BOB = Principal(subject="bob-sub", username="bob", roles=frozenset({"operator"}))
+BOB = Principal(subject="bob-sub", tenant_id="acme", username="bob", roles=frozenset({"operator"}))
 
 
 @dataclass

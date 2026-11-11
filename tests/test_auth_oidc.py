@@ -50,6 +50,7 @@ def claims(**overrides: Any) -> dict[str, Any]:
         "iss": ISSUER,
         "aud": AUDIENCE,
         "sub": "user-123",
+        "tenant_id": "acme",
         "iat": now - 10,
         "exp": now + 300,
         "preferred_username": "alice",
@@ -103,10 +104,33 @@ async def test_valid_token_yields_principal_and_known_roles() -> None:
         await client.aclose()
 
     assert principal.subject == "user-123"
+    assert principal.tenant_id == "acme"
     assert principal.username == "alice"
     assert principal.email == "alice@bastion.local"
     assert principal.roles == frozenset({"operator"})
     assert principal.display_name == "alice"
+
+
+async def test_missing_tenant_claim_is_rejected() -> None:
+    validator, client, _ = build_validator()
+    payload = claims()
+    payload.pop("tenant_id")
+    try:
+        with pytest.raises(TokenValidationError) as info:
+            await validator.validate_access_token(sign(payload))
+    finally:
+        await client.aclose()
+    assert _code(info) == "missing_tenant"
+
+
+async def test_invalid_tenant_claim_is_rejected() -> None:
+    validator, client, _ = build_validator()
+    try:
+        with pytest.raises(TokenValidationError) as info:
+            await validator.validate_access_token(sign(claims(tenant_id="evil:tenant")))
+    finally:
+        await client.aclose()
+    assert _code(info) == "invalid_tenant"
 
 
 async def test_unknown_realm_roles_are_dropped() -> None:

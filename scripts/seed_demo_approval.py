@@ -38,6 +38,7 @@ from settings import get_settings
 async def create_ticket(
     *,
     initiator_id: str,
+    tenant_id: str,
     session_id: str,
     tool_name: str,
     arguments: dict[str, Any],
@@ -60,6 +61,7 @@ async def create_ticket(
             PendingApproval(
                 ticket_id=ticket_id,
                 session_id=session_id,
+                tenant_id=tenant_id,
                 initiator_id=initiator_id,
                 tool_name=tool_name,
                 tool_arguments=arguments,
@@ -74,6 +76,7 @@ async def create_ticket(
         await append_audit_event(
             session,
             actor_id=initiator_id,
+            tenant_id=tenant_id,
             event_type=AuditEventType.APPROVAL_REQUESTED,
             session_id=session_id,
             payload={"ticket_id": str(ticket_id), "tool": tool_name},
@@ -90,6 +93,11 @@ def main() -> int:
         help="Keycloak sub of the initiator (cannot approve their own ticket)",
     )
     parser.add_argument("--session-id", default=None, help="Session id to attach the ticket to")
+    parser.add_argument(
+        "--tenant-id",
+        default="default",
+        help="Tenant id for the ticket and its audit row (ADR-015)",
+    )
     parser.add_argument("--tool", default="execute_file_write", help="Tool name")
     parser.add_argument("--path", default="reports/q3.csv", help="Tool path argument")
     parser.add_argument("--content", default="quarterly revenue", help="Tool content argument")
@@ -100,6 +108,7 @@ def main() -> int:
         await init_models()
         ticket_id = await create_ticket(
             initiator_id=args.initiator_id,
+            tenant_id=args.tenant_id,
             session_id=args.session_id or f"demo-{uuid.uuid4()}",
             tool_name=args.tool,
             arguments={"path": args.path, "content": args.content},

@@ -91,7 +91,9 @@ def failing_tool():
 
 
 def context(actor: str = "alice", roles: tuple[str, ...] = ("operator",)) -> AgentContext:
-    return AgentContext(actor_id=actor, roles=frozenset(roles), session_id="sess-tool")
+    return AgentContext(
+        actor_id=actor, tenant_id="acme", roles=frozenset(roles), session_id="sess-tool"
+    )
 
 
 @pytest.fixture
@@ -125,6 +127,7 @@ async def approve(session: AsyncSession, ticket_id: str, *, actor: str = "bob") 
         session,
         ticket_id=uuid.UUID(ticket_id),
         actor_id=actor,
+        tenant_id="acme",
         actor_roles={"operator"},
         action="approve",
     )
@@ -277,6 +280,7 @@ async def test_rejected_ticket_is_not_executed(session: AsyncSession, workspace)
         session,
         ticket_id=uuid.UUID(pending.ticket_id),
         actor_id="bob",
+        tenant_id="acme",
         actor_roles={"operator"},
         action="reject",
         reason="not in scope",
@@ -519,6 +523,7 @@ async def test_worker_commits_a_catalog_refusal_after_the_request_rolls_back(
             {"job_id": "test-job"},
             tool_name="test_rogue_write",
             actor_id="alice",
+            tenant_id="acme",
             roles=["operator"],
             session_id="sess-gate1",
             arguments={"path": "rogue.txt"},
@@ -578,6 +583,7 @@ async def test_worker_span_records_the_suspension_ticket(
         {"job_id": "test-span-job"},
         tool_name="execute_file_write",
         actor_id="alice",
+        tenant_id="acme",
         roles=["operator"],
         session_id="sess-span",
         arguments=dict(ARGUMENTS),
@@ -606,6 +612,7 @@ async def test_resume_span_records_the_executed_ticket(
         {"job_id": "test-span-job"},
         tool_name="execute_file_write",
         actor_id="alice",
+        tenant_id="acme",
         roles=["operator"],
         session_id="sess-span",
         arguments=dict(ARGUMENTS),
@@ -640,6 +647,7 @@ async def test_resume_span_marks_a_ticket_that_is_not_ready(
         {"job_id": "test-span-job"},
         tool_name="execute_file_write",
         actor_id="alice",
+        tenant_id="acme",
         roles=["operator"],
         session_id="sess-span",
         arguments=dict(ARGUMENTS),
@@ -667,6 +675,7 @@ async def test_read_only_worker_span_has_no_ticket(
         {"job_id": "test-read-job"},
         tool_name="read_system_status",
         actor_id="alice",
+        tenant_id="acme",
         roles=["operator"],
         session_id="sess-read",
         arguments={},

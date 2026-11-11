@@ -38,7 +38,7 @@ async def get_arq_pool() -> ArqRedis:
     return _pool
 
 
-async def enqueue_tool_resume(ticket_id: str) -> bool:
+async def enqueue_tool_resume(tenant_id: str, ticket_id: str) -> bool:
     """Ask the worker to execute an approved ticket.
 
     Returns ``True`` when the job was queued (or was already queued). A failure
@@ -53,7 +53,7 @@ async def enqueue_tool_resume(ticket_id: str) -> bool:
         await pool.enqueue_job(
             "resume_tool_job",
             ticket_id=ticket_id,
-            _job_id=f"{_RESUME_JOB_PREFIX}{ticket_id}",
+            _job_id=f"{_RESUME_JOB_PREFIX}{tenant_id}:{ticket_id}",
             _queue_name=settings.arq_queue_name,
         )
     # An enqueue failure must never fail the approval response: the decision is
@@ -61,7 +61,7 @@ async def enqueue_tool_resume(ticket_id: str) -> bool:
     except Exception:  # pylint: disable=broad-exception-caught
         logger.warning(
             "Could not enqueue approved ticket; the worker sweep will retry",
-            extra={"ticket_id": ticket_id},
+            extra={"ticket_id": ticket_id, "tenant_id": tenant_id},
         )
         return False
     return True
@@ -72,6 +72,7 @@ async def enqueue_demo_run(
     run_id: str,
     scenario_id: str,
     actor_id: str,
+    tenant_id: str,
     roles: list[str],
     session_id: str,
 ) -> bool:
@@ -89,6 +90,7 @@ async def enqueue_demo_run(
             run_id=run_id,
             scenario_id=scenario_id,
             actor_id=actor_id,
+            tenant_id=tenant_id,
             roles=roles,
             session_id=session_id,
             _job_id=f"{_DEMO_JOB_PREFIX}{run_id}",

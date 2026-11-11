@@ -125,8 +125,9 @@ async def execute_tool_job(
     *,
     tool_name: str,
     actor_id: str,
-    roles: list[str] | None = None,
+    tenant_id: str,
     session_id: str,
+    roles: list[str] | None = None,
     arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Authorize and either run a read-only tool or suspend a mutating one.
@@ -150,6 +151,7 @@ async def execute_tool_job(
             ctx,
             tool_name=tool_name,
             actor_id=actor_id,
+            tenant_id=tenant_id,
             roles=roles,
             session_id=session_id,
             arguments=arguments,
@@ -163,6 +165,7 @@ async def _run_tool_job(
     *,
     tool_name: str,
     actor_id: str,
+    tenant_id: str,
     roles: list[str] | None,
     session_id: str,
     arguments: dict[str, Any] | None,
@@ -182,6 +185,7 @@ async def _run_tool_job(
     try:
         context = AgentContext(
             actor_id=actor_id,
+            tenant_id=tenant_id,
             roles=frozenset(roles or ()),
             session_id=session_id,
             request_id=ctx.get("job_id"),
@@ -324,6 +328,7 @@ async def run_demo_scenario_job(
     run_id: str,
     scenario_id: str,
     actor_id: str,
+    tenant_id: str,
     roles: list[str],
     session_id: str,
 ) -> dict[str, Any]:
@@ -363,6 +368,7 @@ async def run_demo_scenario_job(
                 ScenarioContext(
                     run_id=run_id,
                     actor_id=actor_id,
+                    tenant_id=tenant_id,
                     actor_roles=frozenset(roles),
                     session_id=session_id,
                 )

@@ -39,9 +39,13 @@ from gateway.main import create_app
 from settings import reset_settings_cache
 from tests.conftest import requires_database
 
-BOB = Principal(subject="bob-sub", username="bob", roles=frozenset({"operator"}))
-CAROL = Principal(subject="carol-sub", username="carol", roles=frozenset({"analyst"}))
-DAVE = Principal(subject="dave-sub", username="dave", roles=frozenset({"readonly"}))
+BOB = Principal(subject="bob-sub", tenant_id="acme", username="bob", roles=frozenset({"operator"}))
+CAROL = Principal(
+    subject="carol-sub", tenant_id="acme", username="carol", roles=frozenset({"analyst"})
+)
+DAVE = Principal(
+    subject="dave-sub", tenant_id="acme", username="dave", roles=frozenset({"readonly"})
+)
 
 LISTED_SCRIPTS = (
     "scripts/demo_classifier.py",
@@ -158,7 +162,14 @@ async def test_request_fields_cannot_supply_a_command_or_an_actor(
 
     assert response.status_code == 200
     assert len(calls) == 1
-    assert set(calls[0]) == {"run_id", "scenario_id", "actor_id", "roles", "session_id"}
+    assert set(calls[0]) == {
+        "run_id",
+        "scenario_id",
+        "actor_id",
+        "tenant_id",
+        "roles",
+        "session_id",
+    }
     assert calls[0]["scenario_id"] == "demo_classifier"
     assert calls[0]["actor_id"] == BOB.subject
     assert calls[0]["roles"] == ["operator"]
@@ -177,6 +188,7 @@ async def test_the_egress_scenario_blocks_the_leak_with_empty_delivered_text() -
         outcome = await run_egress_demo(
             cast(Redis, redis),
             vault,
+            tenant_id="acme",
             session_id=f"dashboard-demo-test-{uuid.uuid4()}",
         )
     finally:
@@ -234,6 +246,7 @@ async def test_the_tool_scenario_uses_the_signed_in_principal_and_keeps_four_eye
             ScenarioContext(
                 run_id=uuid.uuid4().hex,
                 actor_id="alice-sub",
+                tenant_id="acme",
                 actor_roles=frozenset({"operator"}),
                 session_id="demo-four-eyes",
             )
@@ -259,6 +272,7 @@ async def test_the_tool_scenario_uses_the_signed_in_principal_and_keeps_four_eye
                     session,
                     ticket_id=ticket_id,
                     actor_id="alice-sub",
+                    tenant_id="acme",
                     actor_roles=frozenset({"operator"}),
                     action="approve",
                 )
@@ -267,6 +281,7 @@ async def test_the_tool_scenario_uses_the_signed_in_principal_and_keeps_four_eye
                 session,
                 ticket_id=ticket_id,
                 actor_id="bob-sub",
+                tenant_id="acme",
                 actor_roles=frozenset({"operator"}),
                 action="approve",
             )

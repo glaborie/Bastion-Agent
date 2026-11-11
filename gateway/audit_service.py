@@ -68,10 +68,17 @@ class AuditPage:
         return self.next_before_id is not None
 
 
-async def list_records(session: AsyncSession, filters: AuditFilters) -> AuditPage:
-    """Newest-first page with cursor pagination on ``id``."""
+async def list_records(
+    session: AsyncSession, filters: AuditFilters, *, tenant_id: str
+) -> AuditPage:
+    """Newest-first page for one tenant, with cursor pagination on ``id``."""
     applied = filters.validated()
-    statement = select(AuditLog).order_by(AuditLog.id.desc()).limit(applied.limit + 1)
+    statement = (
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .order_by(AuditLog.id.desc())
+        .limit(applied.limit + 1)
+    )
     if applied.before_id is not None:
         statement = statement.where(AuditLog.id < applied.before_id)
     if applied.event_type is not None:
@@ -94,6 +101,7 @@ async def session_timeline(
     session: AsyncSession,
     session_id: str,
     *,
+    tenant_id: str,
     limit: int = MAX_TIMELINE_RECORDS,
 ) -> list[AuditLog]:
     """Oldest-first timeline for the Session Inspector (bounded)."""
@@ -102,7 +110,7 @@ async def session_timeline(
     bounded = max(1, min(limit, MAX_TIMELINE_RECORDS))
     statement = (
         select(AuditLog)
-        .where(AuditLog.session_id == session_id)
+        .where(AuditLog.tenant_id == tenant_id, AuditLog.session_id == session_id)
         .order_by(AuditLog.id.asc())
         .limit(bounded)
     )
@@ -112,6 +120,7 @@ async def session_timeline(
 async def recent_security_incidents(
     session: AsyncSession,
     *,
+    tenant_id: str,
     limit: int = MAX_INCIDENT_RECORDS,
 ) -> list[AuditLog]:
     """Newest-first ``SECURITY_INCIDENT`` rows for the dashboard panel.
@@ -123,7 +132,10 @@ async def recent_security_incidents(
     bounded = max(1, min(limit, MAX_INCIDENT_RECORDS))
     statement = (
         select(AuditLog)
-        .where(AuditLog.event_type == AuditEventType.SECURITY_INCIDENT)
+        .where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.event_type == AuditEventType.SECURITY_INCIDENT,
+        )
         .order_by(AuditLog.id.desc())
         .limit(bounded)
     )

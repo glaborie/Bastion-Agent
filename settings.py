@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     keycloak_jwks_min_refresh_seconds: float = 5.0
     keycloak_leeway_seconds: int = 30
     keycloak_http_timeout_seconds: float = 10.0
+    #: Access-token claim carrying the tenant. The Keycloak realm maps the
+    #: ``tenant`` user attribute to this claim; a token without it is rejected
+    #: rather than falling back to a shared namespace (ADR-015).
+    tenant_claim: str = "tenant_id"
 
     # -- Dashboard sessions (server-side, Redis-backed) --------------------
     session_cookie_name: str = "bastion_session"
@@ -291,6 +295,14 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("tenant_claim")
+    @classmethod
+    def _validate_tenant_claim(cls, value: str) -> str:
+        claim = value.strip()
+        if not claim or len(claim) > 128:
+            raise ValueError("TENANT_CLAIM must be a non-empty claim name (max 128 characters)")
+        return claim
 
     @field_validator("canary_prefix")
     @classmethod

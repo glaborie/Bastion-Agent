@@ -103,6 +103,7 @@ async def list_pending(
     *,
     viewer_id: str,
     viewer_roles: frozenset[str] | set[str],
+    tenant_id: str,
     limit: int = 100,
     now: datetime | None = None,
 ) -> list[ApprovalView]:
@@ -115,7 +116,10 @@ async def list_pending(
         raise ValueError("limit must be within [1, 500]")
     statement = (
         select(PendingApproval)
-        .where(PendingApproval.status == ApprovalStatus.PENDING)
+        .where(
+            PendingApproval.status == ApprovalStatus.PENDING,
+            PendingApproval.tenant_id == tenant_id,
+        )
         .order_by(PendingApproval.token_expires_at.asc())
         .limit(limit)
     )
@@ -159,6 +163,7 @@ def humanize_elapsed(moment: datetime, *, now: datetime | None = None) -> str:
 async def list_recently_decided(
     session: AsyncSession,
     *,
+    tenant_id: str,
     minutes: int = RECENT_DECISION_MINUTES,
     limit: int = RECENT_DECISION_LIMIT,
     now: datetime | None = None,
@@ -178,6 +183,7 @@ async def list_recently_decided(
     statement = (
         select(PendingApproval)
         .where(
+            PendingApproval.tenant_id == tenant_id,
             PendingApproval.status != ApprovalStatus.PENDING,
             PendingApproval.decided_at.is_not(None),
             PendingApproval.decided_at >= moment - timedelta(minutes=minutes),
@@ -206,6 +212,7 @@ async def decide_ticket(
     ticket_id: uuid.UUID,
     actor_id: str,
     actor_roles: frozenset[str] | set[str],
+    tenant_id: str,
     action: DecisionAction,
     reason: str | None = None,
     now: datetime | None = None,
@@ -227,7 +234,12 @@ async def decide_ticket(
 
     moment = now or utcnow()
     statement = (
-        select(PendingApproval).where(PendingApproval.ticket_id == ticket_id).with_for_update()
+        select(PendingApproval)
+        .where(
+            PendingApproval.ticket_id == ticket_id,
+            PendingApproval.tenant_id == tenant_id,
+        )
+        .with_for_update()
     )
     ticket = (await session.execute(statement)).scalar_one_or_none()
     if ticket is None:
@@ -270,6 +282,7 @@ async def decide_ticket(
     await append_audit_event(
         session,
         actor_id=actor_id,
+        tenant_id=ticket.tenant_id,
         event_type=AuditEventType.APPROVAL_GRANTED
         if approved
         else AuditEventType.APPROVAL_REJECTED,

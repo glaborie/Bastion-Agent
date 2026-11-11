@@ -28,7 +28,7 @@ from gateway.auth.session import (
     safe_next_path,
 )
 
-BOB = Principal(subject="bob-sub", username="bob", roles=frozenset({"operator"}))
+BOB = Principal(subject="bob-sub", tenant_id="acme", username="bob", roles=frozenset({"operator"}))
 
 
 class StubValidator:

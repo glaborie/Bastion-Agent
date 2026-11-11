@@ -16,9 +16,8 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (10)
+### Inbox (9)
 
-- `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
@@ -41,8 +40,9 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (12)
+### Done (13)
 
+- `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-003` P1 v0.2 agent - Route the ONNX ensemble to GPU to meet the 50 ms classify budget
 - `IDEA-005` P1 v0.2 security - Reject canary prefixes shorter than eight characters at startup
 - `IDEA-006` P3 v0.2 docs - Add a deterministic egress canary demo
@@ -64,7 +64,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 <!-- BEGIN INDEX -->
 | ID | Status | Prio | Phase | Area | Title |
 |---|---|---|---|---|---|
-| IDEA-001 | inbox | P2 | v0.3 | agent | Tenant isolation for Redis keys and Postgres rows |
+| IDEA-001 | done | P2 | v0.3 | agent | Tenant isolation for Redis keys and Postgres rows |
 | IDEA-002 | inbox | P1 | v0.2 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
 | IDEA-003 | done | P1 | v0.2 | agent | Route the ONNX ensemble to GPU to meet the 50 ms classify budget |
 | IDEA-004 | blocked | P2 | v0.3 | db | Export the audit ledger asynchronously for retention |
@@ -93,7 +93,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 
 ### IDEA-001: Tenant isolation for Redis keys and Postgres rows
 
-- status: inbox
+- status: done
 - priority: P2
 - phase: v0.3
 - area: agent
@@ -101,7 +101,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 - depends-on: -
 - spec: ADR-008
 - created: 2026-11-09
-- updated: 2026-11-09
+- updated: 2026-11-11
 - source: ADR-008, phase v0.3 scope
 
 **Problem**
@@ -120,10 +120,14 @@ construction, and a test proves it by attempting the access.
 
 **Acceptance**
 
-- [ ] Tenant id resolved from the OIDC claim and stored on `PendingApproval` and `AuditLog`
-- [ ] Vault, canary, quarantine and approval keys include the tenant prefix
-- [ ] A test shows a session from tenant A cannot read a token or ticket from tenant B
-- [ ] ADR documents the isolation model before implementation
+- [x] Tenant id resolved from the OIDC claim and stored on `PendingApproval` and `AuditLog`
+- [x] Vault, canary, quarantine and approval keys include the tenant prefix
+- [x] A test shows a session from tenant A cannot read a token or ticket from tenant B
+- [x] ADR documents the isolation model before implementation
+
+**Notes**
+
+- PostgreSQL row-level security is not part of this change: it remains the v0.3 defence-in-depth step named in ADR-008 and ADR-015 decision 6. Request-path reads are tenant-scoped in the shared query helpers.
 
 ### IDEA-002: Push approval decisions over WebSocket instead of 3 s polling
 

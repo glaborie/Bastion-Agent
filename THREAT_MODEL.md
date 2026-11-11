@@ -34,7 +34,7 @@ In scope: the FastAPI gateway, the ARQ worker, PostgreSQL audit ledger, Redis (v
 
 Assumptions:
 
-- One deployment serves one organisation. There are no per-tenant keys or per-tenant isolation.
+- One deployment may serve multiple tenants. Tenant isolation is scoped by ADR-015: Redis keys carry a tenant segment, `audit_logs` and `pending_approvals` carry `tenant_id`, and request-path reads require the authenticated tenant. PostgreSQL row-level security remains planned for the rest of v0.3.
 - The host, container runtime, network segmentation, Keycloak hardening and secret management are the deployer's responsibility. The repository ships development defaults only (`.env.example`, the Keycloak realm export, shared demo passwords).
 - The model is untrusted. No security decision depends on model output or model instructions.
 
@@ -167,8 +167,8 @@ Two facts shape the model:
   - LIVE: vault session = `sha256(actor_id + "\0" + conversation_id)`. The actor is bound in, so the same conversation id under two principals resolves to different sessions.
   - LIVE: AAD binding makes a ciphertext copied across sessions fail authentication.
   - LIVE: an expired marker is left visible and counted. It is never guessed.
-- Residual risk: a single key protects all sessions. There are no per-tenant keys.
-- Verification: `tests/test_vault.py`, `tests/test_chat_contract.py`.
+- Residual risk: one deployment-wide AES key still protects every tenant's vault; isolation comes from the tenant namespace and the AAD binding, so a ciphertext copied across tenants fails authentication. PostgreSQL RLS is not yet enabled.
+- Verification: `tests/test_vault.py`, `tests/test_chat_contract.py`, `tests/test_tenant_isolation.py`.
 
 ### T6. Identity, session and privilege abuse at the gateway
 
