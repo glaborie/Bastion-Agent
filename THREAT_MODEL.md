@@ -2,8 +2,8 @@
 
 Bastion-Agent threat model
 
-- Version: 2.1
-- Last updated: 2026-11-10
+- Version: 2.2
+- Last updated: 2026-11-11
 - Reviewed against: commit `fa655d6`
 - Author: Guillaume Laborie
 - Status: working document for a portfolio project. It is not a compliance attestation and has not been independently reviewed.
@@ -246,9 +246,11 @@ Two facts shape the model:
 - Attack: a vulnerable dependency, a swapped classifier model, a poisoned container image.
 - Controls:
   - LIVE: classifier ONNX graphs are digest-checked. A mismatch fails closed to CONFIDENTIAL.
-  - PARTIAL: `scripts/update_threat_intel.py` queries every package in `uv.lock` against OSV and exits non-zero on unignored findings. It is not run in CI.
-  - PLANNED: SBOM generation, image pinning and signing, pinned GitHub Actions throughout, a CI gate on the OSV script.
-- Residual risk: the LLM served through OmniRoute and llama.cpp is not integrity-checked by this project.
+  - LIVE: `scripts/update_threat_intel.py` queries every package in `uv.lock` against OSV and exits non-zero on unignored findings. The `supply-chain` job runs it on every push and pull request.
+  - LIVE: `scripts/scan_images.sh` exports every image the compose stack ships, scans the archives with the digest-pinned Trivy service (no Docker engine socket), writes a CycloneDX SBOM and a Trivy CVE report to `artifacts/compliance/<date>/`, and fails on an unsuppressed CRITICAL. `trivy.yaml` is the only suppression path: every entry names the image scope, a justification and an expiry date. The same command runs in the `supply-chain` job and its output is uploaded as the `compliance-reports` artifact (ADR-015).
+  - LIVE: GitHub Actions are pinned by commit SHA.
+  - PARTIAL: image signing and verification (cosign), digest pinning for the three tag-only references (`pgadmin4:9.19`, `redisinsight:3.8`, `omniroute:3.8.52`), and IaC or secret scanning.
+- Residual risk: the LLM served through OmniRoute and llama.cpp is not integrity-checked by this project. The registry and the scanner image are trusted by digest, so a compromised tag or registry could scan clean; the SBOM is only as complete as Trivy's package discovery for the scanned base images.
 
 ### T12. Resource exhaustion and denial of service
 
@@ -305,7 +307,7 @@ Scores are the author's estimates of residual risk with the controls as they exi
 3. Add per-principal token and cost budgets (T12); request-rate limiting is live (ADR-013).
 4. Anchor the audit-chain head outside the database (T10).
 5. Add Swiss identifier recognizers and grow the golden set beyond 83 cases (T1, T4).
-6. Wire the OSV script into CI and add an SBOM (T11).
+6. Sign and verify images (cosign), pin the three tag-only references, and add IaC and secret scanning (T11).
 7. Replace development secrets with a secret-manager integration (T4, T6).
 
 ## 8. Verification

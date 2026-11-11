@@ -256,17 +256,19 @@ CREATE TABLE audit_logs (
 
 | Dependency | Version Pin | Vulnerability Scanning | Swiss Relevance |
 |------------|-------------|------------------------|------------------|
-| **Presidio** | Latest stable | Snyk, CodeQL | PII/secrets detection |
-| **Redis** | 7.x | CVE database | Token vault storage |
-| **PostgreSQL** | 16.x | CVE database | Audit log storage |
-| **llama.cpp** | Latest GGUF-compatible | CVE database | Local inference |
-| **OmniRoute** | Latest | CVE database | Model routing |
-| **OpenTelemetry Collector** | Latest contrib | CVE database | Observability |
+| **Presidio** | Latest stable | OSV + Trivy | PII/secrets detection |
+| **Redis** | 7.x | OSV + Trivy | Token vault storage |
+| **PostgreSQL** | 16.x | OSV + Trivy | Audit log storage |
+| **llama.cpp** | Latest GGUF-compatible | OSV + Trivy | Local inference |
+| **OmniRoute** | Latest | OSV + Trivy | Model routing |
+| **OpenTelemetry Collector** | Latest contrib | OSV + Trivy | Observability |
 
 ### Vulnerability Management
-- **Scanning**: Weekly Snyk scans
-- **Patching**: Critical CVEs patched within 7 days
-- **SBOM**: Software Bill of Materials generated per release
+- **Scanning**: on every push and pull request, in the `supply-chain` CI job. `scripts/update_threat_intel.py` audits `uv.lock` against OSV; `scripts/scan_images.sh` exports every image the compose stack ships and scans it with the digest-pinned Trivy service (no Docker engine socket, `cap_drop: ALL`).
+- **Gate**: an unignored OSV advisory, an unsuppressed CRITICAL image CVE, or an expired policy entry fails `supply-chain`, and `ci-ok` requires that job.
+- **Patching**: critical CVEs patched within 7 days. Accepting a finding means an entry in `trivy.yaml` with the Trivy id, the image scope, a written justification and an expiry date.
+- **SBOM**: CycloneDX written to `artifacts/compliance/<date>/sbom.cdx.json` alongside `cve.json` and `manifest.json` on every scan, and uploaded as the `compliance-reports` CI artifact. Artifacts are not committed.
+- **Not covered**: image signature or provenance verification (cosign), digest pinning for the three tag-only images, and IaC or secret scanning. See `THREAT_MODEL.md` T11.
 
 ---
 

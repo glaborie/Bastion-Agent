@@ -44,3 +44,7 @@ artifacts/threat-intel/*
 # --- Gate run logs -----------------------------------------------------------
 artifacts/gate/*
 !artifacts/gate/.gitkeep
+
+# --- Compliance scan artifacts (SBOM, CVE reports) ---------------------------
+artifacts/compliance/*
+!artifacts/compliance/.gitkeep

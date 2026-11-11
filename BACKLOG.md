@@ -958,7 +958,7 @@ A turn whose recent history reads as frustrated produces a named verdict that th
 
 ### IDEA-019: Scan container images and publish an SBOM with Trivy
 
-- status: inbox
+- status: done
 - priority: P2
 - phase: v0.2
 - area: security
@@ -1021,16 +1021,16 @@ no-socket rule are recorded in an ADR.
 
 **Acceptance**
 
-- [ ] `docker compose --profile compliance run --rm trivy-scan` writes `artifacts/compliance/<date>/sbom.cdx.json` (CycloneDX JSON) and `artifacts/compliance/<date>/cve.json` (Trivy JSON) for a clean scan and exits 0, and exits non-zero when the CVE report holds an unignored CRITICAL; the exit-code path is covered by `uv run pytest tests/test_compliance_scan.py -q` (or the named equivalent), which feeds a report containing one CRITICAL and one ignored CRITICAL through the same gate
-- [ ] Coverage is derived from the file rather than a hand-written list: the scan enumerates `docker compose config --images` and the SBOM names all nine references listed in **Problem**, including the `pgadmin` and `redis-ui` profile images and the locally built `bastion-agent` image; a test adds a new `image:` to a compose fixture and asserts the scan list grows, so an unscanned image is a failing test
-- [ ] `.github/workflows/ci.yml` `supply-chain` scans images in addition to `uv.lock`, uploads `artifacts/compliance/<date>/sbom.cdx.json` and `cve.json` with `actions/upload-artifact` pinned by commit SHA like the existing uploads (lines 215 and 244), fails the job on an unignored CRITICAL, and `ci-ok` still requires `supply-chain`
-- [ ] `trivy.yaml` (committed) is the only suppression path: every entry carries the Trivy id, the image scope, a justification and a review/expiry date; a finding with no matching unexpired entry fails, and an expired entry fails too, proven by a test or a `scripts/` checker rather than by review
-- [ ] `grep -n "docker.sock" docker-compose.yml` returns nothing; the scanner service declares `security_opt: [no-new-privileges:true]`, `cap_drop: [ALL]`, no `privileged: true`, no added capability and `aquasecurity/trivy` pinned by digest; the chosen image-access mechanism is stated in a compose comment and in the ADR
-- [ ] `artifacts/compliance/*` is ignored with a tracked `artifacts/compliance/.gitkeep`, mirroring the existing `artifacts/gate/*` block in `.gitignore:44-46`, so generated SBOMs and CVE reports are never committed
-- [ ] `COMPLIANCE.md` CC7.2 (line 103) either names the job, command and artifact path as its evidence or marks the control planned/partial; `SECURITY.md` §Vulnerability Management (lines 266-269) states what actually runs, on what triggers, and where the SBOM is written, with "Weekly Snyk scans" removed unless a Snyk integration exists; `grep -rn "SBOM\|Snyk\|vulnerability scanning" COMPLIANCE.md SECURITY.md` returns only sentences that point at the job, the command and the artifact path
-- [ ] `THREAT_MODEL.md` T11 (lines 243-251) states the image scan and SBOM with the correct status using the document's own §1 definitions (`LIVE` only if it runs in CI with tests, otherwise `PARTIAL`), drops the "is not run in CI" sentence about the OSV script, and its residual risk names what remains — no image signature verification, the three tag-only images, and no IaC or secret scan if not built; §7 gap 6 is updated or closed and `Last updated` is bumped
-- [ ] `docs/adr/ADR-015.md` (the next free number today) records the scanner, the chosen image-access mechanism and why the Docker socket is excluded, the CRITICAL-fails policy with the ignore-file contract and its expiry, and the artifact layout; it is indexed in `docs/adr/ADR-Index.md` and `uv run python scripts/check_adrs.py` passes
-- [ ] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `scripts/gate.sh`, `check_adrs.py`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` still pass, and `docker compose up -d` without the profile is unchanged: no new default-profile service and no new required `.env` key
+- [x] `scripts/scan_images.sh` (the documented command; it wraps `docker compose --profile compliance run --rm trivy-scan`) writes `artifacts/compliance/<date>/sbom.cdx.json` and `cve.json` for a clean scan and exits 0, and exits non-zero on an unignored CRITICAL; `uv run pytest tests/test_compliance_scan.py -q` feeds one CRITICAL and one ignored CRITICAL through the same gate
+- [x] Coverage is derived from the file: `scripts/image_inventory.py` enumerates the nine `image:` references, including the `pgadmin` and `redis-ui` profile images and the locally built `bastion-agent`; a test adds a new `image:` to a compose fixture and asserts the scan list grows
+- [x] `supply-chain` scans images after the OSV audit, uploads `artifacts/compliance/` as `compliance-reports` with a SHA-pinned `actions/upload-artifact`, fails on an unignored CRITICAL, and `ci-ok` still requires `supply-chain`
+- [x] `trivy.yaml` is the only suppression path and is read by the gate, not by Trivy: every entry carries the Trivy id, the image scope, a justification and an expiry; an unexpired match suppresses, an expired entry fails even when unused, proven by `tests/test_compliance_scan.py`
+- [x] `grep -n "docker.sock" docker-compose.yml` returns nothing; `trivy-scan` declares `cap_drop: [ALL]`, `no-new-privileges:true`, no `privileged`, no ports, and the Trivy image is pinned by digest; the tarball mechanism is stated in a compose comment and ADR-015
+- [x] `artifacts/compliance/*` is ignored with a tracked `artifacts/compliance/.gitkeep`, mirroring the `artifacts/gate/*` block in `.gitignore`
+- [x] `COMPLIANCE.md` CC7.2 names the job, command and artifact path; `SECURITY.md` §Vulnerability Management states what runs, on what triggers, and where the SBOM is written; "Weekly Snyk scans" is gone
+- [x] `THREAT_MODEL.md` T11 marks the OSV audit and the image scan LIVE, drops the stale "not run in CI" sentence, names the remaining gaps, and §7 gap 6 is updated
+- [x] `docs/adr/ADR-015.md` records the scanner, the transport, the gate and the artifact layout, is indexed, and `check_adrs.py` passes
+- [x] `scripts/gate.sh` passes 10/10 (`pytest` 588 passed, `ruff`, `mypy`, `pylint`, `check_adrs`, `check_backlog`, tool catalog, RBAC, DREAD), and `docker compose config` without the profile is unchanged
 
 **Notes**
 
@@ -1041,6 +1041,14 @@ no-socket rule are recorded in an ADR.
 - Why the docs matter enough to be in scope: a reviewer or auditor reading `COMPLIANCE.md:103` is told CC7.2 is implemented; `THREAT_MODEL.md:9` explicitly says that document is not a compliance attestation, but `COMPLIANCE.md` makes no such disclaimer for its ✅ column. Either the evidence exists or the row must say planned — leaving the ✅ while adding a scanner elsewhere would still be an unsupported claim until the artifact path is named.
 - Open questions for triage: whether the scan runs on every push or nightly (the CUDA image makes a full nine-image scan expensive on a hosted runner), whether `pgadmin` and `redisinsight` are scanned in CI although their profiles are never started there, whether the ignore file lives at `trivy.yaml` (repo root, CLI default) or under `config/compliance/`, and whether a drifted low-severity finding should warn or fail.
 - Intake only: no implementation, no compose, CI, `trivy.yaml`, `.gitignore`, doc or ADR edit is part of this capture.
+
+- Implementation (2026-11-11), deviations recorded rather than hidden:
+  - Transport is a tarball, not server mode. `trivy image --input` is a client-side path and server mode scans an image reference, so a server would have re-downloaded the images and stopped the SBOM from describing the bytes on disk. A shared `trivy_cache` volume holds the vulnerability DB instead, so repeated runs do not re-download it. The Outcome's "exact equivalent recorded in the ADR" covers the entry point: `scripts/scan_images.sh` wraps `docker compose --profile compliance run --rm trivy-scan`.
+  - Inventory parses `docker-compose.yml` instead of calling `docker compose config --images`: rendering the file requires nine `${VAR:?}` secrets and CI has no `.env`. The parser expands `${VAR:-default}`, fails closed on an unset required variable, and a test pins both behaviours.
+  - The scanner is `ghcr.io/aquasecurity/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c` (manifest-list digest) because Docker Hub denied the anonymous pull from this host.
+  - CI scans on every push as the acceptance requires; the CUDA image makes the worst case a ~45-minute job. Moving the image half to a nightly run is a change to ADR-015, not a silent workflow edit.
+  - Two live-run fixes are in the script: `docker save` writes `0600` under the development umask, and the scanner has no `DAC_OVERRIDE` because of `cap_drop: ALL`, so tarballs are chmod 0644 and the reports directory is a 0777 scratch path under `artifacts/`.
+  - Live verification: the documented command scanned `alpine:3.20`, produced a 15-component CycloneDX SBOM and 0 CRITICAL, and exited 0; the failing path is covered by `tests/test_compliance_scan.py` (15 tests).
 
 ### IDEA-020: Load production secrets from OpenBao instead of the process environment
 

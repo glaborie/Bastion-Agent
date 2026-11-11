@@ -494,11 +494,45 @@ services:
     networks:
       - bastion-net
 
+  # ---------------------------------------------------------------------------
+  # Trivy image scanner (opt-in, no Docker socket).
+  #
+  # scripts/scan_images.sh exports every image from `scripts/image_inventory.py`
+  # with `docker save` into ./artifacts/compliance/work/images, then runs this
+  # one-shot service. Trivy reads the tarballs from a read-only mount: a
+  # Docker engine socket mount would be host root and would contradict the
+  # `cap_drop: ALL` baseline every other service carries. Artifacts are
+  # aggregated on the host into ./artifacts/compliance/<date>/.
+  # ---------------------------------------------------------------------------
+  trivy-scan:
+    image: ghcr.io/aquasecurity/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+    container_name: bastion-trivy
+    profiles: [compliance]
+    entrypoint: ["/bin/sh", "/opt/bastion/trivy-scan.sh"]
+    environment:
+      TRIVY_CACHE_DIR: /cache
+      TRIVY_NO_PROGRESS: "true"
+    volumes:
+      - ./scripts/trivy-scan.sh:/opt/bastion/trivy-scan.sh:ro
+      - ./artifacts/compliance/work/images:/images:ro
+      - ./artifacts/compliance/work/raw:/reports
+      # Vulnerability DB cache: repeated runs do not re-download the database.
+      - trivy_cache:/cache
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # One-shot: a failed scan must not restart in a loop.
+    restart: "no"
+    networks:
+      - bastion-net
+
 volumes:
   pgdata:
   redisdata:
   keycloak_data:
   omniroute_data:
+  trivy_cache:
 
 networks:
   bastion-net:
