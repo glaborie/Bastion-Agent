@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 #: Fixed job-id prefix: approving twice cannot enqueue the same ticket twice.
 _RESUME_JOB_PREFIX = "resume:"
+#: One job per demo run id; a double-submitted form cannot start two runs.
+_DEMO_JOB_PREFIX = "demo:"
 
 _pool: ArqRedis | None = None
 
@@ -60,6 +62,42 @@ async def enqueue_tool_resume(ticket_id: str) -> bool:
         logger.warning(
             "Could not enqueue approved ticket; the worker sweep will retry",
             extra={"ticket_id": ticket_id},
+        )
+        return False
+    return True
+
+
+async def enqueue_demo_run(
+    *,
+    run_id: str,
+    scenario_id: str,
+    actor_id: str,
+    roles: list[str],
+    session_id: str,
+) -> bool:
+    """Ask the worker to execute one allow-listed demo scenario.
+
+    Every argument is captured server-side from the authenticated session. The
+    run record already exists in Redis, so ``False`` means the queue is down and
+    the caller marks the run failed instead of leaving it queued forever.
+    """
+    settings = get_settings()
+    try:
+        pool = await get_arq_pool()
+        await pool.enqueue_job(
+            "run_demo_scenario_job",
+            run_id=run_id,
+            scenario_id=scenario_id,
+            actor_id=actor_id,
+            roles=roles,
+            session_id=session_id,
+            _job_id=f"{_DEMO_JOB_PREFIX}{run_id}",
+            _queue_name=settings.arq_queue_name,
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "Could not enqueue demo scenario",
+            extra={"scenario": scenario_id, "run_id": run_id},
         )
         return False
     return True

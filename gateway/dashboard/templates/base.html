@@ -30,6 +30,10 @@
             <a href="/dashboard/chat"
                {% if request.url.path.startswith("/dashboard/chat") %}aria-current="page"{% endif %}>Chat</a>
           </li>
+          <li>
+            <a href="/dashboard/demo"
+               {% if request.url.path.startswith("/dashboard/demo") %}aria-current="page"{% endif %}>Demo</a>
+          </li>
         </ul>
       </nav>
       {% if principal %}

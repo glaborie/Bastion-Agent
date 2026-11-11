@@ -548,16 +548,26 @@ one entry would break verification for every later entry. The trigger blocks
 
 ## 7. Act 5 — the Command Control dashboard
 
-Signed in as `breakglass`:
+Signed in as `breakglass`. The **demo console is the first path**:
+<http://localhost:8000/dashboard/demo> lists every demo scenario with the
+control it exercises and the evidence it should produce, and starts one from
+the browser. Runs execute on the worker, so the page never waits for a model
+call; a card that stays *queued* means the worker is down
+(`docker compose up -d worker`). The CLI scripts remain the fallback.
 
 | Page | What to show |
 |---|---|
+| `/dashboard/demo` | One card per script (`demo_classifier`, `demo_egress`, `demo_model_canary`, `demo_tool_request`, `demo_traffic`, `seed_demo_approval`) with its control, expected evidence and infrastructure needs; **Run scenario** for the registry-backed ones. Start the egress canary here to show `canary_leak` with empty delivered text and the quarantine, then start the tool request to produce a ticket for Act 4 |
 | `/dashboard` | Pending approvals, the live security-incident panel (last 10 `SECURITY_INCIDENT` rows, refreshed every 15 s), recent decisions with full ticket ids, the four-eyes rule, evaluation card (“not run yet” until `scripts/run_evals.py` runs) |
 | `/dashboard/audit` | Filter by event type, actor, session; verify the chain in place |
 | `/dashboard/sessions/<SESSION>` | The whole request lifecycle for the demo session |
 
 `carol` (analyst) and `dave` (readonly) receive `403` — the dashboard requires
-`operator` or `admin`.
+`operator` or `admin`, the demo console's run endpoint included.
+
+The page sends only a scenario id: there is no field for a command, a script
+path or argv, and a tool-request scenario acts as the signed-in principal, so
+its ticket still needs a second operator to approve it (four-eyes).
 
 ---
 

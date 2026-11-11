@@ -35,6 +35,21 @@ main.container {
   margin-bottom: 0;
 }
 
+.demo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.demo-grid article {
+  margin-bottom: 0;
+}
+
+.demo-run {
+  margin-top: 0.75rem;
+}
+
 .metric {
   font-size: 2.25rem;
   font-weight: 700;

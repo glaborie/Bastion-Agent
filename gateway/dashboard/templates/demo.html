@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Demo console{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Demo console</h1>
+    <p>
+      Every script in <code>scripts/</code> that demonstrates a control, with the
+      evidence it should produce. A run is an allow-listed scenario executed by
+      the worker; the browser only sends the scenario id.
+    </p>
+  </hgroup>
+
+  <article>
+    <p>
+      <small>
+        Runs go through the ARQ queue, so a slow model call never holds this
+        request. If a run stays <em>queued</em>, the worker is not running
+        (<code>docker compose up -d worker</code>). The CLI scripts remain the
+        fallback documented in <code>DEMO.md</code>.
+      </small>
+    </p>
+  </article>
+
+  <section class="demo-grid">
+    {% for scenario in scenarios %}
+      <article>
+        <header>
+          <h2>{{ scenario.title }}</h2>
+          <small><code>{{ scenario.script }}</code></small>
+        </header>
+
+        <p><strong>Control</strong><br>{{ scenario.control }}</p>
+        <p><strong>Evidence</strong><br>{{ scenario.evidence }}</p>
+        <p><small>Needs: {{ scenario.needs | join(", ") }}</small></p>
+        <p><small>GPU: {{ scenario.gpu }}</small></p>
+
+        {% if scenario.runnable %}
+          <form hx-post="/dashboard/demo/runs"
+                hx-target="#demo-slot-{{ scenario.id }}"
+                hx-swap="innerHTML"
+                hx-disabled-elt="find button">
+            <input type="hidden" name="scenario_id" value="{{ scenario.id }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
+            <button type="submit">Run scenario</button>
+          </form>
+        {% else %}
+          <p><small><mark>CLI only</mark> — {{ scenario.cli_only_reason }}</small></p>
+        {% endif %}
+
+        <div id="demo-slot-{{ scenario.id }}" aria-live="polite">
+          <p><small>Not run yet.</small></p>
+        </div>
+      </article>
+    {% endfor %}
+  </section>
+{% endblock %}

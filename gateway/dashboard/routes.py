@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.demo.scenarios import SCENARIOS
 from db.session import get_db_session
 from gateway.approvals import list_pending
 from gateway.audit_service import (
@@ -127,6 +128,28 @@ async def chat_page(
             "csrf_token": context.csrf_token,
             "conversation_id": uuid.uuid4().hex,
             "suggestions": CHAT_SUGGESTIONS,
+        },
+    )
+
+
+@router.get("/dashboard/demo", response_class=HTMLResponse)
+async def demo_page(
+    request: Request,
+    context: AuthContext = Depends(require_roles("operator", "admin")),
+) -> HTMLResponse:
+    """One card per script: the control it exercises and the evidence to expect.
+
+    The page itself is read-only. Starting a run is a separate CSRF-protected
+    endpoint in :mod:`gateway.dashboard.demo`, so the fixed registry can be
+    reviewed without granting the page any execution path.
+    """
+    return render(
+        request,
+        "demo.html",
+        context={
+            "principal": context.principal,
+            "csrf_token": context.csrf_token,
+            "scenarios": SCENARIOS,
         },
     )
 

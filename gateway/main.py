@@ -23,6 +23,7 @@ from agent.tools.decorator import verify_registry
 from db.session import dispose_engine, init_models
 from gateway.auth.rbac import shutdown_auth
 from gateway.auth.session import safe_next_path
+from gateway.dashboard.demo import router as demo_router
 from gateway.dashboard.routes import router as dashboard_router
 from gateway.dashboard.templating import render_error
 from gateway.queue import close_arq_pool
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(evals.router)
     app.include_router(dashboard_router)
+    app.include_router(demo_router)
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

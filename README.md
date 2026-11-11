@@ -156,9 +156,12 @@ transaction, with a hash of the free-text reason (never the text itself).
 | Method | Path | Access |
 |--------|------|--------|
 | GET | `/dashboard` | operator or admin |
+| GET | `/dashboard/demo` | operator or admin (demo console: allow-listed scenarios) |
 | GET | `/dashboard/chat` | operator or admin (guarded chat UI, CSRF on send) |
 | GET | `/dashboard/audit` | operator or admin (filter + cursor paging) |
 | GET | `/dashboard/sessions/{id}` | operator or admin (audit timeline) |
+| POST | `/dashboard/demo/runs` | operator or admin + CSRF; form field `scenario_id` only |
+| GET | `/api/dashboard/demo/runs/{id}` | operator or admin (HTML run panel, polled) |
 | GET | `/api/approvals` | operator or admin; JSON, or HTML with `HX-Request: true` |
 | GET | `/api/incidents` | operator or admin (HTML panel: 10 most recent `SECURITY_INCIDENT` rows) |
 | POST | `/api/approvals/{id}/action` | operator or admin + CSRF (cookie auth) |
@@ -178,7 +181,7 @@ reset it.
 
 | Scope | Routes | Default budget |
 |-------|--------|----------------|
-| `dashboard` | pages, HTMX partials, `/api/approvals`, `/api/audit`, `/api/evals/latest`, `/api/incidents` | 60 requests / 60 s |
+| `dashboard` | pages, HTMX partials, `/api/approvals`, `/api/audit`, `/api/evals/latest`, `/api/incidents`, `/api/dashboard/demo/runs/*` | 60 requests / 60 s |
 | `chat` | `POST /v1/chat` | 120 requests / 60 s |
 
 Tune it with `RATE_LIMIT_ENABLED`, `RATE_LIMIT_WINDOW_SECONDS`,

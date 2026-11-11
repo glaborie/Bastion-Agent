@@ -21,13 +21,31 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, ClassVar
 
 from arq import cron
 from arq.connections import RedisSettings
 from opentelemetry import trace
 from opentelemetry.util.types import AttributeValue
+from redis.asyncio import Redis
 
+from agent.demo.runs import (
+    STATUS_FAILED,
+    STATUS_RUNNING,
+    STATUS_SUCCEEDED,
+    DemoRun,
+    DemoRunUnavailableError,
+    load_run,
+    save_run,
+    utc_now_iso,
+)
+from agent.demo.scenarios import (
+    DemoScenarioError,
+    ScenarioContext,
+    UnknownScenarioError,
+    get_scenario,
+)
 from agent.routing.client import close_model_router
 from agent.tools.decorator import (
     TOOL_NOT_IN_CATALOG_CODE,
@@ -49,6 +67,7 @@ from agent.tools.execution import (
     request_tool_execution,
     resume_approved_tool,
 )
+from db.redis import get_redis
 from db.session import dispose_engine, init_models, session_scope
 from logging_setup import configure_logging
 from settings import get_settings
@@ -299,6 +318,115 @@ async def resume_approved_tickets_job(ctx: dict[str, Any]) -> dict[str, int]:
     return {"approved": len(ticket_ids), "executed": executed, "failed": failed}
 
 
+async def run_demo_scenario_job(
+    _ctx: dict[str, Any],
+    *,
+    run_id: str,
+    scenario_id: str,
+    actor_id: str,
+    roles: list[str],
+    session_id: str,
+) -> dict[str, Any]:
+    """Execute one allow-listed demo scenario and record its outcome.
+
+    The gateway never runs a scenario in the request process. The actor and the
+    roles were captured from the authenticated session before the job was
+    queued; this function never sees the HTTP request.
+    """
+    settings = get_settings()
+    redis = get_redis(settings.redis_url)
+    with _tracer.start_as_current_span("demo.scenario") as span:
+        span.set_attributes(
+            span_attributes(
+                {
+                    "bastion.demo.run_id": run_id,
+                    "bastion.demo.scenario": scenario_id,
+                }
+            )
+        )
+        run = await load_run(redis, run_id)
+        if run is None:
+            logger.warning(
+                "Demo run record disappeared before the job started",
+                extra={"run_id": run_id, "scenario": scenario_id},
+            )
+            span.set_attribute("bastion.demo.status", "unknown_run")
+            return {"status": "unknown_run", "run_id": run_id}
+
+        await save_run(redis, replace(run, status=STATUS_RUNNING))
+        try:
+            scenario = get_scenario(scenario_id)
+            handler = scenario.handler
+            if handler is None:
+                raise DemoScenarioError("scenario is CLI-only")
+            outcome = await handler(
+                ScenarioContext(
+                    run_id=run_id,
+                    actor_id=actor_id,
+                    actor_roles=frozenset(roles),
+                    session_id=session_id,
+                )
+            )
+        # A demo failure is recorded for the operator; the worker stays up.
+        except (DemoScenarioError, UnknownScenarioError, DemoRunUnavailableError) as exc:
+            await _fail_demo_run(redis, run, exc)
+            span.set_attribute("bastion.demo.status", STATUS_FAILED)
+            return {"status": STATUS_FAILED, "run_id": run_id, "error": str(exc)}
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.exception("Demo scenario failed", extra={"scenario": scenario_id})
+            await _fail_demo_run(redis, run, exc)
+            span.set_attribute("bastion.demo.status", STATUS_FAILED)
+            return {
+                "status": STATUS_FAILED,
+                "run_id": run_id,
+                "error": type(exc).__name__,
+            }
+
+        try:
+            await save_run(
+                redis,
+                replace(
+                    run,
+                    status=STATUS_SUCCEEDED,
+                    finished_at=utc_now_iso(),
+                    summary=outcome.summary,
+                    facts=outcome.facts,
+                    lines=outcome.lines,
+                    links=outcome.links,
+                ),
+            )
+        except DemoRunUnavailableError:
+            logger.exception("Could not record a finished demo run", extra={"run_id": run_id})
+            return {"status": STATUS_FAILED, "run_id": run_id, "error": "run_store_unavailable"}
+        span.set_attribute("bastion.demo.status", STATUS_SUCCEEDED)
+        logger.info(
+            "Demo scenario finished",
+            extra={"scenario": scenario_id, "run_id": run_id, "actor_id": actor_id},
+        )
+        return {"status": STATUS_SUCCEEDED, "run_id": run_id}
+
+
+async def _fail_demo_run(
+    redis: Redis,
+    run: DemoRun,
+    exc: Exception,
+) -> None:
+    """Best-effort failure record; the span and the log remain the fallback."""
+    message = f"{type(exc).__name__}: {exc}"
+    try:
+        await save_run(
+            redis,
+            replace(
+                run,
+                status=STATUS_FAILED,
+                finished_at=utc_now_iso(),
+                error=message[:400],
+            ),
+        )
+    except DemoRunUnavailableError:
+        logger.exception("Could not record a failed demo run", extra={"run_id": run.run_id})
+
+
 async def shutdown(ctx: dict[str, Any]) -> None:
     """Release resources when the worker receives a shutdown signal."""
     shutdown_tracing()
@@ -316,6 +444,7 @@ class WorkerSettings:
         resume_tool_job,
         expire_stale_approvals_job,
         resume_approved_tickets_job,
+        run_demo_scenario_job,
     ]
     cron_jobs: ClassVar[list[Any]] = [
         cron(expire_stale_approvals_job, second={0, 30}),

@@ -1,0 +1,69 @@
+<article id="demo-run-{{ run.run_id }}"
+         class="demo-run"
+         {% if not run.terminal %}
+         hx-get="/api/dashboard/demo/runs/{{ run.run_id }}"
+         hx-trigger="every 2s"
+         hx-swap="outerHTML"
+         {% endif %}
+         aria-live="polite">
+  <header>
+    <small>
+      {% if run.status == "succeeded" %}
+        <span class="badge badge-ok">succeeded</span>
+      {% elif run.status == "failed" %}
+        <span class="badge badge-bad">failed</span>
+      {% else %}
+        <span class="badge">{{ run.status }}</span>
+      {% endif %}
+      {{ scenario.title if scenario else run.scenario_id }}
+    </small>
+  </header>
+
+  {% if run.summary %}
+    <p>{{ run.summary }}</p>
+  {% endif %}
+
+  {% if run.error %}
+    <p class="alert" role="alert">{{ run.error }}</p>
+  {% elif not run.terminal %}
+    <p><small>Running on the worker… this panel refreshes every 2s.</small></p>
+  {% endif %}
+
+  {% if run.facts %}
+    <div class="table-scroll">
+      <table role="grid">
+        <thead>
+          <tr>
+            <th scope="col">Evidence</th>
+            <th scope="col">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, value in run.facts %}
+            <tr>
+              <td><code>{{ key }}</code></td>
+              <td><code>{{ value }}</code></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  {% if run.lines %}
+    <pre>{% for line in run.lines %}{{ line }}
+{% endfor %}</pre>
+  {% endif %}
+
+  {% for label, href in run.links %}
+    <p><a href="{{ href }}">{{ label }}</a></p>
+  {% endfor %}
+
+  <footer>
+    <small>
+      run <code>{{ run.run_id | short_hash(8) }}</code> ·
+      started {{ run.created_at }}
+      {% if run.finished_at %}· finished {{ run.finished_at }}{% endif %}
+    </small>
+  </footer>
+</article>
