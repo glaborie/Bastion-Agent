@@ -16,9 +16,8 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (9)
+### Inbox (8)
 
-- `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
 - `IDEA-020` P2 v0.5 security - Load production secrets from OpenBao instead of the process environment
@@ -28,9 +27,9 @@ must not be edited by hand.
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
 - `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 
-### Ready (0)
+### Ready (1)
 
-_none_
+- `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 
 ### Active (1)
 
@@ -75,7 +74,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-007 | done | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
 | IDEA-008 | done | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
 | IDEA-009 | done | P2 | v0.2 | security | Author ADR-014 for observability and trace privacy |
-| IDEA-010 | inbox | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
+| IDEA-010 | ready | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
 | IDEA-011 | done | P1 | v0.2 | docs | Reconcile the CONTROL.md dashboard rate-limit claim with the gateway |
 | IDEA-012 | done | P2 | v0.3 | gateway | Add a dashboard demo console that runs the demo scenarios |
 | IDEA-013 | done | P2 | v0.2 | agent | Add a Presidio recognizer for Swiss AHV/AVS numbers |
@@ -513,7 +512,7 @@ switching backend is a config change, not a code change. The ADR is indexed in
 
 ### IDEA-010: Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 
-- status: inbox
+- status: ready
 - priority: P1
 - phase: v0.2
 - area: docs
@@ -521,7 +520,7 @@ switching backend is a config change, not a code change. The ADR is indexed in
 - depends-on: -
 - spec: ADR-006
 - created: 2026-11-10
-- updated: 2026-11-10
+- updated: 2026-11-11
 - source: review of ADR-006 decision 5 against commit c7c8616 (eval gate dispatch exemption), 2026-11-10
 
 **Problem**
