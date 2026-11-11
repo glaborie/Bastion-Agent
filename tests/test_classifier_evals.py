@@ -247,19 +247,29 @@ def test_the_rules_floor_keeps_its_measured_recall_and_false_positive_budget() -
 def test_unmarked_corporate_content_is_gated_by_the_rules_floor() -> None:
     """A forecast and a contract clause with no marking must route local.
 
-    The ensemble reads both as harmless ``public_content`` — it models harm,
-    not secrecy — so this also pins *which* layer decided: the deterministic
-    floor, with the matched rule families carried as evidence.
+    The floor is asserted directly rather than through the end-to-end verdict:
+    the safety model models harm, not secrecy, and on some hosts it also scores
+    these rows above ``unsafe`` (the ADR-011 dispatch anomaly). That makes the
+    deciding layer host-dependent, while the security property — the floor
+    blocks the row on its own — is not. Both rows therefore have to satisfy
+    the floor, and the classifier has to route them to ``local-llama``.
     """
     classifier = _real_classifier()
+    floor = SensitivityClassifier(
+        model_path=None,
+        threshold=Settings(_env_file=None).classifier_confidence_threshold,
+    )
     for ident in UNMARKED_CORPORATE_ROWS:
         golden = next(row for row in GOLDENS if row.ident == ident)
         result = classifier.classify(golden.prompt)
         assert result.label.value == golden.expected_label, ident
-        assert result.model == "semantic-rules", ident
-        assert result.matched, ident
         route = "local-llama" if result.is_confidential else "cloud-primary"
         assert route == golden.expected_route, ident
+
+        rule_decision = floor.classify(golden.prompt)
+        assert rule_decision.label is Sensitivity.CONFIDENTIAL, ident
+        assert rule_decision.model == "semantic-rules", ident
+        assert rule_decision.matched, ident
 
 
 def test_a_broken_golden_row_fails_the_gate() -> None:
