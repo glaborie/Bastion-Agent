@@ -36,10 +36,9 @@ main.container {
 }
 
 .demo-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
-  align-items: start;
 }
 
 .demo-grid article {
