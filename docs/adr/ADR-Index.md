@@ -18,6 +18,7 @@ a file in this directory; this page is the index and the process guide.
 | 011 | ONNX Semantic Sensitivity Classifier | Accepted |
 | 012 | Egress Canary Tripwires, Untrusted-Content Fencing & Chat Lifecycle | Accepted |
 | 013 | Per-Principal Rate Limiting | Accepted |
+| 014 | Observability & Trace Privacy | Accepted |
 
 ---
 

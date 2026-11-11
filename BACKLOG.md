@@ -16,7 +16,7 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (7)
+### Inbox (6)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -27,8 +27,7 @@ must not be edited by hand.
 
 ### Ready (0)
 
-- `IDEA-009` P2 v0.2 security - Author ADR-014 for observability and trace privacy
-
+_none_
 
 ### Active (0)
 
@@ -38,13 +37,14 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (10)
+### Done (11)
 
 - `IDEA-003` P1 v0.2 agent - Route the ONNX ensemble to GPU to meet the 50 ms classify budget
 - `IDEA-005` P1 v0.2 security - Reject canary prefixes shorter than eight characters at startup
 - `IDEA-006` P3 v0.2 docs - Add a deterministic egress canary demo
 - `IDEA-007` P1 v0.2 agent - Route corporate-confidential documents without explicit markers to the local model
 - `IDEA-008` P1 v0.2 evals - Make the eval gate bit-reproducible across hosted runners
+- `IDEA-009` P2 v0.2 security - Author ADR-014 for observability and trace privacy
 - `IDEA-011` P1 v0.2 docs - Reconcile the CONTROL.md dashboard rate-limit claim with the gateway
 - `IDEA-012` P2 v0.3 gateway - Add a dashboard demo console that runs the demo scenarios
 - `IDEA-013` P2 v0.2 agent - Add a Presidio recognizer for Swiss AHV/AVS numbers
@@ -67,7 +67,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-006 | done | P3 | v0.2 | docs | Add a deterministic egress canary demo |
 | IDEA-007 | done | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
 | IDEA-008 | done | P1 | v0.2 | evals | Make the eval gate bit-reproducible across hosted runners |
-| IDEA-009 | inbox | P2 | v0.2 | security | Author ADR-014 for observability and trace privacy |
+| IDEA-009 | done | P2 | v0.2 | security | Author ADR-014 for observability and trace privacy |
 | IDEA-010 | inbox | P1 | v0.2 | docs | Restate ADR-006 decision 5 as never green except a verified host-verdict exemption |
 | IDEA-011 | done | P1 | v0.2 | docs | Reconcile the CONTROL.md dashboard rate-limit claim with the gateway |
 | IDEA-012 | done | P2 | v0.3 | gateway | Add a dashboard demo console that runs the demo scenarios |
@@ -424,7 +424,7 @@ reproducible.
 
 ### IDEA-009: Author ADR-014 for observability and trace privacy
 
-- status: inbox
+- status: done
 - priority: P2
 - phase: v0.2
 - area: security
@@ -432,7 +432,7 @@ reproducible.
 - depends-on: -
 - spec: -
 - created: 2026-11-10
-- updated: 2026-11-10
+- updated: 2026-11-11
 - source: audit of docs/adr/ coverage against README.md section Telemetry, 2026-11-10
 
 **Problem**
@@ -462,11 +462,11 @@ switching backend is a config change, not a code change. The ADR is indexed in
 
 **Acceptance**
 
-- [ ] `docs/adr/ADR-013.md` exists with `# ADR-013: ...`, the Status/Date/Last modified block, a two-paragraph `## Context`, a numbered `## Decision` and `## Consequences` with Pros and Cons
-- [ ] `uv run python scripts/check_adrs.py` passes with the new file and its `ADR-Index.md` row
-- [ ] The Decision section names `config/otel/otel-collector-config.yaml`, the overlay selected by `OTEL_REMOTE_EXPORT_CONFIG`, and the `docker compose up -d --force-recreate otel-collector` procedure
-- [ ] The Decision section states the never-exported fields (prompt and completion text, tool arguments, per-user identity) and the exclusions in `DEFAULT_EXCLUDED_URLS` plus the untraced cron sweeps
-- [ ] The Decision section states that OpenLit, Langfuse and Arize are selected by overlay only, and that the overlay in force is runtime configuration rather than architecture
+- [x] `docs/adr/ADR-013.md` exists with `# ADR-013: ...`, the Status/Date/Last modified block, a two-paragraph `## Context`, a numbered `## Decision` and `## Consequences` with Pros and Cons
+- [x] `uv run python scripts/check_adrs.py` passes with the new file and its `ADR-Index.md` row
+- [x] The Decision section names `config/otel/otel-collector-config.yaml`, the overlay selected by `OTEL_REMOTE_EXPORT_CONFIG`, and the `docker compose up -d --force-recreate otel-collector` procedure
+- [x] The Decision section states the never-exported fields (prompt and completion text, tool arguments, per-user identity) and the exclusions in `DEFAULT_EXCLUDED_URLS` plus the untraced cron sweeps
+- [x] The Decision section states that OpenLit, Langfuse and Arize are selected by overlay only, and that the overlay in force is runtime configuration rather than architecture
 
 **Notes**
 
@@ -475,6 +475,16 @@ switching backend is a config change, not a code change. The ADR is indexed in
 - Scope is documentation only. No code, config or compose change is part of this item; the live backend choice (self-hosted OpenLit while the Langfuse quota cools down) belongs in `.env`, which is gitignored, and must not be recorded as architecture.
 - Open question for triage: whether ADR-013 should also absorb the collector `filter/noise` drop rules for ASGI send/receive spans and 404s, or leave them as an infra detail owned by `config/otel/`.
 - 2026-11-10 numbering note: ADR-013 was taken by the per-principal rate-limiting decision (`docs/adr/ADR-013.md`, shipped in v0.2). When this item is worked, author **ADR-014** for observability instead; read every `ADR-013` in the Outcome and Acceptance above as `ADR-014`. The index row and `check_adrs.py` expectations are otherwise unchanged.
+
+**Implementation notes (2026-11-11)**
+
+- Numbering resolved per the item's own 2026-11-10 note: `ADR-013` is the per-principal rate-limiting decision, so the observability record is `docs/adr/ADR-014.md` and every `ADR-013` in the Outcome and Acceptance was read as `ADR-014`. The index row is `| 014 | Observability & Trace Privacy | Accepted |`; `check_adrs.py` reports `OK: 14 ADRs, index consistent`.
+- Every decision was written from the code, not from the README: `telemetry.py` (provider, `BatchSpanProcessor` 2048/2 s/10 s, `DEFAULT_EXCLUDED_URLS`, `ParentBased(TraceIdRatioBased)`, `annotate_span`, the scoped `instrument_http_client`), `gateway/main.py` and `agent/runtime.py` (both call `configure_tracing`), `agent/runtime.py` (only jobs are traced; the two 30 s cron sweeps create no span), `config/otel/` (base owns receivers/processors/exporters, each overlay owns only `service.pipelines.traces.exporters`), and `docker-compose.yml` (second `--config` mounted from `OTEL_REMOTE_EXPORT_CONFIG`, loopback-only ports, `host.docker.internal:host-gateway` for OpenLit).
+- The item's open question about the collector `filter/noise` rules is resolved by recording them in decision 4 as collector-owned volume control: ASGI send/receive and 404 spans are dropped before the exporters, so `debug` and every remote backend see the same set, and the rule sits in the same pipeline as the exclusions rather than being an undocumented infra detail.
+- Trace-privacy allow-list is stated positively (the attributes actually emitted by `gateway/routers/chat.py`, `agent/runtime.py` and `agent/routing/client.py`) and negatively (prompt text, completion text, tool arguments, tool output, vault markers and plaintext, subject/username/email/actor id). Verified by grep that no actor or subject attribute is set on any span.
+- Docs-only, as scoped: no code, config, compose or test change. `scripts/gate.sh` → 10/10 (pytest 583 passed, 33 skipped, 43 deselected, pylint 10.00/10, mypy clean, all five policy scripts OK).
+- Observed while verifying, deliberately not changed (outside this item): `README.md` still lists "Better Stack" as a backend although no exporter exists for it, and `DEFAULT_EXCLUDED_URLS` names `/metrics` although the gateway serves no such route — both harmless, both better handled by a docs/telemetry cleanup item than by a drive-by edit here.
+
 
 ### IDEA-010: Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 
