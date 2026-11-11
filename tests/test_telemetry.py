@@ -52,14 +52,14 @@ def test_health_probes_are_excluded_from_spans() -> None:
     assert "/health/ready" in DEFAULT_EXCLUDED_URLS.split(",")
 
 
-def test_dashboard_polls_are_excluded_but_decisions_are_traced() -> None:
-    """A 3 s poll must not generate spans; the four-eyes decision should.
+def test_dashboard_approvals_are_traced_but_eval_poll_is_excluded() -> None:
+    """The queue is pushed over WebSocket, so its HTTP read is no longer noise.
 
     Evaluated through the parser the ASGI middleware actually uses, so the
     trailing ``$`` semantics are the ones production gets.
     """
     excluded = parse_excluded_urls(DEFAULT_EXCLUDED_URLS)
-    assert excluded.url_disabled("http://localhost:8000/api/approvals")
+    assert not excluded.url_disabled("http://localhost:8000/api/approvals")
     assert excluded.url_disabled("http://localhost:8000/api/evals/latest")
     assert not excluded.url_disabled(
         "http://localhost:8000/api/approvals/9624899a-294e-452d-b60d-e84e24593a96/action"

@@ -1,7 +1,4 @@
-<div id="approvals"
-     hx-get="/api/approvals"
-     hx-trigger="every 3s, visibilitychange from:document, focus from:window"
-     hx-swap="outerHTML">
+<div id="approvals" data-csrf="{{ csrf_token or '' }}">
   {% if approval_error %}
     <article class="alert" role="alert">{{ approval_error }}</article>
   {% endif %}
@@ -54,7 +51,7 @@
                 {% elif not approval.decidable %}
                   <small class="muted">{{ approval.status }}</small>
                 {% else %}
-                  {# hx-preserve keeps the typed reason and focus across the 3s poll. #}
+                  {# hx-preserve keeps the typed reason and focus across a live refresh. #}
                   <form id="decision-{{ approval.ticket_id }}"
                         hx-preserve="true"
                         hx-post="/api/approvals/{{ approval.ticket_id }}/action"
@@ -124,10 +121,10 @@
   {% endif %}
 </div>
 
-{# Out-of-band update: the metric card lives outside #approvals, so the poll
-   would otherwise leave it stale until a full page load. Only rendered when the
-   partial is served standalone (never inside dashboard.html, where the metric
-   already exists). #}
+{# Out-of-band update: the metric card lives outside #approvals, so a live
+   refresh would otherwise leave it stale until a full page load. Only rendered
+   when the partial is served standalone (never inside dashboard.html, where
+   the metric already exists). #}
 {% if pending_oob %}
   <p id="pending-count" class="metric" hx-swap-oob="true">{{ pending_count }}</p>
 {% endif %}

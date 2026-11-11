@@ -28,9 +28,9 @@ must not be edited by hand.
 - `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
 
-### Ready (1)
+### Ready (0)
 
-- `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
+_none_
 
 ### Active (0)
 
@@ -40,9 +40,10 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (13)
+### Done (14)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
+- `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-003` P1 v0.2 agent - Route the ONNX ensemble to GPU to meet the 50 ms classify budget
 - `IDEA-005` P1 v0.2 security - Reject canary prefixes shorter than eight characters at startup
 - `IDEA-006` P3 v0.2 docs - Add a deterministic egress canary demo
@@ -65,7 +66,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | ID | Status | Prio | Phase | Area | Title |
 |---|---|---|---|---|---|
 | IDEA-001 | done | P2 | v0.3 | agent | Tenant isolation for Redis keys and Postgres rows |
-| IDEA-002 | ready | P1 | v0.2 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
+| IDEA-002 | done | P1 | v0.2 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
 | IDEA-003 | done | P1 | v0.2 | agent | Route the ONNX ensemble to GPU to meet the 50 ms classify budget |
 | IDEA-004 | blocked | P2 | v0.3 | db | Export the audit ledger asynchronously for retention |
 | IDEA-005 | done | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
@@ -132,7 +133,7 @@ construction, and a test proves it by attempting the access.
 
 ### IDEA-002: Push approval decisions over WebSocket instead of 3 s polling
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.2
 - area: gateway
@@ -157,10 +158,16 @@ can be removed.
 
 **Acceptance**
 
-- [ ] `/ws/approvals` authenticated by the same session cookie and CSRF rules
-- [ ] Ticket creation and decision broadcast to every connected operator
-- [ ] Polling remains as a degraded fallback when the socket cannot connect
-- [ ] A test drives two clients and asserts both see the decision
+- [x] `/ws/approvals` authenticated by the same session cookie and CSRF rules
+- [x] Ticket creation and decision broadcast to every connected operator
+- [x] Polling remains as a degraded fallback when the socket cannot connect
+- [x] A test drives two clients and asserts both see the decision
+
+**Notes**
+
+- The bus is Redis pub/sub on `approvals:events:<tenant>`: the worker and demo scenarios publish ticket creation after the database commit, and the decision route publishes `APPROVAL_GRANTED`/`APPROVAL_REJECTED` after its commit. A publish failure is logged and swallowed; the dashboard's 3 s polling remains the recovery path.
+- The browser sends the CSRF token in the `bastion.csrf.<token>` WebSocket subprotocol so it stays out of the URL and access logs; the query parameter and `X-CSRF-Token` are accepted for non-browser clients.
+- Residual: `/ws/approvals` is authenticated and read-only but is not covered by ADR-013's HTTP request budget, and the JS polling fallback is covered by code inspection rather than a browser E2E harness. The socket protocol, tenant isolation, two-client fan-out and publish-after-commit paths are tested.
 
 ### IDEA-003: Route the ONNX ensemble to GPU to meet the 50 ms classify budget
 

@@ -106,6 +106,28 @@ def _disable_rate_limiting(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _disable_approval_event_publish(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep tests off the live Redis pub/sub bus.
+
+    Approval events are best-effort; the unit tests that assert publication
+    replace these stubs with their own recorder. Without this, the first test
+    that decides a ticket would create a loop-bound Redis client that a later
+    test's event loop cannot reuse.
+    """
+
+    async def noop(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    for target in (
+        "agent.runtime.publish_approval_event",
+        "agent.demo.scenarios.publish_approval_event",
+        "gateway.routers.approvals.publish_approval_event",
+    ):
+        monkeypatch.setattr(target, noop)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _disable_tool_resume_enqueue(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep the suite from enqueueing ARQ jobs onto a live worker queue.
 

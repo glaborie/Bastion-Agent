@@ -11,6 +11,8 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.approvals_events import publish_approval_event
+from db.models import AuditEventType
 from db.session import get_db_session
 from gateway.approvals import (
     ApprovalDecisionError,
@@ -26,6 +28,7 @@ from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 from gateway.dashboard.templating import render
 from gateway.queue import enqueue_tool_resume
 from gateway.rate_limit import rate_limit
+from gateway.routers.approval_ws import get_approval_events_redis
 from gateway.web import is_htmx
 from settings import get_settings
 from telemetry import annotate_span
@@ -144,10 +147,23 @@ async def decide_approval(
             action=decision,
             reason=reason,
         )
+        # Commit before broadcasting or enqueueing: neither the dashboard nor
+        # the worker may observe a decision the database has not stored yet.
+        await session.commit()
+        await publish_approval_event(
+            get_approval_events_redis(),
+            tenant_id=context.tenant_id,
+            event_type=(
+                AuditEventType.APPROVAL_GRANTED
+                if decision == "approve"
+                else AuditEventType.APPROVAL_REJECTED
+            ),
+            ticket_id=str(ticket.ticket_id),
+            tool_name=ticket.tool_name,
+            status=ticket.status.value,
+            actor_id=context.actor_id,
+        )
         if decision == "approve":
-            # Commit before enqueueing: the worker must never observe an
-            # APPROVED ticket that the database has not durably stored yet.
-            await session.commit()
             await enqueue_tool_resume(context.tenant_id, str(ticket.ticket_id))
     except ApprovalDecisionError as exc:
         # A refused decision is a security event, not noise: keep the ticket

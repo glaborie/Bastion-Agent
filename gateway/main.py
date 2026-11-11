@@ -27,7 +27,7 @@ from gateway.dashboard.demo import router as demo_router
 from gateway.dashboard.routes import router as dashboard_router
 from gateway.dashboard.templating import render_error
 from gateway.queue import close_arq_pool
-from gateway.routers import approvals, audit, auth, chat, evals, health
+from gateway.routers import approval_ws, approvals, audit, auth, chat, evals, health
 from gateway.web import is_htmx
 from logging_setup import configure_logging
 from settings import get_settings
@@ -109,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(approvals.router)
+    app.include_router(approval_ws.router)
     app.include_router(audit.router)
     app.include_router(chat.router)
     app.include_router(evals.router)

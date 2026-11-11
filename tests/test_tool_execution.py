@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -599,6 +600,36 @@ async def test_worker_span_records_the_suspension_ticket(
     assert attributes["bastion.approval.ticket_id"] == result["ticket_id"]
     assert "reports/q3.txt" not in json.dumps(attributes)
     assert "revenue" not in json.dumps(attributes)
+
+
+async def test_worker_publishes_ticket_created_after_commit(
+    worker_db, workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dashboard is told about a new ticket only after it is durable."""
+    from agent.runtime import execute_tool_job
+
+    published: list[dict[str, Any]] = []
+
+    async def fake_publish(_redis, **kwargs) -> bool:
+        published.append(kwargs)
+        return True
+
+    monkeypatch.setattr("agent.runtime.publish_approval_event", fake_publish)
+    result = await execute_tool_job(
+        {"job_id": "test-publish-job"},
+        tool_name="execute_file_write",
+        actor_id="alice",
+        tenant_id="acme",
+        roles=["operator"],
+        session_id="sess-publish",
+        arguments=dict(ARGUMENTS),
+    )
+
+    assert result["status"] == "approval_pending"
+    assert published
+    assert published[0]["event_type"] is AuditEventType.APPROVAL_REQUESTED
+    assert published[0]["tenant_id"] == "acme"
+    assert published[0]["ticket_id"] == result["ticket_id"]
 
 
 async def test_resume_span_records_the_executed_ticket(

@@ -150,6 +150,8 @@ async def test_dashboard_renders_the_approval_queue(api: tuple[httpx.AsyncClient
     # duplicate id here would mean the OOB element leaked into the full page.
     assert response.text.count('id="pending-count"') == 1
     assert "hx-swap-oob" not in response.text
+    assert "/static/approvals.js" in response.text
+    assert 'hx-trigger="every 3s' not in response.text
 
 
 async def test_json_approvals_respect_four_eyes(
@@ -330,6 +332,34 @@ async def test_audit_rejects_unknown_event_type(api: tuple[httpx.AsyncClient, An
     client, _state = api
     response = await client.get("/api/audit", params={"event_type": "NOT_REAL"})
     assert response.status_code == 422
+
+
+async def test_decision_is_published_only_after_commit(
+    api: tuple[httpx.AsyncClient, Any],
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A socket must never be told about a decision the database lacks."""
+    client, state = api
+    ticket_id = await seed_ticket(db_engine, build_ticket())
+    state["context"] = AuthContext(principal=BOB, method="bearer")
+    published: list[dict[str, Any]] = []
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+
+    async def fake_publish(_redis, **kwargs) -> bool:
+        async with factory() as check:
+            stored = await check.get(PendingApproval, uuid.UUID(str(kwargs["ticket_id"])))
+            assert stored is not None
+            assert stored.status == ApprovalStatus.APPROVED
+        published.append(kwargs)
+        return True
+
+    monkeypatch.setattr("gateway.routers.approvals.publish_approval_event", fake_publish)
+    response = await client.post(f"/api/approvals/{ticket_id}/action", data={"action": "approve"})
+    assert response.status_code == 200
+    assert published[0]["event_type"] is AuditEventType.APPROVAL_GRANTED
+    assert published[0]["status"] == "approved"
+    assert published[0]["actor_id"] == BOB.subject
 
 
 async def test_dashboard_shows_recent_security_incidents(

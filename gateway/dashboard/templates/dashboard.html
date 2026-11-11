@@ -2,6 +2,10 @@
 
 {% block title %}Command Control{% endblock %}
 
+{% block head_extra %}
+  <script src="/static/approvals.js" defer></script>
+{% endblock %}
+
 {% block content %}
   <hgroup>
     <h1>Command Control</h1>
@@ -17,7 +21,7 @@
       <header><small>Pending approvals</small></header>
       <p class="metric" id="pending-count">{{ pending_count }}</p>
       <footer>
-        <small>Refreshed every 3s and when the tab regains focus</small>
+        <small>Live over WebSocket, with 3s polling as the fallback</small>
       </footer>
     </article>
 

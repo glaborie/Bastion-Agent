@@ -21,6 +21,7 @@ import json
 import uuid
 from typing import Any
 
+from agent.approvals_events import publish_approval_event
 from db.audit import append_audit_event
 from db.models import (
     ApprovalStatus,
@@ -31,6 +32,7 @@ from db.models import (
     sign_approval_token,
     utcnow,
 )
+from db.redis import get_redis
 from db.session import init_models, session_scope
 from settings import get_settings
 
@@ -82,6 +84,13 @@ async def create_ticket(
             payload={"ticket_id": str(ticket_id), "tool": tool_name},
             metadata_json={"required_role": required_role},
         )
+    await publish_approval_event(
+        get_redis(settings.redis_url),
+        tenant_id=tenant_id,
+        event_type=AuditEventType.APPROVAL_REQUESTED,
+        ticket_id=str(ticket_id),
+        tool_name=tool_name,
+    )
     return ticket_id
 
 

@@ -33,15 +33,12 @@ logger = logging.getLogger(__name__)
 
 SERVICE_VERSION = "0.1.0"
 
-#: Health probes and dashboard polls are excluded so they neither drown real
-#: traffic nor exhaust a tracing backend's quota. The approvals queue is re-read
-#: every 3 s and the evaluation card every 30 s, which is ~20 spans/min per open
-#: dashboard for no diagnostic value (the queue has its own audit trail).
-#:
-#: ``ExcludeList`` matches the full URL with ``re.search``, so ``api/approvals$``
-#: excludes the poll while ``POST /api/approvals/<ticket>/action`` — the
-#: four-eyes decision, which is worth a span — stays traced.
-DEFAULT_EXCLUDED_URLS = "/health,/health/ready,/metrics,api/approvals$,api/evals/latest$"
+#: Health probes and the evaluation poll are excluded so they neither drown real
+#: traffic nor exhaust a tracing backend's quota. The approvals queue is pushed
+#: over ``/ws/approvals`` (ADR-007), so its HTTP read is no longer a 3 s poll and
+#: the old ``api/approvals$`` exclusion is gone: a fallback read or a four-eyes
+#: decision is worth a span.
+DEFAULT_EXCLUDED_URLS = "/health,/health/ready,/metrics,api/evals/latest$"
 
 _provider: TracerProvider | None = None
 

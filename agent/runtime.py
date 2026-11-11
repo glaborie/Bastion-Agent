@@ -30,6 +30,7 @@ from opentelemetry import trace
 from opentelemetry.util.types import AttributeValue
 from redis.asyncio import Redis
 
+from agent.approvals_events import publish_approval_event
 from agent.demo.runs import (
     STATUS_FAILED,
     STATUS_RUNNING,
@@ -67,6 +68,7 @@ from agent.tools.execution import (
     request_tool_execution,
     resume_approved_tool,
 )
+from db.models import AuditEventType
 from db.redis import get_redis
 from db.session import dispose_engine, init_models, session_scope
 from logging_setup import configure_logging
@@ -228,6 +230,15 @@ async def _run_tool_job(
         return {"status": "error", "tool": tool_name, "error": str(exc)}
     except ToolError as exc:
         return {"status": "error", "tool": tool_name, "error": str(exc)}
+
+    if result.status is ToolStatus.APPROVAL_PENDING and result.ticket_id:
+        await publish_approval_event(
+            get_redis(settings.redis_url),
+            tenant_id=tenant_id,
+            event_type=AuditEventType.APPROVAL_REQUESTED,
+            ticket_id=result.ticket_id,
+            tool_name=tool_name,
+        )
     return result.to_payload()
 
 

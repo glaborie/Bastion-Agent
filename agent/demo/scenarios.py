@@ -22,6 +22,7 @@ from typing import Final
 
 from redis.asyncio import Redis
 
+from agent.approvals_events import publish_approval_event
 from agent.dlp.vault import TokenVault, get_vault
 from agent.egress.sanitizer import (
     EgressCircuitOpenError,
@@ -30,7 +31,7 @@ from agent.egress.sanitizer import (
 )
 from agent.routing.classifier import Classification, get_classifier
 from agent.routing.client import ChatMessage, OmniRouteClient
-from agent.tools.decorator import AgentContext, ToolError
+from agent.tools.decorator import AgentContext, ToolError, ToolStatus
 from agent.tools.execution import request_tool_execution
 from db.audit import append_audit_event
 from db.models import (
@@ -360,6 +361,15 @@ async def _run_tool_request(context: ScenarioContext) -> ScenarioOutcome:
     except ToolError as exc:
         raise DemoScenarioError(str(exc)) from exc
 
+    if result.status is ToolStatus.APPROVAL_PENDING and result.ticket_id:
+        await publish_approval_event(
+            get_redis(get_settings().redis_url),
+            tenant_id=context.tenant_id,
+            event_type=AuditEventType.APPROVAL_REQUESTED,
+            ticket_id=result.ticket_id,
+            tool_name=result.tool_name,
+        )
+
     payload = result.to_payload()
     status = str(payload["status"])
     if status != "approval_pending":
@@ -439,6 +449,13 @@ async def _run_seed_approval(context: ScenarioContext) -> ScenarioOutcome:
             payload={"ticket_id": str(ticket_id), "tool": tool_name},
             metadata_json={"required_role": required_role},
         )
+    await publish_approval_event(
+        get_redis(settings.redis_url),
+        tenant_id=context.tenant_id,
+        event_type=AuditEventType.APPROVAL_REQUESTED,
+        ticket_id=str(ticket_id),
+        tool_name=tool_name,
+    )
     return ScenarioOutcome(
         summary="A pending ticket is in the approval queue with you as its initiator.",
         facts=(
@@ -449,7 +466,8 @@ async def _run_seed_approval(context: ScenarioContext) -> ScenarioOutcome:
             ("expires_at", expires_at.isoformat()),
         ),
         lines=(
-            "The queue refreshes every 3s; the approve button is disabled for you.",
+            "The queue updates live and falls back to 3s polling; "
+            "the approve button is disabled for you.",
             "A second operator must decide the ticket (four-eyes, ADR-003).",
         ),
         links=(("Open the session timeline", f"/dashboard/sessions/{context.session_id}"),),

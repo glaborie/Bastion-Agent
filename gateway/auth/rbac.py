@@ -258,16 +258,18 @@ def _origin_host(value: str) -> tuple[str, int] | None:
     return parsed.hostname.lower(), port
 
 
-def _same_origin(request: Request) -> bool:
-    """Compare the browser-declared origin with the request origin.
+def is_same_origin(declared: str | None, expected_url: str) -> bool:
+    """Compare a browser-declared origin with the origin the app sees.
 
     Host/port are compared rather than the full URL because a TLS-terminating
     proxy may report a different scheme back to the app. Loopback aliases are
     treated as equivalent: Windows/WSL and Docker Desktop port forwarding can
     rewrite ``localhost`` to ``127.0.0.1`` between the browser and the gateway,
     which is still the same machine and not a CSRF boundary.
+
+    Shared by the HTTP CSRF dependency and the approval WebSocket handshake so
+    the two cannot drift.
     """
-    declared = request.headers.get("origin") or request.headers.get("referer")
     if declared is None:
         # Non-browser clients do not send Origin; the CSRF token still applies.
         return True
@@ -278,7 +280,7 @@ def _same_origin(request: Request) -> bool:
         # it; the origin check is defence in depth, not the primary control.
         return True
     candidate = _origin_host(declared)
-    expected = _origin_host(str(request.base_url))
+    expected = _origin_host(expected_url)
     if candidate is None or expected is None:
         return False
     if candidate == expected:
@@ -288,6 +290,11 @@ def _same_origin(request: Request) -> bool:
         and expected[0] in _LOOPBACK_HOSTS
         and candidate[1] == expected[1]
     )
+
+
+def _same_origin(request: Request) -> bool:
+    declared = request.headers.get("origin") or request.headers.get("referer")
+    return is_same_origin(declared, str(request.base_url))
 
 
 async def require_csrf(
