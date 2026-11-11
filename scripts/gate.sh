@@ -144,6 +144,12 @@ detail() {
             text=$(grep -E '(^=+ )?[0-9]+ (passed|failed)' "$log" | tail -1 |
                 sed -e 's/^=*[[:space:]]*//' -e 's/[[:space:]]*in [0-9.]*s.*//')
             ;;
+        evals)
+            # run_evals prints one summary line before the metric table; the
+            # table's last row is not the number that matters here.
+            text=$(grep -oE 'evals: [0-9]+/[0-9]+ passed, [0-9]+ failed' "$log" | tail -1 |
+                sed -e 's/^evals: //')
+            ;;
         *) text=$(grep -vE '^[[:space:]]*$' "$log" | tail -1) ;;
     esac
     text="${text//$'\n'/ }"
