@@ -11,7 +11,7 @@ must not be edited by hand.
 
 - current-phase: v0.2
 - wip-limit: 3
-- next-id: IDEA-025
+- next-id: IDEA-026
 
 ## Board
 
@@ -21,12 +21,12 @@ must not be edited by hand.
 - `IDEA-010` P1 v0.2 docs - Restate ADR-006 decision 5 as never green except a verified host-verdict exemption
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
-- `IDEA-019` P2 v0.2 security - Scan container images and publish an SBOM with Trivy
 - `IDEA-020` P2 v0.5 security - Load production secrets from OpenBao instead of the process environment
 - `IDEA-021` P2 v0.3 db - Anchor the audit chain head in object storage with WORM retention (MinIO)
 - `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
 - `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
+- `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
 
 ### Ready (0)
 
@@ -40,7 +40,7 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (14)
+### Done (15)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -56,6 +56,7 @@ _none_
 - `IDEA-014` P1 v0.2 agent - Stop the English-only DLP analyzer from mangling non-English input
 - `IDEA-015` P2 v0.2 security - Detect or prevent semantic system-prompt disclosure at egress
 - `IDEA-017` P1 v0.2 security - PII that Presidio fails to detect reaches cloud-primary in plaintext
+- `IDEA-019` P2 v0.2 security - Scan container images and publish an SBOM with Trivy
 
 _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 <!-- END BOARD -->
@@ -83,12 +84,13 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-016 | inbox | P2 | v0.3 | db | Encrypted payload escrow for pre-production debugging, disabled in production |
 | IDEA-017 | done | P1 | v0.2 | security | PII that Presidio fails to detect reaches cloud-primary in plaintext |
 | IDEA-018 | inbox | P2 | v0.4 | agent | Detect user frustration and escalate the conversation to a human operator |
-| IDEA-019 | inbox | P2 | v0.2 | security | Scan container images and publish an SBOM with Trivy |
+| IDEA-019 | done | P2 | v0.2 | security | Scan container images and publish an SBOM with Trivy |
 | IDEA-020 | inbox | P2 | v0.5 | security | Load production secrets from OpenBao instead of the process environment |
 | IDEA-021 | inbox | P2 | v0.3 | db | Anchor the audit chain head in object storage with WORM retention (MinIO) |
 | IDEA-022 | inbox | P2 | v0.4 | security | Detect runtime container escapes and unexpected process behaviour with Falco |
 | IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
+| IDEA-025 | inbox | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
 <!-- END INDEX -->
 
 ## Items
@@ -1371,3 +1373,45 @@ One documented local command (`docker compose exec gateway python -m agent.inges
 - Honest limits to record rather than paper over: the parser runs in-process on an untrusted file with no sandbox in this slice, and the size ceiling, format allow-list and parse timeout bound resource use but not a parser vulnerability; markitdown's OCR path requires an `llm_client` and is excluded for the reason above, so a scanned PDF is refused instead of being read; a damaged PDF may still yield partial text, so the zero-text check catches the empty case only and a page-count-versus-extracted-characters floor is worth adding; and the redaction inherits the DLP recall boundary — an out-of-vocabulary name or a postal address behaves here exactly as it does in chat (IDEA-017), which the README must not overclaim.
 - Deliberately out of scope: DOCX/XLSX/PPTX/HTML/EPUB inputs, OCR and redaction of text inside images or embedded EXIF, a gateway upload endpoint or an attachment field on `ChatRequest`, automatic insertion of the artifact into a chat turn, batch corpus conversion, and a golden-corpus row (the eval gate is prompt-level). `markitdown[all]` is also out: each extra widens the parser surface for no benefit while PDF is the only accepted type.
 - Intake only: no dependency, `pyproject.toml`, code, test, doc or ADR change is part of this capture.
+
+### IDEA-025: Clear the first image-scan baseline: upgrade the fixable images and decide the rest
+
+- status: inbox
+- priority: P1
+- phase: v0.2
+- area: security
+- tags: supply-chain, cve, docker, otel, keycloak
+- depends-on: -
+- spec: ADR-016
+- created: 2026-11-11
+- updated: 2026-11-11
+- source: first full run of `scripts/scan_images.sh` after IDEA-019, 2026-11-11
+
+**Problem**
+
+IDEA-019 shipped the scan, and the first full run of `./scripts/scan_images.sh --build-missing` on the pins in `docker-compose.yml` reported 23 CRITICAL rows / 19 unique CVEs across five images and exited 1 (`scripts/scan_images.sh:107-118`), so the merge-blocking `supply-chain` job (`.github/workflows/ci.yml:221-268`) is red and `ci-ok` (line 271) fails with it. Most rows are fixable upstream and divide by image: Keycloak `26.0` (`docker-compose.yml:314`) contributes 8 from `keycloak-services` 26.0.8 (fixed 26.4.15/26.6.6/26.7.2), Netty 4.1.111 (fixed 4.1.137), FreeMarker 2.3.32 (fixed 2.3.35) and BouncyCastle 1.78.1 (fixed 1.84/1.85) plus a CA-bundle finding; the OTel collector `0.111.0` (`:453`) contributes 7 from Go `pgx/v5` 5.7.1, `rabbitmq/amqp091-go` 1.10.0, `grpc` 1.67.1 and the Go stdlib, and the Postgres and RabbitMQ receivers are not configured in `config/otel/otel-collector-config.yaml` (only `otlp` at `:27-33`), so that code ships unreachable; RedisInsight `3.8` (`:299`) contributes 4 from bundled Node `tar` 6.2.1/7.4.3 and `proxy-addr` 2.0.7; OmniRoute `3.8.52` (`:356`) contributes 3 from Next.js 16.3.8 RCE advisories and DOMPurify 3.4.8; `postgres:16-alpine` (`:199`) contributes 1 from Go stdlib 1.24.6, almost certainly `gosu` rather than Postgres. `trivy.yaml` is the only suppression path and holds `ignore: []` (`trivy.yaml:20`), so nothing is accepted yet: without one decision per image the gate can only stay red or be silenced with entries that are not image-scoped and expiring, which ADR-016 decision 4 (`docs/adr/ADR-016.md:23`) forbids.
+
+**Outcome**
+
+The documented scan command exits 0 against digest-pinned images that match `docker-compose.yml`, and every image that still reports a CRITICAL has a recorded disposition rather than an accidental one: a newer upstream tag that clears it, removal from the shipped set, or an `trivy.yaml` entry scoped to that image, justified and expiring. Keycloak runs 26.8.2, which the operator has already verified clean (`artifacts/compliance/2026-11-11/manifest.json` lists only that image and its `cve.json` has no CRITICAL row); the OTel collector is on 0.165.0 with `config/otel/` validated against the new schema, or the migration is split out with the config diff recorded; and the tag-only references that remain are listed with a decision each. ADR-016's Residual risk (`docs/adr/ADR-016.md:33`) names the outcome, and the `supply-chain` job is green.
+
+**Acceptance**
+
+- [ ] `./scripts/scan_images.sh --build-missing` exits 0 on the updated pins and writes `artifacts/compliance/<date>/{sbom.cdx.json,cve.json,manifest.json}`
+- [ ] `docker-compose.yml` references a digest-pinned Keycloak 26.8.2 (or the newest 26.x that scans clean) and no longer `26.0`
+- [ ] The OTel collector upgrade is either complete with `config/otel/` validated against the new schema, or the item is split and the config diff is recorded; the collector image is digest-pinned
+- [ ] Postgres runs a newer 16.x alpine digest if the Go stdlib finding clears; if not, the finding is recorded as no-fix with evidence
+- [ ] OmniRoute and RedisInsight each have one of: a fixed digest-pinned tag, removal from the compose file, or an unexpired `trivy.yaml` entry scoped to that image with a written justification
+- [ ] `grep -n "@sha256:" docker-compose.yml` covers every shipped image except the documented tag-only exceptions, and each exception has a decision
+- [ ] `scripts/gate.sh` passes 10/10 and the `supply-chain` job is green
+- [ ] Any changed behaviour (Keycloak realm import, OTel config keys) is documented in `README.md`/`ADR-016.md`; `check_adrs.py` passes if the ADR is touched
+
+**Notes**
+
+- Deduplication: IDEA-019 is the scan itself (done), so this item is the remediation of its first baseline, not a second attempt at the control. Grepped `BACKLOG.md` and `docs/adr/` for `keycloak`, `trivy`, `CVE`, `redisinsight`, `omniroute`, `26.0`, `scan_images`: the only hits are IDEA-019's Problem and Notes and the IDEA-022/023/020/021 items that share the compliance genre. IDEA-019's Notes already defer "pinning the three tag-only images" to a follow-up, which this item inherits. IDEA-016, IDEA-017, IDEA-004 and IDEA-001 are unrelated. No item and no ADR covers upgrading the shipped images themselves. `spec: ADR-016` because decision 4 owns the suppression contract the item must extend, decision 5 owns the CI gate that is red, and the Residual risk names the tag-only references as the follow-up this item picks up; if the chosen dispositions need policy that ADR-016 does not state, the ADR's Residual risk is amended in the same change rather than the item citing `-`.
+- Honest split: Keycloak is mechanical and already verified clean at 26.8.2, so it should land first and alone if needed. OTel is the risky half: 0.111 to 0.165 is a configuration migration, not a tag bump, because `service.telemetry.logs` (`config/otel/otel-collector-config.yaml:134-136`) and processor fields change shape, and the three overlays under `config/otel/` must be re-validated; if the diff is larger than one reviewable change, split it into its own item and leave the acceptance's "or the item is split" path as the record. RedisInsight `3.8` is the latest published tag, so its likely resolution is dropping the optional `redis-ui` profile rather than upgrading; OmniRoute cannot be checked from this host at all because its image repository now requires auth, so its disposition is either a local pull or a documented accept-risk entry.
+- Classification: `P1`/`v0.2`/`security`. The rubric's `P1` is "required for the current phase's definition of done" and the evidence is concrete: `ci-ok` requires `supply-chain`, so no change merges while this is red, and v0.2 is Hardening where the scan shipped. Not `P0` because nothing is broken at runtime — the stack starts and no stated security invariant is violated; the defect is that a control now correctly reports unfixed CRITICALs in shipped images. `area: security` follows IDEA-019 and the load-bearing content: the deliverable is a cross-cutting supply-chain disposition plus an accept-risk record that must stay scoped and expiring; `infra` is the fair alternative because most edited lines land in `docker-compose.yml`, `config/otel/` and `trivy.yaml`, and triage may reclassify on that basis. Tags follow the IDEA-019 vocabulary (`supply-chain`, `docker`) plus the three image families the work names, at five to stay inside the intake guidance's 1-5 range.
+- Residual by construction: `dpage/pgadmin4:9.19` (`docker-compose.yml:237`), `redis/redisinsight:3.8` (`:299`) and `omniroute:3.8.52` (`:356`) are tag-only, and `.env` can override the digest-pinned `LLAMA_CPP_IMAGE` default (`:400`). The item records these as the documented exceptions with a decision each rather than claiming every reference is pinned; ADR-016's Residual risk already states that a tag can move between scans, and it should stop saying the three references are only "reported" once each has a disposition.
+- Evidence caveat for the implementer: `artifacts/compliance/2026-11-11/` currently holds only the Keycloak 26.8.2 spot check (`manifest.json` lists that one image, `cve.json` is the `bastion-agent-image-set` aggregate for it with 0 CRITICAL), so the failing baseline's 23 rows are not preserved as an artifact and the re-baseline overwrites the directory. Capture the failing output in the implementation notes before re-running if the before/after pair matters.
+- Open questions for triage: whether the optional `redis-ui` and `pgadmin` profiles belong in a shipped SBOM at all, or should be excluded from the inventory the way the `compliance` profile is (ADR-016 decision 1 excludes the scanner; the side cars are not the same case); whether OmniRoute has a maintained public image at all, or whether accept-risk is the only honest disposition; and whether a Go stdlib finding inside a helper binary such as `gosu` should be scanned at the OS-package level only, since it cannot be upgraded without upgrading the base image.
+- Scope: intake only. No image, compose, `trivy.yaml`, `config/otel/`, workflow, test or ADR edit is part of this capture.
