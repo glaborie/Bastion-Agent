@@ -254,6 +254,13 @@ jobs:
       # Docker socket). Exits 1 on an unsuppressed CRITICAL or an expired entry
       # in trivy.yaml; writes artifacts/compliance/<date>/.
       - name: Scan images and publish the SBOM
+        env:
+          # rigging/omniroute is built locally and has no registry to pull from
+          # (verified: the repository does not exist publicly). CI scans the
+          # other eight images; the manifest records this one as skipped, and a
+          # developer run scans it from the local daemon. Making OmniRoute
+          # rebuildable is the follow-up that removes this exception.
+          SCAN_SKIP_IMAGES: "rigging/omniroute*"
         run: ./scripts/scan_images.sh --build-missing
 
       - name: Upload image SBOM and CVE report

@@ -367,6 +367,8 @@ def test_aggregate_merges_sboms_and_tags_every_result(tmp_path: Path) -> None:
         str(raw),
         "--out",
         str(out),
+        "--skip-image",
+        "rigging/omniroute:3.8.52",
         "alpine:3.20",
         "busybox:1.36",
     )
@@ -388,6 +390,7 @@ def test_aggregate_merges_sboms_and_tags_every_result(tmp_path: Path) -> None:
         "alpine:3.20",
         "busybox:1.36",
     ]
+    assert manifest["skipped"] == ["rigging/omniroute:3.8.52"]
 
 
 def test_aggregate_refuses_an_empty_raw_directory(tmp_path: Path) -> None:

@@ -1423,7 +1423,9 @@ The documented scan command exits 0 against digest-pinned images that match `doc
 - Findings after the upgrades: the full nine-image scan reports **8 CRITICAL rows, all suppressed, 0 unsuppressed, exit 0**; Keycloak and the OTel collector are clean. The accepted rows are Postgres `CVE-2025-68121` (Go stdlib in `gosu`, not the server), RedisInsight `CVE-2026-59873` and `CVE-2026-90711` (latest published tag, optional profile), and OmniRoute `GHSA-2464-fhr4-w9xw`, `GHSA-673q-mjm6-r5xr`, `GHSA-cg2g-xh64-v4q7` (locally built app; 30-day expiry because the Next.js RCE is on a routing dependency).
 - OTel: all three overlays validate against 0.165.0 and the collector starts with `Everything is ready` at `service.version=0.165.0`; the config needed no edit.
 - Keycloak: the live upgrade exposed an H2 dev-file incompatibility, not a realm problem. The 26.0 volume made 26.8.2 crash-loop with `Wrong user name or password [28000-240]`; after backing up and removing `bastion-agent_keycloak_data`, Keycloak starts clean, imports the realm and `/realms/bastion` returns 200. The reset command is in `README.md` §Upgrading the pinned images.
-- Verification: `scripts/gate.sh` 10/10 (602 tests), `check_adrs.py` 16 ADRs, backlog 26 items. The `supply-chain` CI half of the last box is pending a push; it runs the same command that exited 0 locally.
+- Verification: `scripts/gate.sh` 10/10 (602 tests), `check_adrs.py` 16 ADRs, backlog 26 items.
+- CI exception: `rigging/omniroute` is built locally and `docker pull` is denied (the repository is not public). `scan_images.sh` gained `SCAN_SKIP_IMAGES`; the workflow skips that one pattern, the manifest records it under `skipped`, and a developer run scans it from the local daemon. Making OmniRoute rebuildable is a follow-up.
+ The `supply-chain` CI half of the last box is pending a push; it runs the same command that exited 0 locally.
 
 
 ### IDEA-026: Replace the self-hosted OpenLit trace backend with Opik

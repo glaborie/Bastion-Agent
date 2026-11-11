@@ -24,6 +24,7 @@ cd "$ROOT" || exit 2
 BUILD_MISSING=0
 KEEP_WORK=0
 COMPOSE_FILE="docker-compose.yml"
+SKIP_PATTERNS="${SCAN_SKIP_IMAGES:-}"
 while (($#)); do
     case "$1" in
         --build-missing) BUILD_MISSING=1 ;;
@@ -67,7 +68,20 @@ chmod 0777 "$WORK/raw"
 
 echo "scan-images: ${#IMAGES[@]} image reference(s)"
 pulled=()
+skipped=()
 for image in "${IMAGES[@]}"; do
+    skip=0
+    IFS=',' read -ra patterns <<< "$SKIP_PATTERNS"
+    for pattern in "${patterns[@]}"; do
+        [ -n "$pattern" ] || continue
+        # shellcheck disable=SC2053  # glob match is intended
+        if [[ "$image" == $pattern ]]; then skip=1; break; fi
+    done
+    if [ "$skip" -eq 1 ]; then
+        echo "scan-images: skip $image (SCAN_SKIP_IMAGES)" >&2
+        skipped+=("$image")
+        continue
+    fi
     if ! docker image inspect "$image" >/dev/null 2>&1; then
         if [ "$BUILD_MISSING" -eq 1 ] && [[ "$image" == bastion-agent:* ]]; then
             echo "scan-images: building $image"
@@ -100,9 +114,18 @@ for image in "${IMAGES[@]}"; do
     fi
 done
 
+if [ "${#skipped[@]}" -eq "${#IMAGES[@]}" ]; then
+    echo "scan-images: every image was skipped; nothing was scanned" >&2
+    exit 2
+fi
+
 echo "scan-images: aggregating reports"
-uv run python scripts/aggregate_trivy_reports.py \
-    --raw "$WORK/raw" --out "$OUT" "${IMAGES[@]}"
+aggregate_args=(--raw "$WORK/raw" --out "$OUT")
+for image in "${skipped[@]:-}"; do
+    [ -n "$image" ] || continue
+    aggregate_args+=(--skip-image "$image")
+done
+uv run python scripts/aggregate_trivy_reports.py "${aggregate_args[@]}" "${IMAGES[@]}"
 
 echo "scan-images: gate"
 set +e
