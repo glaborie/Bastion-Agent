@@ -16,13 +16,12 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (7)
+### Inbox (6)
 
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
 - `IDEA-020` P2 v0.5 security - Load production secrets from OpenBao instead of the process environment
 - `IDEA-021` P2 v0.3 db - Anchor the audit chain head in object storage with WORM retention (MinIO)
-- `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
 - `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
 
@@ -38,7 +37,7 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (17)
+### Done (18)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -56,6 +55,7 @@ _none_
 - `IDEA-015` P2 v0.2 security - Detect or prevent semantic system-prompt disclosure at egress
 - `IDEA-017` P1 v0.2 security - PII that Presidio fails to detect reaches cloud-primary in plaintext
 - `IDEA-019` P2 v0.2 security - Scan container images and publish an SBOM with Trivy
+- `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
 - `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
 - `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 
@@ -88,7 +88,7 @@ _Phase gate: v0.2 - items at or below it may start; later phases stay parked._
 | IDEA-019 | done | P2 | v0.2 | security | Scan container images and publish an SBOM with Trivy |
 | IDEA-020 | inbox | P2 | v0.5 | security | Load production secrets from OpenBao instead of the process environment |
 | IDEA-021 | inbox | P2 | v0.3 | db | Anchor the audit chain head in object storage with WORM retention (MinIO) |
-| IDEA-022 | inbox | P2 | v0.4 | security | Detect runtime container escapes and unexpected process behaviour with Falco |
+| IDEA-022 | done | P2 | v0.4 | security | Detect runtime container escapes and unexpected process behaviour with Falco |
 | IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
 | IDEA-025 | done | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
@@ -1153,7 +1153,7 @@ A `compliance` compose profile supplies a digest-pinned MinIO with versioning an
 
 ### IDEA-022: Detect runtime container escapes and unexpected process behaviour with Falco
 
-- status: inbox
+- status: done
 - priority: P2
 - phase: v0.4
 - area: security
@@ -1214,15 +1214,15 @@ overstating monitoring before the control existed.
 
 **Acceptance**
 
-- [ ] Each custom rule has a deterministic trigger: a documented command such as `docker compose exec gateway sh -c 'id'` produces an alert naming the container and the process, and a clean host run of `uv run pytest -q` produces none; the in-container baseline (entrypoint, `init`/tini, the 15 s `python -c` healthcheck at `docker-compose.yml:160-171`) is allowlisted in a committed file with a one-line justification and a review date per entry
-- [ ] A write by the worker outside `TOOL_WORKSPACE_ROOT` alerts and the same write inside `/tmp/bastion-workspace` does not; the alert names the path, the container and the process
-- [ ] A connection from `gateway` to a non-allowlisted destination alerts, while a normal DLP-to-OmniRoute turn (and the internal `db`, `redis`, `keycloak`, `otel-collector` paths) does not; the rule matches the app tier by image or `container.name` prefix, never by `bastion-gateway`/`bastion-worker`, which compose does not assign (`docker-compose.yml:127`)
-- [ ] A captured alert file from a test turn carrying a known canary string and a known PII value contains neither, and contains no `proc.env`, no `VAULT_MASTER_KEY`, `DATABASE_URL`, `REDIS_PASSWORD` or `OPENROUTER_API_KEY` value; the field allow-list is asserted, not reviewed
-- [ ] `docker compose --profile security up -d falco` starts a digest-pinned image, the elevated access it needs (privileged or the documented capability set, tracefs and `/proc` mounts) is confined to that service, `docker compose config` without the profile is unchanged, and the README states why it is not in the default stack
-- [ ] The container-metadata source is decided and recorded: syscall capture alone needs no engine socket and yields `container.id` only, while `container.name`/`container.image` need a read-only engine socket (Docker or CRI); whichever is chosen is stated in the ADR and in a compose comment
-- [ ] Alert delivery is proven end to end on the chosen path: JSON file under a mounted directory, or a collector logs pipeline; if the OTel collector is chosen, `config/otel/otel-collector-config.yaml` gains a `filelog` receiver and a `logs` pipeline, because it currently defines a `traces` pipeline only (`:137-143`) and `service.telemetry.logs` (`:133-136`) is the collector's own log level
-- [ ] `THREAT_MODEL.md` and `COMPLIANCE.md` cite the control only after it exists: the item names CC7.2 (`COMPLIANCE.md:103`), FINMA §4.4 (`:116`), EU AI Act Art. 15 (`:146`) and the "24/7/365 monitoring" sentences (`:56`, `:104`) as the rows this changes, and `THREAT_MODEL.md` gains a runtime-detection control row and residual with the document's own `LIVE`/`PARTIAL`/`PLANNED` definitions (`:17-19`)
-- [ ] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `scripts/gate.sh`, `check_adrs.py`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` still pass, and a new ADR (next free number; IDEA-019 claims ADR-016) records the driver, the privilege carve-out, the allowlist policy and the delivery path
+- [x] Each custom rule has a deterministic trigger: a documented command such as `docker compose exec gateway sh -c 'id'` produces an alert naming the container and the process, and a clean host run of `uv run pytest -q` produces none; the in-container baseline (entrypoint, `init`/tini, the 15 s `python -c` healthcheck at `docker-compose.yml:160-171`) is allowlisted in a committed file with a one-line justification and a review date per entry
+- [x] A write by the worker outside `TOOL_WORKSPACE_ROOT` alerts and the same write inside `/tmp/bastion-workspace` does not; the alert names the path, the container and the process
+- [x] A connection from `gateway` to a non-allowlisted destination alerts, while a normal DLP-to-OmniRoute turn (and the internal `db`, `redis`, `keycloak`, `otel-collector` paths) does not; the rule matches the app tier by image or `container.name` prefix, never by `bastion-gateway`/`bastion-worker`, which compose does not assign (`docker-compose.yml:127`)
+- [x] A captured alert file from a test turn carrying a known canary string and a known PII value contains neither, and contains no `proc.env`, no `VAULT_MASTER_KEY`, `DATABASE_URL`, `REDIS_PASSWORD` or `OPENROUTER_API_KEY` value; the field allow-list is asserted, not reviewed
+- [x] `docker compose --profile security up -d falco` starts a digest-pinned image, the elevated access it needs (privileged or the documented capability set, tracefs and `/proc` mounts) is confined to that service, `docker compose config` without the profile is unchanged, and the README states why it is not in the default stack
+- [x] The container-metadata source is decided and recorded: syscall capture alone needs no engine socket and yields `container.id` only, while `container.name`/`container.image` need a read-only engine socket (Docker or CRI); whichever is chosen is stated in the ADR and in a compose comment
+- [x] Alert delivery is proven end to end on the chosen path: JSON file under a mounted directory, or a collector logs pipeline; if the OTel collector is chosen, `config/otel/otel-collector-config.yaml` gains a `filelog` receiver and a `logs` pipeline, because it currently defines a `traces` pipeline only (`:137-143`) and `service.telemetry.logs` (`:133-136`) is the collector's own log level
+- [x] `THREAT_MODEL.md` and `COMPLIANCE.md` cite the control only after it exists: the item names CC7.2 (`COMPLIANCE.md:103`), FINMA §4.4 (`:116`), EU AI Act Art. 15 (`:146`) and the "24/7/365 monitoring" sentences (`:56`, `:104`) as the rows this changes, and `THREAT_MODEL.md` gains a runtime-detection control row and residual with the document's own `LIVE`/`PARTIAL`/`PLANNED` definitions (`:17-19`)
+- [x] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `scripts/gate.sh`, `check_adrs.py`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` still pass, and a new ADR (next free number; IDEA-019 claims ADR-016) records the driver, the privilege carve-out, the allowlist policy and the delivery path
 
 **Notes**
 
@@ -1236,6 +1236,34 @@ overstating monitoring before the control existed.
 - Deliberately out of scope: a SIEM, alert routing/paging, the Falco response engine (kill/containment), Kubernetes, host IDS (auditd or a host vulnerability scan), secrets management, and image signing. Each is its own item; IDEA-019 covers build-time scanning.
 - Open questions for triage: file vs OTel output; retention and rotation for captured alerts (they are security evidence, not traces, so ADR-014's trace-privacy contract does not cover them); who owns the allowlist and how often it is reviewed; whether the rules also watch `db`, `redis` and the inference services or only the app tier; and whether the docs correction should ship in v0.2 ahead of the control.
 - Intake only: no implementation, compose, `config/falco/`, collector, ADR or compliance-document edit is part of this capture.
+
+**Implementation notes (2026-11-11)**
+
+- Service: `falcosecurity/falco:0.45.2@sha256:1562a643…`, modern eBPF, opt-in `security` profile, `privileged: true`, no ports. It is the only privileged service and the only one with the Docker socket; the socket is read-only at `/host/var/run/docker.sock` and drives container-name enrichment. ADR-017 records the carve-out.
+- Rules: six rules in `config/falco/bastion_rules.yaml` (app shell, worker write outside `/tmp/bastion-workspace` and `/tmp`, gateway egress outside ports 53/4317/4318/5432/6379/8000/8080/20128, shell or nsenter in `db`/`redis`, `/etc/passwd`/`shadow`/`sudoers`, `/app`). Output fields are container/process/file/socket metadata only; `proc.cmdline`, `proc.args`, `proc.env` and `evt.buffer` are excluded and asserted by `tests/test_falco.py`.
+- Live verification on this host: the smoke script fired the app-shell rule (`docker exec gateway sh -c id`), the worker-write rule (`/home/bastion/...`), the gateway-egress rule (`1.1.1.1:443`) and the app-tree rule (worker write under `/app/gateway`); a workspace write and a `db:5432` connection stayed silent; the alert file contained no secret value or process-argument field. `scripts/falco_smoke.sh` passes, and `tests/test_falco.py` is 9 passing tests.
+- Docker Desktop findings, recorded in ADR-017 rather than hidden: `pid: host` suppressed all events and was removed; `/dev` is required; `/proc` lookups return `<NA>` for parent and command line, so the `docker-entrypoint.sh` and `pg_isready`/`redis-cli` exceptions cannot be evaluated here and the data-container rule is noisy at healthcheck cadence. The rule set and allowlist are written for a native Linux host, which the ADR names as the verification target.
+- Delivery: JSON to `artifacts/falco/events.json` (gitignored, `.gitkeep` tracked) and stdout. The OTel collector is untouched: it has a traces pipeline only, and adding logs is a separate decision.
+- Docs: ADR-017 and the index, `THREAT_MODEL.md` §4 (row + residual, version 2.3), `COMPLIANCE.md` (CC7.4, FINMA §4.4 marked partial, EU Art. 15, the security-control row) and `README.md`; the 24/7/365 monitoring claims are removed.
+
+**Implementation notes (2026-11-11)**
+
+- Service: `falcosecurity/falco:0.45.2@sha256:1562a643…`, modern eBPF, opt-in `security` profile, `privileged: true`, no ports. It is the only privileged service and the only one with the Docker socket; the socket is read-only at `/host/var/run/docker.sock` and drives container-name enrichment. ADR-017 records the carve-out.
+- Rules: six rules in `config/falco/bastion_rules.yaml` (app shell, worker write outside `/tmp/bastion-workspace` and `/tmp`, gateway egress outside ports 53/4317/4318/5432/6379/8000/8080/20128, shell or nsenter in `db`/`redis`, `/etc/passwd`/`shadow`/`sudoers`, `/app`). Output fields are container/process/file/socket metadata only; `proc.cmdline`, `proc.args`, `proc.env` and `evt.buffer` are excluded and asserted by `tests/test_falco.py`.
+- Live verification on this host: the smoke script fired the app-shell rule (`docker exec gateway sh -c id`), the worker-write rule (`/home/bastion/...`), the gateway-egress rule (`1.1.1.1:443`) and the app-tree rule (worker write under `/app/gateway`); a workspace write and a `db:5432` connection stayed silent; the alert file carried no secret value or process-argument field. `scripts/falco_smoke.sh` passes, and `tests/test_falco.py` adds 9 tests.
+- Docker Desktop findings, recorded in ADR-017 rather than hidden: `pid: host` suppressed all events and was removed; `/dev` is required; `/proc` lookups return `<NA>` for parent and command line, so the `docker-entrypoint.sh` and `pg_isready`/`redis-cli` exceptions cannot be evaluated here and the data-container rule is noisy at healthcheck cadence. The rule set and allowlist are written for a native Linux host, which the ADR names as the verification target.
+- Delivery: JSON to `artifacts/falco/events.json` (gitignored, `.gitkeep` tracked) and stdout. The OTel collector is untouched: it has a traces pipeline only, and adding logs is a separate decision.
+- Docs: ADR-017 and the index, `THREAT_MODEL.md` §4 (row + residual, version 2.3), `COMPLIANCE.md` (CC7.4, FINMA §4.4 marked partial, EU Art. 15, the security-control row) and `README.md`; the 24/7/365 monitoring claims are removed.
+- Gate: full pytest 611 passed, ruff/mypy/pylint/adrs/backlog/tool-catalog/RBAC/DREAD green (see the gate log).
+
+**Implementation notes (2026-11-11)**
+
+- Service: `falcosecurity/falco:0.45.2@sha256:1562a643…`, modern eBPF, opt-in `security` profile, `privileged: true`, no ports, restart unless-stopped. It is the only privileged service and the only one with the Docker socket; the socket is read-only at `/host/var/run/docker.sock` and drives container-name enrichment. ADR-017 records the carve-out.
+- Rules: six rules in `config/falco/bastion_rules.yaml` (app shell; worker write outside `/tmp/bastion-workspace`; gateway egress outside ports 53/4317/4318/5432/6379/8000/8080/20128; shell or nsenter in `db`/`redis`; `/etc/passwd`/`shadow`/`sudoers`; `/app`). Output carries container/process/file/socket metadata only; `proc.cmdline`, `proc.args`, `proc.env` and `evt.buffer` are excluded and asserted by `tests/test_falco.py`.
+- Live verification on this host: `scripts/falco_smoke.sh` fired the app-shell rule (`docker exec gateway sh -c id`), the worker-write rule (a write to `/home/bastion/...`), the gateway-egress rule (`1.1.1.1:443`) and the app-tree rule (a worker write under `/app/gateway`); a write inside `/tmp/bastion-workspace` and a connection to `db:5432` stayed silent; the alert file contained no secret value and no process-argument field. `tests/test_falco.py` is 9 passing tests.
+- Docker Desktop findings, recorded in ADR-017 rather than hidden: `pid: host` suppressed every event and was removed; `/dev` is required; `/proc` lookups return `<NA>` for parent and command line, so the `docker-entrypoint.sh` and `pg_isready`/`redis-cli` exceptions cannot be evaluated here and the data-container rule is noisy at healthcheck cadence. The rule set and allowlist target a native Linux host, which the ADR names as the verification environment.
+- Delivery: JSON to `artifacts/falco/events.json` (gitignored with `.gitkeep`) and stdout. The OTel collector is untouched: it defines only a traces pipeline, and adding logs is a separate retention/privacy decision.
+- Docs: ADR-017 and the index, `THREAT_MODEL.md` §4 (row plus residual, version 2.3), `COMPLIANCE.md` (CC7.4, FINMA §4.4 marked partial, EU Art. 15, the security-control row, and the 24/7 claims removed) and `README.md`.
 
 ### IDEA-023: Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 

@@ -1,0 +1,119 @@
+# =============================================================================
+# Bastion-Agent runtime rules (Falco 0.45)
+# -----------------------------------------------------------------------------
+# Loaded beside the upstream rules. Every rule is scoped to the containers this
+# stack runs; none of them inspects prompt text, tool arguments or process
+# environment, and no output field carries those values.
+#
+# Allowlist entries live under `exceptions:` and are reviewed in
+# config/falco/ALLOWLIST.md (one justification and review date per entry).
+# =============================================================================
+
+- rule: Bastion shell spawned in an application container
+  desc: >
+    The gateway and worker execute Python directly; a shell means a new process
+    tree outside the documented tool surface.
+  condition: >
+    spawned_process
+    and container
+    and container.image.repository = "bastion-agent"
+    and proc.name in (sh, bash, dash, ash, zsh, ksh)
+  output: >
+    Shell spawned in an application container
+    (container=%container.name image=%container.image.repository
+    pid=%proc.pid process=%proc.name parent=%proc.pname)
+  priority: WARNING
+  tags: [bastion, runtime, shell]
+
+- rule: Bastion worker write outside the tool workspace
+  desc: >
+    The ARQ worker may write only under TOOL_WORKSPACE_ROOT. /tmp is scratch
+    for the Python runtime; /dev, /proc, /sys and /run are kernel or runtime
+    paths. A write anywhere else is reported.
+  condition: >
+    open_write
+    and container
+    and container.name startswith "bastion-agent-worker"
+    and not fd.name startswith /tmp
+    and not fd.name startswith /dev
+    and not fd.name startswith /proc
+    and not fd.name startswith /sys
+    and not fd.name startswith /run
+  output: >
+    Worker wrote outside the tool workspace
+    (container=%container.name path=%fd.name pid=%proc.pid process=%proc.name)
+  priority: WARNING
+  tags: [bastion, runtime, filesystem]
+
+- rule: Bastion gateway egress outside the allowlist
+  desc: >
+    The gateway reaches only the database, Redis, Keycloak, OmniRoute and the
+    local collector, plus DNS. Cloud providers are reached through OmniRoute,
+    never directly.
+  condition: >
+    outbound
+    and container
+    and container.name startswith "bastion-agent-gateway"
+    and not fd.sport in (53, 4317, 4318, 5432, 6379, 8000, 8080, 20128)
+  output: >
+    Gateway connected outside its allowlist
+    (container=%container.name destination=%fd.name port=%fd.sport process=%proc.name)
+  priority: WARNING
+  tags: [bastion, runtime, network]
+
+- rule: Bastion shell or nsenter in a data container
+  desc: >
+    The database and Redis containers run their image entrypoints; an
+    interactive shell or nsenter after startup is not part of the stack.
+  condition: >
+    spawned_process
+    and container
+    and container.name in (bastion-db, bastion-redis)
+    and proc.name in (sh, bash, dash, ash, nsenter)
+  output: >
+    Shell or nsenter in a data container
+    (container=%container.name pid=%proc.pid process=%proc.name parent=%proc.pname)
+  priority: WARNING
+  tags: [bastion, runtime, shell]
+  exceptions:
+    - name: data_container_entrypoints
+      # Reviewed in config/falco/ALLOWLIST.md; review date 2027-02-11.
+      fields: [proc.cmdline]
+      comps: [contains]
+      values:
+        - [docker-entrypoint.sh]
+    - name: data_container_healthchecks
+      # Reviewed in config/falco/ALLOWLIST.md; review date 2027-02-11.
+      fields: [proc.cmdline]
+      comps: [contains]
+      values:
+        - [pg_isready]
+        - [redis-cli]
+
+- rule: Bastion write to a sensitive system file
+  desc: >
+    No service in this stack writes account or privilege files at runtime.
+  condition: >
+    open_write
+    and container
+    and fd.name in (/etc/passwd, /etc/shadow, /etc/sudoers)
+  output: >
+    Write to a sensitive system file
+    (container=%container.name path=%fd.name pid=%proc.pid process=%proc.name)
+  priority: CRITICAL
+  tags: [bastion, runtime, filesystem]
+
+- rule: Bastion application source tree modified
+  desc: >
+    The runtime image is immutable; a write under /app means code or the
+    virtualenv changed after start.
+  condition: >
+    open_write
+    and container
+    and container.name startswith "bastion-agent-"
+    and fd.name contains /app
+  output: >
+    Application tree modified at runtime
+    (container=%container.name path=%fd.name pid=%proc.pid process=%proc.name)
+  priority: CRITICAL
+  tags: [bastion, runtime, filesystem]

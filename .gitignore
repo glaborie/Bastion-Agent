@@ -48,3 +48,7 @@ artifacts/gate/*
 # --- Compliance scan artifacts (SBOM, CVE reports) ---------------------------
 artifacts/compliance/*
 !artifacts/compliance/.gitkeep
+
+# --- Falco runtime alerts ----------------------------------------------------
+artifacts/falco/*
+!artifacts/falco/.gitkeep

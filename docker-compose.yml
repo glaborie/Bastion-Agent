@@ -526,6 +526,57 @@ services:
     networks:
       - bastion-net
 
+  # ---------------------------------------------------------------------------
+  # Falco runtime detection (opt-in, `security` profile).
+  #
+  # The one privileged service in the stack: modern eBPF needs CAP_BPF and
+  # CAP_PERFMON, which Docker does not grant through cap_add. The carve-out is
+  # confined here, documented in ADR-017, and the default `docker compose up`
+  # does not start it. The Docker socket is mounted read-only so alerts carry
+  # container names; the scanner (IDEA-019) deliberately has no socket.
+  # ---------------------------------------------------------------------------
+  falco:
+    image: falcosecurity/falco:0.45.2@sha256:1562a643953f938e02f47319b5214d93a235f11f646d60e9b8a516fd5a64698e
+    container_name: bastion-falco
+    profiles: [security]
+    privileged: true
+    command:
+      - /usr/bin/falco
+      - -o
+      - engine.kind=modern_ebpf
+      - -o
+      - load_plugins[0]=container
+      - -o
+      - rule_matching=all
+      - -o
+      - json_output=true
+      - -o
+      - json_include_output_property=true
+      - -o
+      - syslog_output.enabled=false
+      - -o
+      - file_output.enabled=true
+      - -o
+      - file_output.keep_alive=false
+      - -o
+      - file_output.filename=/var/log/falco/events.json
+    volumes:
+      # Kernel and process visibility. Both are read-only; the probe attaches
+      # through the privileged capabilities, not through writes to these paths.
+      - /proc:/host/proc:ro
+      - /etc:/host/etc:ro
+      - /dev:/host/dev
+      - /sys/kernel/tracing:/sys/kernel/tracing:ro
+      # Container metadata only. Read-only, and only this service gets it.
+      - /var/run/docker.sock:/host/var/run/docker.sock:ro
+      - ./config/falco/bastion_rules.yaml:/etc/falco/rules.d/99-bastion.yaml:ro
+      - ./artifacts/falco:/var/log/falco
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    networks:
+      - bastion-net
+
 volumes:
   pgdata:
   redisdata:

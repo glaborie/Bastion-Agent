@@ -2,7 +2,7 @@
 
 Bastion-Agent threat model
 
-- Version: 2.2
+- Version: 2.3
 - Last updated: 2026-11-11
 - Reviewed against: commit `fa655d6`
 - Author: Guillaume Laborie
@@ -89,14 +89,25 @@ Two facts shape the model:
 | Hash-chained audit ledger and verification | LIVE | `db/audit.py`, `/api/audit/verify` |
 | Four-eyes approval state machine | LIVE | `agent/tools/execution.py` |
 | Tool catalog allow-list (`docs/tools/v1.json`) | LIVE | runtime filtering, startup drift check, `-32003` |
-| Dependency audit against OSV | PARTIAL | script exists, not run in CI |
+| Dependency audit against OSV and Trivy image scan with SBOM | LIVE | `supply-chain` job, ADR-016 |
+| Runtime syscall detection (Falco, opt-in `security` profile) | PARTIAL | `config/falco/`, ADR-017 |
 | Test and eval gate in CI | PLANNED | CI runs pylint with `--exit-zero` only |
 | Kill-switch tiers | PLANNED | ADR-009 only |
 | Per-principal request rate limits (`dashboard` 60/min, `chat` 120/min) | LIVE | `gateway/rate_limit.py`, ADR-013 |
+| Runtime syscall detection (Falco, opt-in `security` profile) | PARTIAL | `config/falco/`, ADR-017 |
 | Per-principal token and cost budgets | PLANNED | none found |
 | Signed or re-derived identity on queued jobs | PLANNED | see T8 |
 | External anchoring of the audit chain | PLANNED | see T10 |
 | Langfuse and Phoenix exporters | PLANNED | collector ships with the `debug` exporter |
+
+Runtime detection is the only control in this table that is not started by the default
+`docker compose up`: Falco runs privileged, so it is opt-in and confined to the `security`
+profile. On a Docker Desktop host the syscall rules fire but `/proc` metadata (`proc.cmdline`,
+`proc.pname`) can be unavailable, so the data-container healthcheck exceptions are effective
+on a native Linux host only. The residual is that the detector observes and does not contain,
+and a host-root attacker can stop it.
+
+Runtime detection is opt-in: `docker compose --profile security up -d falco` starts one privileged container that watches the stack's syscalls and writes JSON alerts to `artifacts/falco/events.json`. It is a witness, not containment: there is no kill, quarantine, paging or SIEM integration, and the container can be stopped by anyone who controls the host. On Docker Desktop the syscall rules work but `/proc` metadata can be unavailable, so allowlist entries that depend on `proc.cmdline` are ineffective there; the control is fully verifiable on a native Linux host.
 
 ## 5. Threats
 
