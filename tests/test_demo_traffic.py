@@ -95,6 +95,24 @@ def test_a_blocked_turn_is_evidence_not_a_failure(capsys: pytest.CaptureFixture[
     assert rows[0]["status"] == 403
 
 
+def test_an_injection_block_is_evidence_not_an_answer() -> None:
+    """A 200 with blocked=true is a guardrail verdict, not a model answer."""
+    row = summarize(
+        "injection",
+        200,
+        {
+            "blocked": True,
+            "block_reason": "prompt_injection_detected",
+            "message": {"role": "assistant", "content": "Request blocked: ..."},
+            "route": "local-llama",
+            "classification": "CONFIDENTIAL",
+        },
+    )
+    assert row["outcome"] == "blocked"
+    assert row["detail"] == "prompt_injection_detected"
+    assert "content" not in row
+
+
 def test_a_response_the_demo_cannot_read_is_a_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

@@ -50,6 +50,9 @@
 
   const renderBadges = (data) => {
     meta.replaceChildren();
+    if (data.blocked) {
+      meta.append(element("span", "badge badge-bad", "blocked"));
+    }
     const route = element(
       "span",
       `badge ${data.route === "local-llama" ? "badge-bad" : "badge-ok"}`,
@@ -110,6 +113,16 @@
         return;
       }
       const data = await response.json();
+      if (data.blocked) {
+        /* The notice is gateway-authored. Showing it is the point; resending it
+           as an assistant turn would put the hostile turn back in the history. */
+        history = [];
+        renderTurn("assistant", data.message.content);
+        renderBadges(data);
+        input.value = "";
+        setStatus("Prompt injection detected; the model answer was withheld.", "error");
+        return;
+      }
       history.push(data.message);
       renderTurn("assistant", data.message.content);
       renderBadges(data);

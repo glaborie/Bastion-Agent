@@ -175,7 +175,7 @@ Bastion-Agent/
 
 ### 3.5 Cryptographic Audit Trail (`db/models.py`)
 - Append-only PostgreSQL table `audit_logs`:
-  - Fields: `id`, `timestamp`, `session_id`, `actor_id`, `event_type` (`INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION`, `TOOL_REQUESTED`, `APPROVAL_GRANTED`, `EGRESS_FILTERED`), `payload_hash` (SHA-256), `metadata_json`, `previous_hash`, `record_hash`.
+  - Fields: `id`, `timestamp`, `session_id`, `actor_id`, `event_type` (`INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION`, `TOOL_REQUESTED`, `APPROVAL_GRANTED`, `EGRESS_FILTERED`, `RESPONSE_SENT`, `SECURITY_INCIDENT`, `ESCROW_ACCESSED`), `payload_hash` (SHA-256), `metadata_json`, `previous_hash`, `record_hash`.
   - `record_hash` computed as `SHA256(id + timestamp + actor_id + event_type + payload_hash + previous_hash)`.
 
 ### 3.6 Centralized Command Control Dashboard (`gateway/dashboard/`)

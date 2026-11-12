@@ -1,6 +1,6 @@
 """SQLAlchemy 2.0 persistence models for Bastion-Agent.
 
-Two append-only-in-spirit tables back the control plane:
+Three append-only-in-spirit tables back the control plane:
 
 ``audit_logs``
     A tamper-evident, SHA-256 hash-chained ledger. Every record commits the hash
@@ -11,6 +11,12 @@ Two append-only-in-spirit tables back the control plane:
     Suspended mutating tool calls awaiting four-eyes human approval. The database
     itself rejects self-approval via a ``CHECK`` constraint, so the separation-of-
     duties rule holds even if an application-level check is bypassed.
+
+``payload_escrow``
+    A pre-production-only, short-lived AES-256-GCM copy of a payload the ledger
+    hashed. It is deliberately a *separate* table: ``audit_logs`` stays hash-only
+    and append-only, the chain is never rewritten, and expiry is a row delete
+    here rather than an update there (ADR-005 decision 7).
 
 The pure functions in this module (hashing, canonicalisation, token signing) are
 deliberately side-effect free so they can be property-tested and reused by both
@@ -34,7 +40,9 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     DateTime,
+    ForeignKey,
     Index,
+    LargeBinary,
     MetaData,
     Sequence,
     String,
@@ -104,6 +112,25 @@ class AuditEventType(StrEnum):
     APPROVAL_REJECTED = "APPROVAL_REJECTED"
     EGRESS_FILTERED = "EGRESS_FILTERED"
     SECURITY_INCIDENT = "SECURITY_INCIDENT"
+    #: An ``admin`` read one payload-escrow row (ADR-005 decision 7). The
+    #: metadata carries the audit id, kind and outcome — never the plaintext.
+    ESCROW_ACCESSED = "ESCROW_ACCESSED"
+    #: The sanitized answer handed to the caller (ADR-005 decision 8). The
+    #: payload is the delivered text, or its configured prefix when truncated.
+    RESPONSE_SENT = "RESPONSE_SENT"
+
+
+class EscrowKind(StrEnum):
+    """What a ``payload_escrow`` row holds.
+
+    ``input_raw`` is the raw pre-DLP request (IDEA-016). ``egress_delivered`` is
+    the sanitized answer after egress, which is what the user actually saw
+    (IDEA-029). Both use the same key, AAD shape and retention; the kind is part
+    of the associated data so a ciphertext cannot be relabelled.
+    """
+
+    INPUT_RAW = "input_raw"
+    EGRESS_DELIVERED = "egress_delivered"
 
 
 class ApprovalStatus(StrEnum):
@@ -152,6 +179,26 @@ def canonical_timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="microseconds")
 
 
+def canonical_payload_bytes(payload: Any) -> bytes:
+    """Serialise a payload in the canonical form every hash and escrow uses.
+
+    ``bytes``/``str`` are taken verbatim; everything else becomes deterministic
+    JSON (sorted keys, no whitespace). The escrow stores exactly these bytes, so
+    hashing the decrypted payload reproduces ``payload_hash`` bit for bit.
+    """
+    if isinstance(payload, bytes):
+        return payload
+    if isinstance(payload, str):
+        return payload.encode("utf-8")
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
+
+
 def hash_payload(payload: Any) -> str:
     """SHA-256 a payload in a canonical, order-independent form.
 
@@ -159,19 +206,7 @@ def hash_payload(payload: Any) -> str:
     deterministic JSON (sorted keys, no whitespace) so that semantically equal
     payloads always produce the same digest.
     """
-    if isinstance(payload, bytes):
-        material = payload
-    elif isinstance(payload, str):
-        material = payload.encode("utf-8")
-    else:
-        material = json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            default=str,
-        ).encode("utf-8")
-    return hashlib.sha256(material).hexdigest()
+    return hashlib.sha256(canonical_payload_bytes(payload)).hexdigest()
 
 
 def compute_record_hash(
@@ -355,6 +390,70 @@ event.listen(
     DDL(_AUDIT_APPEND_ONLY_DROP_FUNCTION).execute_if(  # type: ignore[no-untyped-call]
         dialect="postgresql"
     ),
+)
+
+
+#: The event vocabulary is a VARCHAR CHECK constraint, not a native enum, so a
+#: new ``AuditEventType`` member needs the constraint widened on databases that
+#: already exist (``create_all`` never alters one). The block is idempotent: it
+#: rewrites the constraint only when the newest member is missing, so a fresh
+#: database and every later boot do no work. New members must be appended to
+#: ``AuditEventType`` and added to the list below; ``tests/test_settings.py``
+#: fails if the two drift apart.
+AUDIT_EVENT_VOCABULARY_DDL: Final[tuple[str, ...]] = (
+    """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_audit_logs_audit_event_type'
+          AND pg_get_constraintdef(oid) LIKE '%RESPONSE_SENT%'
+    ) THEN
+        ALTER TABLE audit_logs
+            DROP CONSTRAINT IF EXISTS ck_audit_logs_audit_event_type;
+        ALTER TABLE audit_logs
+            ADD CONSTRAINT ck_audit_logs_audit_event_type
+            CHECK (event_type IN (
+                'INPUT_RECEIVED',
+                'DLP_REDACTION',
+                'ROUTING_DECISION',
+                'TOOL_REQUESTED',
+                'TOOL_EXECUTED',
+                'APPROVAL_REQUESTED',
+                'APPROVAL_GRANTED',
+                'APPROVAL_REJECTED',
+                'EGRESS_FILTERED',
+                'SECURITY_INCIDENT',
+                'ESCROW_ACCESSED',
+                'RESPONSE_SENT'
+            ));
+    END IF;
+END
+$$;
+""",
+)
+
+#: The escrow kind is a VARCHAR CHECK constraint for the same reason. A database
+#: created before ``egress_delivered`` existed already has the table, and
+#: ``create_all`` never widens its constraint.
+ESCROW_KIND_DDL: Final[tuple[str, ...]] = (
+    """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_payload_escrow_escrow_kind'
+          AND pg_get_constraintdef(oid) LIKE '%egress_delivered%'
+    ) THEN
+        ALTER TABLE payload_escrow
+            DROP CONSTRAINT IF EXISTS ck_payload_escrow_escrow_kind;
+        ALTER TABLE payload_escrow
+            ADD CONSTRAINT ck_payload_escrow_escrow_kind
+            CHECK (kind IN ('input_raw', 'egress_delivered'));
+    END IF;
+END
+$$;
+""",
 )
 
 
@@ -546,6 +645,72 @@ class PendingApproval(Base):
         return (
             f"PendingApproval(ticket_id={self.ticket_id!r}, tool={self.tool_name!r}, "
             f"status={self.status!r})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Payload escrow (ADR-005 decision 7)
+# ---------------------------------------------------------------------------
+
+
+class PayloadEscrow(Base):
+    """A short-lived, encrypted copy of one hashed audit payload.
+
+    Pre-production debugging only. The row is keyed to the audit record it
+    explains, but it lives outside ``audit_logs``: the ledger stays hash-only and
+    append-only, so writing or purging escrow rows cannot change a chain link.
+    ``payload_hash`` is copied from the ledger row, and the writer refuses to
+    store a payload whose digest differs, so a decrypt can always be checked
+    against the ledger.
+
+    Access is deliberately not append-only: expiry deletes the row (and its
+    plaintext capability) outright. The surviving evidence is the ledger row.
+    """
+
+    __tablename__ = "payload_escrow"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    #: The ledger record this ciphertext explains. RESTRICT because the ledger
+    #: trigger already forbids deleting the parent; the FK only prevents an
+    #: orphan escrow row from being written.
+    audit_log_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("audit_logs.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    #: Access scope of the escrowed event (ADR-015); a read must match it.
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kind: Mapped[EscrowKind] = mapped_column(
+        _enum_column("escrow_kind", EscrowKind), nullable=False
+    )
+    #: Copied from ``audit_logs.payload_hash`` so a decrypt is verifiable alone.
+    payload_hash: Mapped[str] = mapped_column(String(_HASH_HEX_LENGTH), nullable=False)
+    #: Per-record AES-GCM nonce and the ciphertext it authenticates.
+    nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        server_default=text("now()"),
+    )
+    #: Set by the writer from ``PAYLOAD_ESCROW_TTL_SECONDS``; the purge deletes
+    #: rows at or past it. The column is indexed because the purge is a range
+    #: delete on every worker sweep.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("payload_hash ~ '^[0-9a-f]{64}$'", name="payload_hash_is_sha256_hex"),
+        CheckConstraint("octet_length(nonce) = 12", name="nonce_is_12_bytes"),
+        CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+        Index("ix_payload_escrow_expires_at", "expires_at"),
+        Index("ix_payload_escrow_tenant_created_at", "tenant_id", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"PayloadEscrow(id={self.id!r}, audit_log_id={self.audit_log_id!r}, kind={self.kind!r})"
         )
 
 

@@ -168,6 +168,15 @@ def token_for(client: httpx.Client, demo: Demo, username: str) -> str:
 
 def summarize(label: str, status_code: int, body: Any) -> dict[str, Any]:
     """One machine-readable row: the routing evidence, never the model's text."""
+    if isinstance(body, dict) and body.get("blocked") is True:
+        return {
+            "label": label,
+            "outcome": "blocked",
+            "status": status_code,
+            "detail": body.get("block_reason") or body.get("reason") or "blocked",
+            "route": body.get("route"),
+            "classification": body.get("classification"),
+        }
     if isinstance(body, dict) and "message" in body:
         message = body.get("message")
         content = message.get("content") if isinstance(message, dict) else None

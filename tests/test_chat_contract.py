@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -13,6 +15,8 @@ from gateway.routers.chat import (
     _completion_attributes,
     _vault_session,
 )
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_completion_attributes_split_provider_and_drop_unset_values() -> None:
@@ -102,3 +106,11 @@ def test_message_and_conversation_limits_are_enforced() -> None:
 def test_empty_conversation_is_rejected() -> None:
     with pytest.raises(ValidationError):
         ChatRequest.model_validate({"messages": []})
+
+
+def test_dashboard_chat_client_handles_a_blocked_answer() -> None:
+    """A blocked notice must be shown, not appended to the resent history."""
+    script = (ROOT / "gateway" / "dashboard" / "static" / "chat.js").read_text(encoding="utf-8")
+    assert "data.blocked" in script
+    assert "history = [];" in script
+    assert "Prompt injection detected" in script

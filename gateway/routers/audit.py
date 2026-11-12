@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -11,8 +12,14 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.audit import ChainVerification, verify_audit_chain
-from db.models import AuditLog
+from db.audit import ChainVerification, append_audit_event, verify_audit_chain
+from db.escrow import (
+    EscrowDecryptionError,
+    EscrowExpiredError,
+    EscrowNotFoundError,
+    read_payload_escrow,
+)
+from db.models import AuditEventType, AuditLog
 from db.session import get_db_session
 from gateway.audit_service import (
     DEFAULT_PAGE_SIZE,
@@ -26,6 +33,8 @@ from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 from gateway.dashboard.templating import render
 from gateway.rate_limit import rate_limit
 from gateway.web import is_htmx
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     tags=["audit"],
@@ -45,6 +54,20 @@ class AuditRecordOut(BaseModel):
     previous_hash: str
     record_hash: str
     metadata_json: dict[str, Any]
+
+
+class EscrowPayloadOut(BaseModel):
+    """A decrypted escrow payload, returned only to an ``admin``.
+
+    The response is deliberately not cached by the client: it is plaintext PII
+    recovered from the debugging store (ADR-005 decision 7).
+    """
+
+    audit_log_id: int
+    kind: str
+    payload_hash: str
+    expires_at: datetime
+    payload: Any
 
 
 @router.get("/api/audit", summary="Paginated audit ledger")
@@ -107,6 +130,71 @@ async def verify_chain(
         "first_bad_id": result.first_bad_id,
         "reason": result.reason,
     }
+
+
+@router.post(
+    "/api/audit/{record_id}/escrow",
+    response_model=EscrowPayloadOut,
+    summary="Decrypt one escrowed payload (pre-production only)",
+    responses={
+        403: {"description": "Only the admin role may read escrowed payloads"},
+        404: {"description": "No escrow row for this audit record"},
+        409: {"description": "Ciphertext failed authentication"},
+        410: {"description": "The escrow retention window has expired"},
+    },
+)
+async def read_escrow(
+    record_id: int,
+    context: AuthContext = Depends(require_csrf),
+    _authorized: AuthContext = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db_session),
+) -> EscrowPayloadOut:
+    """Recover the plaintext behind one audit record's ``payload_hash``.
+
+    Admin-only and never cached: the response is PII by design. Every successful
+    read appends ``ESCROW_ACCESSED`` in the same transaction, with the record id
+    and outcome but never the plaintext. A refused caller never reaches this
+    handler, so no row can claim a read that did not happen.
+    """
+    try:
+        escrow = await read_payload_escrow(
+            session, audit_log_id=record_id, tenant_id=context.tenant_id
+        )
+    except EscrowNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail="no escrow payload for this audit record"
+        ) from exc
+    except EscrowExpiredError as exc:
+        raise HTTPException(status_code=410, detail="escrow payload has expired") from exc
+    except EscrowDecryptionError as exc:
+        logger.error(
+            "Escrow payload failed authentication",
+            extra={"audit_log_id": record_id, "actor_id": context.actor_id},
+        )
+        raise HTTPException(status_code=409, detail="escrow payload failed authentication") from exc
+
+    evidence = {
+        "audit_log_id": escrow.audit_log_id,
+        "kind": escrow.kind.value,
+        "outcome": "decrypted",
+    }
+    await append_audit_event(
+        session,
+        actor_id=context.actor_id,
+        tenant_id=context.tenant_id,
+        event_type=AuditEventType.ESCROW_ACCESSED,
+        payload=evidence,
+        metadata_json=evidence,
+    )
+    await session.commit()
+
+    return EscrowPayloadOut(
+        audit_log_id=escrow.audit_log_id,
+        kind=escrow.kind.value,
+        payload_hash=escrow.payload_hash,
+        expires_at=escrow.expires_at,
+        payload=escrow.payload,
+    )
 
 
 @router.get("/api/sessions/{session_id}/timeline", summary="Session audit timeline")

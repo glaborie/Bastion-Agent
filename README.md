@@ -180,6 +180,7 @@ transaction, with a hash of the free-text reason (never the text itself).
 | POST | `/api/approvals/{id}/action` | operator or admin + CSRF (cookie auth) |
 | GET | `/api/audit` | operator or admin (JSON/HTML, cursor paging) |
 | POST | `/api/audit/verify` | operator or admin + CSRF; full chain verification |
+| POST | `/api/audit/{id}/escrow` | admin + CSRF; decrypt one pre-production escrow row and audit the read |
 | GET | `/api/sessions/{id}/timeline` | operator or admin |
 | GET | `/api/evals/latest` | operator or admin |
 | GET | `/auth/login`, `/auth/callback`, `/auth/logout` | public flow / session |
@@ -469,16 +470,26 @@ or `admin`, and session-cookie callers must also present the CSRF token. The
 stages run in a fixed order and each one is audited before the next starts:
 
 1. `INPUT_RECEIVED` — message count, roles and size; the request itself is
-   stored only as a SHA-256 hash.
+   stored only as a SHA-256 hash (pre-production may add the encrypted
+   `payload_escrow` copy described in ADR-005 decision 7).
 2. Presidio redaction → `DLP_REDACTION` with entity types and counts.
 3. Classification of the **raw** text → `ROUTING_DECISION`. Redaction must not
    run first: a bare IBAN becomes `{{ENTITY:IBAN_CODE_1}}`, which weakens the
-   privacy signal (measured 0.582 → 0.201).
+   privacy signal (measured 0.582 → 0.201). A prompt at or above the injection
+   threshold is refused here, before the model call: the caller gets HTTP 200
+   with `blocked: true`, `block_reason: "prompt_injection_detected"` and a
+   gateway-authored notice, `EGRESS_FILTERED` records `blocked: true`, and
+   `SECURITY_INCIDENT` records the routing-stage verdict. No answer exists that
+   could fabricate a system prompt.
 4. Canary injection and fencing of `tool` messages as `<untrusted_content>`.
 5. Model call on the selected alias.
 6. `EGRESS_FILTERED` — canary scan, quarantine check and marker restoration.
    A billed response also writes `SECURITY_INCIDENT` and returns `502` with no
    model text; a quarantined session returns `403` before inference.
+7. `RESPONSE_SENT` — the sanitized text actually delivered, hashed so the
+   ledger covers what the caller saw. With `PAYLOAD_ESCROW_ENABLED=true` an
+   encrypted `egress_delivered` copy lands in `payload_escrow` (ADR-005
+   decision 8). A blocked turn writes no answer row.
 
 Limits are 64 messages, 32,768 characters per message and 65,536 characters per
 conversation. `conversation_id` is optional; the response returns the generated
@@ -498,7 +509,11 @@ route/classification badges and restored-marker counts, and links each
 conversation to its audit timeline. Each page load gets a fresh conversation id;
 `New conversation` rotates it, which is what starts a new vault/canary scope.
 Omitting `conversation_id` from the API request also makes the server generate
-one.
+one. A turn refused by the injection gate renders the gateway notice with a
+`blocked` badge and clears the history the page resends, so the hostile turn is
+not carried into the next request; the conversation id stays, so its audit
+timeline still links to the blocked turn. API callers can branch on the
+`blocked` and `block_reason` fields of the response.
 
 ### Canary and quarantine
 
@@ -518,6 +533,10 @@ deterministic claim detector instead and records `disclosure_claim`
 as `bastion.egress.disclosure_claim` on the span. The answer is delivered, not
 blocked — the claim is evidence about the model's behaviour, not proof about the
 prompt, and a legitimate discussion of prompt engineering must stay answerable.
+A turn the injection guard already flagged never reaches this point: it was
+refused before the model call (ADR-012 decision 10), so no answer exists to
+fabricate from.
+
 A silent paraphrase is not detected by either control (ADR-012 decision 9).
 
 ### Fencing and restoration
@@ -718,6 +737,8 @@ check runs at startup.
 | Script | Purpose |
 |--------|---------|
 | `scripts/verify_audit_chain.py` | Recompute the audit hash chain (exit `1` on tamper, `2` if it cannot run) |
+| `scripts/show_conversation.sh` | List one conversation's audit rows; `--markdown` renders the escrowed request and delivered answer as a human transcript, `--escrow` decrypts every payload |
+| `scripts/purge_payload_escrow.py` | Delete expired pre-production payload-escrow rows; `--dry-run` only counts them |
 | `scripts/validate_tool_catalog.py` | Registry ↔ `docs/tools/v1.json` allow-list; `--write` approves the current set; the same check runs at startup |
 | `scripts/validate_rbac.py` | Realm roles/users ↔ code roles ↔ tool requirements; proves four-eyes is possible |
 | `scripts/recalculate_dread.py` | Recompute DREAD totals and the risk-priority list; `--check` / `--write` |
@@ -735,6 +756,48 @@ check runs at startup.
 The validators are deterministic and offline; run them in CI before deployment.
 `verify_audit_chain.py` needs a reachable database and is therefore a
 post-deploy check rather than a unit test.
+
+### Pre-production payload escrow
+
+The ledger stores a SHA-256 digest, never the prompt. When a pre-production
+investigation needs the text behind a `payload_hash`, enable the separately
+keyed escrow (ADR-005 decision 7). It is **not** a production control:
+`ENVIRONMENT=production` with the flag on refuses to start, so the commands
+below are for a `local` or `staging` stack only.
+
+```bash
+# 1. Enable it (24 h default window) and rebuild/restart gateway + worker.
+printf '\nPAYLOAD_ESCROW_ENABLED=true\n' >> .env
+uv run python -c "from settings import get_settings; s=get_settings(); print(s.payload_escrow_enabled, s.payload_escrow_ttl_seconds)"
+docker compose up -d --build gateway worker
+
+# 2. Decrypt the payload behind one INPUT_RECEIVED record (admin bearer token).
+curl -sS -X POST http://localhost:8000/api/audit/123/escrow \
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN" | jq '{audit_log_id, kind, payload_hash, payload}'
+
+# ...or render the newest escrowed request as a human transcript.
+BASTION_TOKEN="$ADMIN_ACCESS_TOKEN" scripts/show_conversation.sh --markdown <conversation-id>
+
+# ...or list the whole conversation and decrypt every input in one pass.
+BASTION_TOKEN="$ADMIN_ACCESS_TOKEN" scripts/show_conversation.sh --escrow <conversation-id>
+
+# 3. Purge expired rows on demand (the worker also does this every 15 min).
+uv run python scripts/purge_payload_escrow.py --dry-run
+uv run python scripts/purge_payload_escrow.py
+```
+
+`payload_escrow` is a PII store: it is a recoverable copy of the raw pre-DLP
+prompt and, with the answer event, the delivered text, readable only by `admin`.
+Every read writes `ESCROW_ACCESSED` with the record id and outcome. Review role
+membership, backups and replicas on the same cadence as the vault key. Keep
+`PAYLOAD_ESCROW_TTL_SECONDS` far below the ledger's retention; expiry is a hard
+delete and the hash chain is unaffected.
+
+The store holds both sides: `input_raw` for the request (IDEA-016) and
+`egress_delivered` for the answer (IDEA-029). `RESPONSE_STORE_MAX_CHARS` bounds
+what is hashed and escrowed for the answer; an over-cap answer is stored as a
+prefix with `truncated: true` in the event metadata. A turn refused by the
+injection gate or blocked at egress has no answer row at all.
 
 The dependency audit needs network access to `api.osv.dev` and exits `1` on any
 unignored finding, so it belongs in a scheduled or post-deploy job rather than
@@ -918,7 +981,9 @@ Prompt and completion text is never exported. That is deliberate: traces go to
 third parties, and a DLP product that ships the unredacted prompt into a trace
 backend has moved the leak rather than stopped it. The vault markers, entity
 counts and routing verdict are the auditable evidence; the text stays in the
-audit ledger, hashed.
+audit ledger, hashed — or, only in a pre-production stack with
+`PAYLOAD_ESCROW_ENABLED=true`, in the short-lived `payload_escrow` table in
+encrypted form (ADR-005 decision 7).
 
 ### What a tool trace contains
 

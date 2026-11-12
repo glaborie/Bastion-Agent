@@ -21,12 +21,14 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.escrow import record_payload_escrow
 from db.models import (
     AUDIT_CHAIN_LOCK_ID,
     AUDIT_LOG_ID_SEQUENCE,
     GENESIS_HASH,
     AuditEventType,
     AuditLog,
+    EscrowKind,
     compute_record_hash,
     hash_payload,
     utcnow,
@@ -68,11 +70,19 @@ async def append_audit_event(
     payload_hash: str | None = None,
     metadata_json: Mapping[str, Any] | None = None,
     timestamp: datetime | None = None,
+    escrow: bool = False,
+    escrow_kind: EscrowKind = EscrowKind.INPUT_RAW,
 ) -> AuditLog:
     """Append one hash-chained audit record and return it (flushed, not committed).
 
     Pass either ``payload`` (hashed canonically here) or a pre-computed
     ``payload_hash`` — never raw PII in ``metadata_json``.
+
+    ``escrow=True`` also writes an encrypted copy of ``payload`` to
+    ``payload_escrow`` in the same transaction (ADR-005 decisions 7-8). It is a
+    no-op unless ``PAYLOAD_ESCROW_ENABLED`` is on, and it requires ``payload``:
+    the escrow must be able to reproduce the ledger's digest. ``escrow_kind``
+    distinguishes the raw request from the delivered answer.
     """
     if not actor_id or not actor_id.strip():
         raise AuditChainError("actor_id is required for every audit record")
@@ -82,6 +92,8 @@ async def append_audit_event(
         raise AuditChainError("tenant_id is required for every audit record") from exc
     if payload is not None and payload_hash is not None:
         raise AuditChainError("pass either payload or payload_hash, not both")
+    if escrow and payload is None:
+        raise AuditChainError("escrow requires the payload itself, not only its hash")
 
     resolved_payload_hash = (
         payload_hash
@@ -122,6 +134,8 @@ async def append_audit_event(
 
     session.add(record)
     await session.flush()
+    if escrow and payload is not None:
+        await record_payload_escrow(session, record, payload, kind=escrow_kind)
     return record
 
 

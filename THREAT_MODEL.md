@@ -54,11 +54,12 @@ client
   -> audit INPUT_RECEIVED (request hash only)
   -> Presidio DLP + reversible vault (Redis)                                   [boundary 2]
   -> classifier ensemble on the RAW text (injection guard + safety guard)
-  -> route: local llama.cpp (confidential or injected) | cloud (public)        [boundary 3]
+  -> injection detected: refuse before inference (gateway notice, no model call)
+  -> route: local llama.cpp (confidential) | cloud (public)                    [boundary 3]
   -> system prompt gets session canary; role=tool turns are fenced
   -> model via OmniRoute
   -> egress inspection (canary scan, quarantine) -> token restore              [boundary 4]
-  -> audit EGRESS_FILTERED, SECURITY_INCIDENT on block
+  -> audit EGRESS_FILTERED, RESPONSE_SENT; SECURITY_INCIDENT on block
 ```
 
 Tool path. Separate from chat.
@@ -117,14 +118,15 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
 - Attack: a user crafts input that overrides instructions or extracts data.
 - Controls:
   - LIVE: injection guard evaluated first in the classifier ensemble (ADR-011). A positive result labels the prompt CONFIDENTIAL, so it never reaches a cloud provider.
+  - LIVE: a detected injection is refused before the model is called. The caller gets HTTP 200 with `blocked: true` and a gateway-authored notice, `EGRESS_FILTERED` records `blocked: true`/`prompt_injection`, and `SECURITY_INCIDENT` records the routing-stage verdict. No model answer exists to fabricate a system prompt from (ADR-012 decision 10).
   - LIVE: the classifier fails closed. A missing graph, session error, malformed output or digest mismatch resolves to CONFIDENTIAL.
   - LIVE: the canary tripwire catches a successful instruction override that leaks the marker (T3).
   - LIVE: no authorization decision depends on model output.
 - Residual risk:
-  - The injected prompt is still answered by the local model. The response passes egress inspection, but nothing else evaluates it for harmful content.
+  - A false positive is refused rather than answered: a benign prompt-engineering discussion at or above `0.662` is treated as hostile. The threshold is calibrated on a 32-row benign set, not held-out recall.
   - The deterministic fallback classifier (`ENVIRONMENT=local` only) cannot detect injection. Non-local deployments without the ONNX models refuse to start.
   - The golden set has 10 injection cases. That is a regression check, not a recall estimate.
-- Verification: `tests/test_classifier.py`, `tests/test_classifier_evals.py`, `tests/data/goldens.jsonl`.
+- Verification: `tests/test_classifier.py`, `tests/test_classifier_evals.py`, `tests/test_chat.py`, `tests/test_delivered_escrow.py`, `tests/data/goldens.jsonl`.
 
 ### T2. Indirect prompt injection through tool or retrieved content
 
@@ -133,6 +135,7 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
 - Controls:
   - LIVE: content in `role: tool` turns is wrapped in `<untrusted_content source="...">`. Embedded fence tags are neutralised so a payload cannot close the fence. The `source` attribute is sanitised.
   - LIVE: the classifier scans all turns, including tool turns, on the raw text.
+  - LIVE: a detected indirect injection is refused before inference by the same gate as T1 (ADR-012 decision 10); no model answer is produced.
   - LIVE: canary tripwire as in T3.
 - Residual risk:
   - Fencing is a structural signal, not a guarantee. A model can still choose to obey fenced text (stated in ADR-012).
@@ -148,6 +151,7 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
   - LIVE: one `BASTION-CANARY-<uuid4>` per vault session. It is random, not derived from the session id.
   - LIVE: the output scan matches any token with the configured prefix, not only the current session's value. A hit discards the response, writes a `SECURITY_INCIDENT` and quarantines the session (default 900 s). The quarantine check runs before the next inference call.
   - LIVE: an answer that claims to disclose its instructions ("here is the system prompt", "my instructions are", "I was instructed to") is recorded as `disclosure_claim` on `EGRESS_FILTERED` and on the span, and is still delivered. The claim may be fabricated; it is a verdict, not a block (ADR-012 decision 9).
+  - LIVE: if the injection guard fired, the turn was already refused before inference (ADR-012 decision 10), so a direct extraction attempt produces no model answer to fabricate from.
   - LIVE: if Redis is unreachable the gateway returns 503. It never delivers an unscanned response.
 - Residual risk: the canary detects verbatim leakage only, and the claim detector names a sentence that admits to disclosure rather than proving one. A silent paraphrase, a partial extraction or a rewritten instruction is not detected by either control. The system prompt contains no secrets by design, which limits the impact; the trust harm of a fabricated disclosure (a caller is told a disclosure happened) is now visible in the ledger instead of unflagged.
 - Verification: `tests/test_egress_sanitizer.py`, `tests/test_chat.py`.
@@ -246,10 +250,12 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
 - Controls:
   - LIVE: each record hashes its content plus the previous record's hash (SHA-256). Each stage commits independently, so evidence survives a later failure.
   - LIVE: `POST /api/audit/verify` and `scripts/verify_audit_chain.py` recompute the chain.
-  - LIVE: payloads are stored as hashes. Argument values and prompt text never enter the ledger.
+  - LIVE: payloads are stored as hashes in `audit_logs`. Argument values and prompt text never enter the ledger.
+  - OPTIONAL, pre-production only: with `PAYLOAD_ESCROW_ENABLED=true`, `INPUT_RECEIVED` also writes the exact payload it hashed to the separate `payload_escrow` table as AES-256-GCM ciphertext (per-record nonce, AAD bound to the audit id, `payload_hash`, tenant and kind). A read is `admin`-only, requires an explicit `POST /api/audit/{record_id}/escrow`, and appends `ESCROW_ACCESSED`. Rows expire on `PAYLOAD_ESCROW_TTL_SECONDS` (24 h) and are hard-deleted; production refuses to start with the flag on.
 - Residual risk:
   - A chain inside the same database detects partial edits. An attacker with write access can recompute the whole chain. Detecting that needs the head hash exported to a separate system or write-once store, plus an INSERT-only database role. Neither is implemented.
-- Verification: `tests/test_audit_chain.py`.
+  - When escrow is enabled, `payload_escrow` is a recoverable PII store: someone holding both the process key and the database can decrypt prompts for the retention window. That is the accepted trade of a debugging build, not a production posture; the ledger and its chain are unchanged either way.
+- Verification: `tests/test_audit_chain.py`, `tests/test_payload_escrow.py`.
 
 ### T11. Supply chain and model-artifact tampering
 

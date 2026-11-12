@@ -19,7 +19,14 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from db.models import AUDIT_APPEND_ONLY_DDL, SCHEMA_INIT_LOCK_ID, TENANT_SCOPE_DDL, Base
+from db.models import (
+    AUDIT_APPEND_ONLY_DDL,
+    AUDIT_EVENT_VOCABULARY_DDL,
+    ESCROW_KIND_DDL,
+    SCHEMA_INIT_LOCK_ID,
+    TENANT_SCOPE_DDL,
+    Base,
+)
 from settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -119,6 +126,14 @@ async def init_models(engine: AsyncEngine | None = None) -> None:
         # ADR-015: create_all cannot add columns to an existing table, so the
         # tenant columns and indexes are applied idempotently on every boot.
         for statement in TENANT_SCOPE_DDL:
+            await connection.execute(text(statement))
+        # ADR-005 decision 7: widen the audit event vocabulary for databases
+        # created before ESCROW_ACCESSED existed.
+        for statement in AUDIT_EVENT_VOCABULARY_DDL:
+            await connection.execute(text(statement))
+        # ...and widen the escrow kind for databases created before
+        # egress_delivered existed.
+        for statement in ESCROW_KIND_DDL:
             await connection.execute(text(statement))
     logger.info(
         "Database schema ready",

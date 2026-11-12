@@ -32,15 +32,15 @@ must not be edited by hand.
 
 _none_
 
-### Active (1)
+### Active (0)
 
-- `IDEA-029` P2 v0.3 db - Escrow the delivered assistant answer so a conversation is reconstructable
+_none_
 
 ### Blocked (1)
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (20)
+### Done (21)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -62,6 +62,7 @@ _none_
 - `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
 - `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
 - `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
+- `IDEA-029` P2 v0.3 db - Escrow the delivered assistant answer so a conversation is reconstructable
 
 _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 <!-- END BOARD -->
@@ -99,7 +100,7 @@ _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 | IDEA-026 | done | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
 | IDEA-028 | inbox | P2 | v0.4 | agent | Route prompts to a model tier by classified complexity |
 | IDEA-027 | inbox | P2 | v0.5 | agent | Cache semantically equivalent completions to avoid repeated model calls |
-| IDEA-029 | active | P2 | v0.3 | db | Escrow the delivered assistant answer so a conversation is reconstructable |
+| IDEA-029 | done | P2 | v0.3 | db | Escrow the delivered assistant answer so a conversation is reconstructable |
 | IDEA-030 | inbox | P1 | v0.3 | security | Make the worker reject tool jobs whose identity the gateway did not mint |
 | IDEA-031 | inbox | P2 | v0.3 | tooling | Fail CI when the threat-model control table drifts from the tree |
 <!-- END INDEX -->
@@ -1657,7 +1658,7 @@ eviction and the audit shape.
 
 ### IDEA-029: Escrow the delivered assistant answer so a conversation is reconstructable
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.3
 - area: db
@@ -1680,16 +1681,16 @@ The same change closes the live incident that motivated it: when the injection g
 
 **Acceptance**
 
-- [ ] `uv run pytest tests/test_delivered_escrow.py -q` proves an unblocked `POST /v1/chat` writes exactly one new answer event whose `payload_hash` equals `hash_payload(delivered_text)`, and a canary-blocked turn writes none
-- [ ] An injection-detected turn returns `blocked: true` with a gateway notice, calls the model zero times, writes `EGRESS_FILTERED` (`blocked: true`, reason `prompt_injection`) and `SECURITY_INCIDENT`, and writes no `RESPONSE_SENT`/`egress_delivered` row
-- [ ] The dashboard renders the injection notice, does not append it to the resent history, and clears that history (keeping the conversation id, so the audit timeline still links to the blocked turn) so the hostile turn cannot poison later turns; the API fields are covered in `tests/test_chat.py`
-- [ ] With `PAYLOAD_ESCROW_ENABLED=true` the answer event gets exactly one `egress_delivered` escrow row; decrypt round-trips to the delivered text and `hash_payload(decrypted)` equals the ledger's `payload_hash`
-- [ ] The escrow row reuses the IDEA-016 store contract: AES-256-GCM, per-record nonce, AAD bound to `audit_log_id|payload_hash|tenant_id|kind`, the same key derivation, admin-only decrypt through `require_roles`, an `ESCROW_ACCESSED` row per read, and the existing TTL purge removes expired answer rows
-- [ ] A dump of the answer-event table, the escrow table and the captured logs for one escrowed turn contains no plaintext answer, and no delivered text lands in `metadata_json`, the span or a log line
-- [ ] The event vocabulary, `AUDIT_EVENT_VOCABULARY_DDL` and the dashboard filter follow the new member without drift (`tests/test_settings.py` catches the DDL/`AuditEventType` mismatch), and `uv run python scripts/check_backlog.py`/`scripts/check_adrs.py` pass
-- [ ] A configured cap (bytes or characters, at least one settings key in `.env.example`) bounds what is stored and hashed; a response over the cap is recorded with an explicit `truncated: true` and the stored prefix, never silently cut, and the test pins both the over-cap and under-cap cases
-- [ ] `uv run pytest tests/test_payload_escrow.py tests/test_chat.py tests/test_audit_chain.py -q` stays green: the flag-off path writes no escrow rows, and a record's `payload_hash`/`record_hash` are identical with the flag on and off
-- [ ] `docs/adr/ADR-005.md` decision 7 (or a successor decision) records the answer event, the new escrow kind, the cap and the production exclusion, `docs/adr/ADR-012.md` records the injection block and the user-visible notice, ADR-007 decision 7's frozen-vocabulary rule is either amended or explicitly exempted, and the trust boundary is restated because the answer contains the restored PII the vault minted
+- [x] `uv run pytest tests/test_delivered_escrow.py -q` proves an unblocked `POST /v1/chat` writes exactly one new answer event whose `payload_hash` equals `hash_payload(delivered_text)`, and a canary-blocked turn writes none
+- [x] An injection-detected turn returns `blocked: true` with a gateway notice, calls the model zero times, writes `EGRESS_FILTERED` (`blocked: true`, reason `prompt_injection`) and `SECURITY_INCIDENT`, and writes no `RESPONSE_SENT`/`egress_delivered` row
+- [x] The dashboard renders the injection notice, does not append it to the resent history, and clears that history (keeping the conversation id, so the audit timeline still links to the blocked turn) so the hostile turn cannot poison later turns; the API fields are covered in `tests/test_chat.py`
+- [x] With `PAYLOAD_ESCROW_ENABLED=true` the answer event gets exactly one `egress_delivered` escrow row; decrypt round-trips to the delivered text and `hash_payload(decrypted)` equals the ledger's `payload_hash`
+- [x] The escrow row reuses the IDEA-016 store contract: AES-256-GCM, per-record nonce, AAD bound to `audit_log_id|payload_hash|tenant_id|kind`, the same key derivation, admin-only decrypt through `require_roles`, an `ESCROW_ACCESSED` row per read, and the existing TTL purge removes expired answer rows
+- [x] A dump of the answer-event table, the escrow table and the captured logs for one escrowed turn contains no plaintext answer, and no delivered text lands in `metadata_json`, the span or a log line
+- [x] The event vocabulary, `AUDIT_EVENT_VOCABULARY_DDL` and the dashboard filter follow the new member without drift (`tests/test_settings.py` catches the DDL/`AuditEventType` mismatch), and `uv run python scripts/check_backlog.py`/`scripts/check_adrs.py` pass
+- [x] A configured cap (bytes or characters, at least one settings key in `.env.example`) bounds what is stored and hashed; a response over the cap is recorded with an explicit `truncated: true` and the stored prefix, never silently cut, and the test pins both the over-cap and under-cap cases
+- [x] `uv run pytest tests/test_payload_escrow.py tests/test_chat.py tests/test_audit_chain.py -q` stays green: the flag-off path writes no escrow rows, and a record's `payload_hash`/`record_hash` are identical with the flag on and off
+- [x] `docs/adr/ADR-005.md` decision 7 (or a successor decision) records the answer event, the new escrow kind, the cap and the production exclusion, `docs/adr/ADR-012.md` records the injection block and the user-visible notice, ADR-007 decision 7's frozen-vocabulary rule is either amended or explicitly exempted, and the trust boundary is restated because the answer contains the restored PII the vault minted
 
 **Notes**
 
@@ -1699,6 +1700,7 @@ The same change closes the live incident that motivated it: when the injection g
 - Ordering: the answer row is written after `sanitizer.inspect(...)` and before the response is returned, in its own committed transaction like every other stage. The dashboard must not append the gateway notice to the history it resends, and clears that history after a block (the conversation id stays, so the blocked turn remains linked in the ledger), or the hostile turn would re-trigger on every later request.
 - Honest limits to record in the ADR: the answer row is a second PII store whenever escrow is on (the vault has already restored markers into `egress.text`); without escrow the row is hash-only and still proves an answer was produced but not what it said; and an answer truncated at the cap is partially unrecoverable by design.
 - Scope at implementation: the `RESPONSE_SENT` event, the `egress_delivered` kind, the cap, the injection block and its notice, the dashboard behavior, tests, ADRs 005/012 and the runbook. Not in scope: streaming responses, changing the classifier threshold, or blocking on a disclosure claim when no injection was detected (ADR-012 decision 9 stays in force).
+- Gates: `scripts/gate.sh --integration --evals` → 11/11, pytest 720 passed / 12 skipped, evals 232/232 with all metrics 1.000, pylint 10.00/10, mypy clean (78 files), all five policy scripts OK. Live verification on the rebuilt stack: a PII turn wrote `INPUT_RECEIVED`/`DLP_REDACTION`/`ROUTING_DECISION`/`EGRESS_FILTERED`/`RESPONSE_SENT`, the answer decrypted as `egress_delivered` with a matching hash, an injection turn returned `blocked: true` with no answer row and a `SECURITY_INCIDENT`, and the chain verified. The event vocabulary and escrow-kind CHECK constraints are widened idempotently on boot (`AUDIT_EVENT_VOCABULARY_DDL`, `ESCROW_KIND_DDL`).
 
 ### IDEA-030: Make the worker reject tool jobs whose identity the gateway did not mint
 

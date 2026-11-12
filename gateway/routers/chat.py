@@ -10,12 +10,19 @@ audited before the next one runs (HANDOVER_SPEC §3.4/§3.5):
 4. Egress construction — a session canary is injected into the system
    instructions and tool output is fenced as untrusted data.
 5. ``EGRESS_FILTERED`` — canary leak, quarantine state and marker restore.
-6. ``SECURITY_INCIDENT`` — written when the response is blocked.
+6. ``RESPONSE_SENT`` — the sanitized text actually delivered, hashed and (with
+   the pre-production flag) escrowed as ``egress_delivered``. A turn blocked by
+   the injection gate or the canary never reaches this stage.
+7. ``SECURITY_INCIDENT`` — written when the response is blocked.
 
 Two invariants matter more than the happy path:
 
 * A canary leak never returns model text. The response is discarded and the
   session is quarantined; the event is audited before the error is raised.
+* A prompt the injection guard flags is refused before the model is called, so
+  no model answer exists to fabricate a system prompt from. The caller receives
+  a fixed gateway notice with ``blocked=true`` and the ledger records the
+  incident; the notice must not be resent as an assistant turn.
 * Vault sessions are derived from ``actor_id + conversation_id``, so a caller
   cannot pass another principal's conversation id and have their markers
   restored.
@@ -51,10 +58,11 @@ from agent.routing.client import (
     get_model_router,
 )
 from db.audit import append_audit_event
-from db.models import AuditEventType
+from db.models import AuditEventType, EscrowKind
 from db.session import get_db_session
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 from gateway.rate_limit import rate_limit
+from settings import get_settings
 from telemetry import annotate_span, span_attributes
 
 logger = logging.getLogger(__name__)
@@ -79,6 +87,15 @@ MAX_TOTAL_CHARS: Final[int] = 65_536
 CONVERSATION_PATTERN: Final[str] = r"^[A-Za-z0-9._:-]{1,128}$"
 
 ChatRole = Literal["system", "user", "assistant", "tool"]
+
+#: Reason the classifier sets when the injection guard fires (ADR-011).
+_INJECTION_REASON: Final[str] = "prompt_injection_detected"
+#: What the caller receives instead of a model answer on a detected injection.
+#: Worded as a gateway verdict, not as model output: the model was never called.
+_INJECTION_NOTICE: Final[str] = (
+    "Request blocked: prompt injection detected. No model answer was released, "
+    "so no fabricated system prompt can be delivered."
+)
 
 
 class ChatTurn(BaseModel):
@@ -114,7 +131,13 @@ class AssistantTurn(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """The sanitized answer plus the routing evidence (no canary, no markers)."""
+    """The sanitized answer plus the routing evidence (no canary, no markers).
+
+    ``blocked`` is set when a control withheld the model answer. Today that is
+    the injection gate: the model is not called, so ``message`` is a fixed
+    gateway notice and ``model`` is ``gateway``, not a provider. Callers must
+    not resend a blocked notice as an assistant turn.
+    """
 
     conversation_id: str
     message: AssistantTurn
@@ -124,6 +147,8 @@ class ChatResponse(BaseModel):
     reason: str
     confidence: float
     restored_tokens: int = 0
+    blocked: bool = False
+    block_reason: str | None = None
 
 
 def get_chat_router() -> ModelRouter:
@@ -204,12 +229,16 @@ async def _record(
     conversation_id: str,
     payload: object | None = None,
     metadata: dict[str, object] | None = None,
+    escrow: bool = False,
+    escrow_kind: EscrowKind = EscrowKind.INPUT_RAW,
 ) -> None:
     """Append one audit record and commit it immediately.
 
     Each stage commits on its own so evidence survives a later upstream or
     egress failure. ``payload`` is hashed by :func:`append_audit_event`; the
     metadata dictionary must contain machine values only, never prompt text.
+    ``escrow=True`` (pre-production only) also writes the encrypted payload copy
+    for the same record, in the same transaction, under ``escrow_kind``.
     """
     await append_audit_event(
         session,
@@ -219,6 +248,8 @@ async def _record(
         session_id=conversation_id,
         payload=payload,
         metadata_json=metadata or {},
+        escrow=escrow,
+        escrow_kind=escrow_kind,
     )
     await session.commit()
 
@@ -268,6 +299,7 @@ async def chat(
     """Run one guarded turn from ingress to sanitized egress."""
     actor_id = context.actor_id
     tenant_id = context.tenant_id
+    settings = get_settings()
     conversation_id = request.conversation_id or uuid.uuid4().hex
     vault_session = _vault_session(tenant_id, actor_id, conversation_id)
 
@@ -291,6 +323,10 @@ async def chat(
             "roles": sorted({turn.role for turn in request.messages}),
             "chars": total_chars,
         },
+        # The raw payload is what this row hashes, so it is the one thing an
+        # investigator can check against the ledger. No-op unless the
+        # pre-production escrow flag is on (ADR-005 decision 7).
+        escrow=True,
     )
     _annotate(
         {
@@ -401,6 +437,62 @@ async def chat(
         ) from exc
     except EgressUnavailableError as exc:
         raise _blocked(status.HTTP_503_SERVICE_UNAVAILABLE, "egress sanitizer unavailable") from exc
+
+    # -- stage 3a: injection gate -----------------------------------------
+    # The guard already made this CONFIDENTIAL and kept it local. Treat it as
+    # hostile: refuse before inference, so no model answer exists to fabricate a
+    # system prompt from, and tell the caller that the request was caught. The
+    # model is deliberately not called and no RESPONSE_SENT row is written.
+    if classification.reason == _INJECTION_REASON:
+        await _record(
+            session,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            event_type=AuditEventType.EGRESS_FILTERED,
+            conversation_id=conversation_id,
+            metadata={
+                "blocked": True,
+                "reason": "prompt_injection",
+                "restored_tokens": 0,
+                "unresolved_tokens": 0,
+                "disclosure_claim": None,
+                "model": "gateway",
+                "route": decision.alias,
+            },
+        )
+        await _record(
+            session,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            event_type=AuditEventType.SECURITY_INCIDENT,
+            conversation_id=conversation_id,
+            metadata={
+                "reason": _INJECTION_REASON,
+                "stage": "routing",
+                "route": decision.alias,
+                "label": classification.label.value,
+                "confidence": round(classification.confidence, 4),
+            },
+        )
+        _annotate(
+            {
+                "bastion.egress.blocked": True,
+                "bastion.egress.reason": "prompt_injection",
+                "bastion.injection.detected": True,
+            }
+        )
+        return ChatResponse(
+            conversation_id=conversation_id,
+            message=AssistantTurn(content=_INJECTION_NOTICE),
+            model="gateway",
+            route=decision.alias,
+            classification=classification.label.value,
+            reason=classification.reason,
+            confidence=classification.confidence,
+            restored_tokens=0,
+            blocked=True,
+            block_reason=_INJECTION_REASON,
+        )
 
     upstream: list[ChatMessage] = [
         ChatMessage(role="system", content=sanitizer.with_canary("", canary))
@@ -522,6 +614,37 @@ async def chat(
             extra={"reason": egress.reason, "route": decision.alias},
         )
         raise _blocked(status.HTTP_502_BAD_GATEWAY, "egress filter blocked the model response")
+
+    # -- stage 5: record the answer that is actually delivered -------------
+    # The payload is the sanitized text (or its configured prefix), so its
+    # payload_hash covers exactly what the caller received. The escrow copy is a
+    # no-op unless the pre-production flag is on. A blocked turn returned above
+    # and therefore has no answer event.
+    stored_answer = egress.text[: settings.response_store_max_chars]
+    truncated = len(egress.text) > len(stored_answer)
+    await _record(
+        session,
+        actor_id=actor_id,
+        tenant_id=tenant_id,
+        event_type=AuditEventType.RESPONSE_SENT,
+        conversation_id=conversation_id,
+        payload=stored_answer,
+        metadata={
+            "model": completion.model,
+            "route": decision.alias,
+            "chars": len(egress.text),
+            "stored_chars": len(stored_answer),
+            "truncated": truncated,
+        },
+        escrow=True,
+        escrow_kind=EscrowKind.EGRESS_DELIVERED,
+    )
+    _annotate(
+        {
+            "bastion.response.chars": len(egress.text),
+            "bastion.response.truncated": truncated,
+        }
+    )
 
     return ChatResponse(
         conversation_id=conversation_id,

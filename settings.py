@@ -13,6 +13,8 @@ import functools
 from typing import Final, Literal
 from urllib.parse import quote
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -132,6 +134,27 @@ class Settings(BaseSettings):
     #: NER-backed entities are skipped. Below it the text is analyzed as
     #: English, so short English prompts keep full NER coverage (ADR-002).
     dlp_language_min_confidence: float = 0.8
+
+    # -- Payload escrow (ADR-005 decision 7) -------------------------------
+    #: Pre-production debugging only. When on, ``INPUT_RECEIVED`` also writes an
+    #: AES-256-GCM copy of the exact payload it hashed to the separate
+    #: ``payload_escrow`` table, readable only by an ``admin``. The flag defaults
+    #: off and production refuses to start with it on; the ledger, its hashes and
+    #: the chain are untouched either way.
+    payload_escrow_enabled: bool = False
+    #: Escrow retention. Deliberately far shorter than the ledger's multi-year
+    #: retention (ADR-005 decision 5) because this table is a recoverable PII
+    #: store, not the ledger.
+    payload_escrow_ttl_seconds: int = 86_400  # 24 hours
+    #: Dedicated 32-byte base64 key. When unset, a subkey is derived from
+    #: ``VAULT_MASTER_KEY`` with HKDF-SHA256, so escrow needs no extra secret and
+    #: no key material is committed.
+    payload_escrow_master_key: SecretStr | None = None
+    #: Maximum characters of the delivered answer covered by the ``RESPONSE_SENT``
+    #: hash and its ``egress_delivered`` escrow copy. A longer answer is stored
+    #: and hashed as its prefix with ``truncated: true`` in the event metadata, so
+    #: an uncapped model hallucination cannot grow the ledger without bound.
+    response_store_max_chars: int = 32_768
 
     # -- Two-stage classifier ---------------------------------------------
     #: Legacy single-graph contract: one ONNX file returning two logits ordered
@@ -288,6 +311,7 @@ class Settings(BaseSettings):
         "classifier_safety_model_gpu_sha256",
         "classifier_injection_threshold",
         "classifier_safety_unsafe_threshold_gpu",
+        "payload_escrow_master_key",
         mode="before",
     )
     @classmethod
@@ -327,6 +351,22 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("payload_escrow_master_key")
+    @classmethod
+    def _validate_payload_escrow_master_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        try:
+            raw = base64.b64decode(value.get_secret_value(), validate=True)
+        except (binascii.Error, ValueError) as exc:  # pragma: no cover - defensive
+            raise ValueError("PAYLOAD_ESCROW_MASTER_KEY must be valid base64") from exc
+        if len(raw) != 32:
+            raise ValueError(
+                "PAYLOAD_ESCROW_MASTER_KEY must decode to exactly 32 bytes (AES-256); "
+                f"got {len(raw)}"
+            )
+        return value
+
     @field_validator(
         "otel_traces_sampler_ratio",
         "classifier_confidence_threshold",
@@ -361,6 +401,8 @@ class Settings(BaseSettings):
         "rate_limit_window_seconds",
         "rate_limit_dashboard_per_window",
         "rate_limit_chat_per_window",
+        "payload_escrow_ttl_seconds",
+        "response_store_max_chars",
     )
     @classmethod
     def _validate_positive(cls, value: int) -> int:
@@ -418,6 +460,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _reject_dev_secrets(self) -> Settings:
+        # Checked first so the message is about the offending flag, not about
+        # secrets, when an operator tries to enable debugging escrow in prod.
+        if self.environment == "production" and self.payload_escrow_enabled:
+            raise ValueError(
+                "PAYLOAD_ESCROW_ENABLED must be false in production: payload escrow is a "
+                "pre-production debugging store that recovers plaintext PII (ADR-005 decision 7)"
+            )
         if self.environment not in {"staging", "production"}:
             return self
         if self.vault_master_key.get_secret_value() == DEV_VAULT_MASTER_KEY:
@@ -486,6 +535,26 @@ class Settings(BaseSettings):
     def vault_key_bytes(self) -> bytes:
         """The 32-byte AES-256 key backing the reversible token vault."""
         return base64.b64decode(self.vault_master_key.get_secret_value())
+
+    @property
+    def payload_escrow_key_bytes(self) -> bytes:
+        """The 32-byte AES-256 key backing the pre-production payload escrow.
+
+        A dedicated ``PAYLOAD_ESCROW_MASTER_KEY`` wins when set. Otherwise the
+        key is HKDF-SHA256 of the vault master key under a fixed label, so the
+        escrow and the token vault never share key material and an operator does
+        not have to provision a second secret. Rotating the vault key therefore
+        invalidates outstanding escrow rows; the 24-hour default window keeps
+        that cost bounded.
+        """
+        if self.payload_escrow_master_key is not None:
+            return base64.b64decode(self.payload_escrow_master_key.get_secret_value())
+        return HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b"bastion-payload-escrow-v1",
+        ).derive(self.vault_key_bytes)
 
     @property
     def redacted_database_url(self) -> str:

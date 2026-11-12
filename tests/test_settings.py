@@ -154,3 +154,93 @@ def test_compose_dlp_entity_default_matches_settings() -> None:
     assert match, "docker-compose.yml no longer defaults DLP_ENTITIES"
     compose_entities = tuple(match.group(1).split(","))
     assert compose_entities == make_settings().dlp_entity_list
+
+
+def test_production_refuses_to_start_with_payload_escrow_enabled() -> None:
+    production: dict[str, object] = {
+        "environment": "production",
+        "payload_escrow_enabled": True,
+        "vault_master_key": base64.b64encode(b"p" * 32).decode(),
+        "approval_hmac_secret": "rotated-production-approval-secret",
+        "keycloak_client_secret": "rotated-production-keycloak-secret",
+        "session_cookie_secure": True,
+    }
+    with pytest.raises(ValidationError, match="PAYLOAD_ESCROW_ENABLED"):
+        make_settings(**production)
+
+    # The same production-valid secrets pass with the flag off, so the failure
+    # above is the escrow guard, not the dev-secret guard.
+    allowed = make_settings(**{**production, "payload_escrow_enabled": False})
+    assert allowed.environment == "production"
+    assert allowed.payload_escrow_enabled is False
+
+
+def test_payload_escrow_defaults_and_key_derivation() -> None:
+    settings = make_settings()
+    assert settings.payload_escrow_enabled is False
+    assert settings.payload_escrow_ttl_seconds == 86_400
+    assert len(settings.payload_escrow_key_bytes) == 32
+    # A labelled subkey, never the vault key itself.
+    assert settings.payload_escrow_key_bytes != settings.vault_key_bytes
+
+    dedicated = base64.b64encode(b"e" * 32).decode()
+    explicit = make_settings(payload_escrow_master_key=dedicated)
+    assert explicit.payload_escrow_key_bytes == b"e" * 32
+
+    with pytest.raises(ValidationError, match="PAYLOAD_ESCROW_MASTER_KEY"):
+        make_settings(payload_escrow_master_key="too-short")
+
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+    assert "\nPAYLOAD_ESCROW_ENABLED=false\n" in env_example
+    assert "pre-production" in env_example
+    assert "\nPAYLOAD_ESCROW_MASTER_KEY=\n" in env_example
+
+
+def test_compose_forwards_payload_escrow_settings() -> None:
+    """The container must not silently ignore the flag set in ``.env``."""
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    for variable in (
+        "PAYLOAD_ESCROW_ENABLED",
+        "PAYLOAD_ESCROW_TTL_SECONDS",
+        "PAYLOAD_ESCROW_MASTER_KEY",
+        "RESPONSE_STORE_MAX_CHARS",
+    ):
+        assert re.search(rf"^  {variable}: \$\{{{variable}:-", compose, re.MULTILINE), (
+            f"docker-compose.yml does not forward {variable}"
+        )
+
+
+def test_response_store_cap_is_positive_and_documented() -> None:
+    settings = make_settings()
+    assert settings.response_store_max_chars == 32_768
+    with pytest.raises(ValidationError, match="positive integer"):
+        make_settings(response_store_max_chars=0)
+
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+    assert "\nRESPONSE_STORE_MAX_CHARS=32768\n" in env_example
+    assert "truncated=true" in env_example
+
+
+def test_audit_event_vocabulary_ddl_covers_every_event_type() -> None:
+    """The upgrade DDLs and the enums must not drift apart."""
+    from db.models import (
+        AUDIT_EVENT_VOCABULARY_DDL,
+        ESCROW_KIND_DDL,
+        AuditEventType,
+        EscrowKind,
+    )
+
+    ddl = AUDIT_EVENT_VOCABULARY_DDL[0]
+    for member in AuditEventType:
+        assert f"'{member.value}'" in ddl, f"{member.name} is missing from the DDL"
+    # The idempotence guard looks for the newest member so a database upgraded
+    # before that member existed is rewritten. Appending a member therefore means
+    # updating both the IN list and this marker.
+    newest = list(AuditEventType)[-1].value
+    assert f"LIKE '%{newest}%'" in ddl
+
+    kind_ddl = ESCROW_KIND_DDL[0]
+    for member in EscrowKind:
+        assert f"'{member.value}'" in kind_ddl, f"{member.name} is missing from the DDL"
+    newest_kind = list(EscrowKind)[-1].value
+    assert f"LIKE '%{newest_kind}%'" in kind_ddl

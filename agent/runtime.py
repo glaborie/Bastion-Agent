@@ -14,6 +14,9 @@ a worker restart, or ``TOOL_RESUME_AUTO_ENQUEUE`` being disabled.
 nobody was looking, so the queue only lists actionable work. The ticket history
 stays in the audit ledger; until the sweep runs (at most 30 s) the dashboard
 shows the ticket as expired and locked.
+
+``purge_expired_payload_escrow_job`` deletes pre-production escrow rows past
+their retention window (ADR-005 decision 7). It never touches ``audit_logs``.
 """
 
 from __future__ import annotations
@@ -68,6 +71,7 @@ from agent.tools.execution import (
     request_tool_execution,
     resume_approved_tool,
 )
+from db.escrow import purge_expired_escrow
 from db.models import AuditEventType
 from db.redis import get_redis
 from db.session import dispose_engine, init_models, session_scope
@@ -309,6 +313,19 @@ async def expire_stale_approvals_job(ctx: dict[str, Any]) -> dict[str, int]:
     return {"expired": expired}
 
 
+async def purge_expired_payload_escrow_job(ctx: dict[str, Any]) -> dict[str, int]:
+    """Cron sweep: hard-delete escrow rows past ``expires_at``.
+
+    Off by default and always empty in production; the statement is cheap on an
+    empty table because ``ix_payload_escrow_expires_at`` covers it.
+    """
+    async with session_scope() as session:
+        purged = await purge_expired_escrow(session)
+    if purged:
+        logger.info("Payload-escrow purge complete", extra={"purged": purged})
+    return {"purged": purged}
+
+
 async def resume_approved_tickets_job(ctx: dict[str, Any]) -> dict[str, int]:
     """Cron safety net: execute approved tickets that no job picked up."""
     async with session_scope() as session:
@@ -461,11 +478,15 @@ class WorkerSettings:
         resume_tool_job,
         expire_stale_approvals_job,
         resume_approved_tickets_job,
+        purge_expired_payload_escrow_job,
         run_demo_scenario_job,
     ]
     cron_jobs: ClassVar[list[Any]] = [
         cron(expire_stale_approvals_job, second={0, 30}),
         cron(resume_approved_tickets_job, second={15, 45}),
+        # Escrow rows are measured in hours; four sweeps an hour is plenty and
+        # keeps each delete small.
+        cron(purge_expired_payload_escrow_job, minute={0, 15, 30, 45}),
     ]
     redis_settings: ClassVar[RedisSettings] = RedisSettings.from_dsn(get_settings().redis_url)
     queue_name: ClassVar[str] = get_settings().arq_queue_name

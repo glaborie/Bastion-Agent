@@ -18,6 +18,7 @@ This document defines the full feature set for the Bastion-Agent Command Control
   - `TOOL_REQUESTED`: Tool name, arguments, read_only flag, required_role
   - `APPROVAL_GRANTED/REJECTED`: Approver ID, timestamp, HMAC verification status
   - `EGRESS_FILTERED`: Canary tripwire trigger or clean pass
+  - `ESCROW_ACCESSED`: Pre-production escrow read (record id, admin actor, outcome)
   - `RESPONSE_SENT`: Final output (detokenized for authorized viewer)
 
 - **Raw JSON**: Complete `AuditLog` records for the session with hash chain verification.

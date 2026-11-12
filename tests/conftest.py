@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from db.models import TENANT_SCOPE_DDL, Base
+from db.models import AUDIT_EVENT_VOCABULARY_DDL, ESCROW_KIND_DDL, TENANT_SCOPE_DDL, Base
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "")
 
@@ -61,8 +61,17 @@ async def db_engine() -> AsyncIterator[AsyncEngine]:
         # Upgrade a reused test database that predates ADR-015.
         for statement in TENANT_SCOPE_DDL:
             await connection.execute(text(statement))
+        # ...or predates ESCROW_ACCESSED in the audit event vocabulary.
+        for statement in AUDIT_EVENT_VOCABULARY_DDL:
+            await connection.execute(text(statement))
+        # ...or predates the egress_delivered escrow kind.
+        for statement in ESCROW_KIND_DDL:
+            await connection.execute(text(statement))
         await connection.execute(
-            text("TRUNCATE TABLE audit_logs, pending_approvals RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE TABLE payload_escrow, audit_logs, pending_approvals "
+                "RESTART IDENTITY CASCADE"
+            )
         )
     try:
         yield engine
@@ -85,6 +94,25 @@ async def session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 async def session_factory(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     """Session factory for tests that need independent concurrent transactions."""
     return async_sessionmaker(db_engine, expire_on_commit=False)
+
+
+@pytest.fixture(autouse=True)
+def _disable_payload_escrow(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep a developer's ``.env`` from enabling the pre-production escrow.
+
+    DeepEval's pytest plugin loads ``.env`` into ``os.environ`` at session
+    start, so a local stack configured for debugging would otherwise change the
+    default-path tests. The escrow suites opt in explicitly.
+    """
+    from settings import reset_settings_cache
+
+    monkeypatch.setenv("PAYLOAD_ESCROW_ENABLED", "false")
+    monkeypatch.setenv("RESPONSE_STORE_MAX_CHARS", "32768")
+    reset_settings_cache()
+    try:
+        yield
+    finally:
+        reset_settings_cache()
 
 
 @pytest.fixture(autouse=True)

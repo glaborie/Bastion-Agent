@@ -66,6 +66,7 @@ Bastion-Agent is a **high-assurance, zero-trust AI agent harness** designed for 
 - **Session key**: `vault:{session_id}`
 - **Access**: Only authorized client can detokenize
 - **No plaintext PII** in audit logs or model outputs
+- **Debug escrow (pre-production only)**: `payload_escrow` may hold an AES-256-GCM copy of the `INPUT_RECEIVED` payload for 24 h, admin-readable and hard-deleted at expiry. The flag is off by default and production refuses to start with it on (ADR-005 decision 7)
 
 ### Canary Injection
 - **Mechanism**: Session-unique `BASTION-CANARY-<uuid4>` in system prompt
@@ -118,7 +119,7 @@ CREATE TABLE audit_logs (
     timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
     session_id UUID NOT NULL,
     actor_id UUID NOT NULL,
-    event_type TEXT NOT NULL,  -- INPUT_RECEIVED, DLP_REDACTION, ROUTING_DECISION, TOOL_REQUESTED, APPROVAL_GRANTED, EGRESS_FILTERED, RBAC_POLICY_CHANGE
+    event_type TEXT NOT NULL,  -- INPUT_RECEIVED, DLP_REDACTION, ROUTING_DECISION, TOOL_REQUESTED, APPROVAL_GRANTED, EGRESS_FILTERED, RESPONSE_SENT, RBAC_POLICY_CHANGE, ESCROW_ACCESSED
     payload_hash BYTEA NOT NULL,
     metadata_json JSONB,
     previous_hash BYTEA NOT NULL,
