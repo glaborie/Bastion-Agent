@@ -1,0 +1,40 @@
+name: Wiki sync
+
+# GitHub stores a wiki in its own repository, so a change to wiki/ does not reach
+# the published wiki by itself. scripts/sync_wiki.sh mirrors wiki/ into
+# <owner>/<repo>.wiki.git; this workflow runs it whenever wiki/ changes.
+#
+# Requires a repository secret WIKI_SYNC_TOKEN: a classic PAT with the `repo`
+# scope (the GITHUB_TOKEN is scoped to this repository and cannot push to the
+# wiki repository).
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "wiki/**"
+  workflow_dispatch:
+
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Publish wiki/
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Publish wiki/
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_SYNC_TOKEN }}
+        run: |
+          if [[ -z $WIKI_TOKEN ]]; then
+            echo "::warning::WIKI_SYNC_TOKEN is not set; the wiki was not published."
+            exit 0
+          fi
+          scripts/sync_wiki.sh --push
