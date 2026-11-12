@@ -221,8 +221,10 @@ jobs:
           docker run -d --name audit-witness -p 9000:9000 \
             -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
             "${AUDIT_WITNESS_IMAGE}" server /data
+          # The port opens before the server is ready, and mc closes the probe
+          # connection; wait on the health endpoint the runner can curl.
           for _ in $(seq 1 30); do
-            if bash -c '</dev/tcp/127.0.0.1/9000' 2>/dev/null; then break; fi
+            curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && break
             sleep 1
           done
           docker run --rm --network host \
@@ -233,7 +235,8 @@ jobs:
             -e AUDIT_WITNESS_BUCKET -e AUDIT_WITNESS_ACCESS_KEY \
             -e AUDIT_WITNESS_SECRET_KEY -e AUDIT_WITNESS_RETENTION_YEARS=7 \
             --entrypoint /bin/bash \
-            "${AUDIT_WITNESS_IMAGE}" /opt/bastion/init-audit-witness.sh
+            "${AUDIT_WITNESS_IMAGE}" /opt/bastion/init-audit-witness.sh ||
+            { docker logs audit-witness; exit 1; }
 
       - name: Run tests
         run: uv run --no-sync pytest -ra --junitxml=pytest-report.xml
