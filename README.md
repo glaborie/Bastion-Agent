@@ -1124,6 +1124,10 @@ live in `usageDetails` and `totalCost`.
 
 ## Troubleshooting
 
+Environment-level failures that cost time before they were diagnosed — reset connections after a
+stack restart, Trivy cache locks, backlog write races, local gate shortcuts — are collected in
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
+
 ### `llama-cpp` restarts with `failed to open GGUF file ... (No such file or directory)`
 
 `./models` is bind-mounted at `/models`, and the file named by `LLAMA_MODEL_FILE`

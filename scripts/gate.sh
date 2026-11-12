@@ -14,7 +14,7 @@
 #   scripts/gate.sh --jobs 2        # cap the pool (1 = serial; default: cores-1, max 4)
 #   scripts/gate.sh --no-tests      # skip pytest (docs-only changes)
 #   scripts/gate.sh --verbose       # stream each step, prefixed with its name
-#   scripts/gate.sh --changed       # pylint only the .py files changed against origin/master
+#   scripts/gate.sh --changed       # pylint and pytest only what changed against origin/master
 #   scripts/gate.sh --changed --base origin/release   # ... against another ref
 #
 # `run_evals.py` runs the eval suites through pytest itself, so it is never
@@ -132,6 +132,42 @@ if ((CHANGED_ONLY)); then
         mapfile -t PYLINT_TARGETS < <(printf '%s\n' "${changed_files[@]}" | grep -E '\.py$' || true)
         echo "gate: pylint narrowed to ${#PYLINT_TARGETS[@]} changed file(s) against $CHANGED_BASE"
     fi
+
+    # Tests: same idea, stricter default. A file whose behaviour is shared by
+    # many suites (conftest, models, settings, the tool catalogue) forces the
+    # full suite; otherwise run the test files named after the changed modules,
+    # and fall back to everything rather than to nothing.
+    PYTEST_TARGETS=()
+    shared=""
+    for f in "${changed_files[@]}"; do
+        case "$f" in
+            conftest.py | tests/conftest.py | settings.py | db/models.py | db/session.py | \
+                pyproject.toml | docs/tools/v1.json | .github/workflows/ci.yml)
+                shared="$f"
+                ;;
+        esac
+    done
+    if [[ -n "$shared" ]]; then
+        echo "gate: $shared is shared across suites; running the full test suite"
+    else
+        for f in "${changed_files[@]}"; do
+            case "$f" in
+                tests/test_*.py)
+                    [[ -f "$f" ]] && PYTEST_TARGETS+=("$f")
+                    ;;
+                *.py)
+                    candidate="tests/test_$(basename "${f%.py}").py"
+                    [[ -f "$candidate" ]] && PYTEST_TARGETS+=("$candidate")
+                    ;;
+            esac
+        done
+        if ((${#PYTEST_TARGETS[@]})); then
+            mapfile -t PYTEST_TARGETS < <(printf '%s\n' "${PYTEST_TARGETS[@]}" | sort -u)
+            echo "gate: pytest narrowed to ${#PYTEST_TARGETS[@]} file(s) against $CHANGED_BASE"
+        else
+            echo "gate: no test file maps to the diff; running the full test suite"
+        fi
+    fi
 fi
 add_step ruff-lint "uv run --no-sync ruff check ."
 add_step ruff-format "uv run --no-sync ruff format --check ."
@@ -141,7 +177,13 @@ if ((${#PYLINT_TARGETS[@]})); then
 else
     add_step pylint "echo 'pylint skipped: no Python files changed'"
 fi
-((RUN_TESTS)) && add_step pytest "uv run --no-sync pytest $PYTEST_FLAGS"
+if ((RUN_TESTS)); then
+    if ((${#PYTEST_TARGETS[@]})); then
+        add_step pytest "uv run --no-sync pytest $PYTEST_FLAGS ${PYTEST_TARGETS[*]}"
+    else
+        add_step pytest "uv run --no-sync pytest $PYTEST_FLAGS"
+    fi
+fi
 add_step adrs "uv run --no-sync python scripts/check_adrs.py"
 add_step tool-catalog "uv run --no-sync python scripts/validate_tool_catalog.py --check"
 add_step rbac "uv run --no-sync python scripts/validate_rbac.py"

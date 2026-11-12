@@ -8,7 +8,7 @@ deterministic, offline, no third-party dependencies, non-zero exit on error.
 
 Usage:
     uv run python scripts/check_backlog.py             # validate (default)
-    uv run python scripts/check_backlog.py --write     # validate, then refresh Board + Index
+    uv run python scripts/check_backlog.py --write     # validate, refresh Board/Index, sync next-id
     uv run python scripts/check_backlog.py --next      # items that are ready to start
     uv run python scripts/check_backlog.py --next --json
 
@@ -402,6 +402,32 @@ def replace_between(text: str, begin: str, end: str, body: str) -> str:
     return text[: start + len(begin)] + "\n" + body + text[stop:]
 
 
+def sync_next_id(text: str, items: list[Item]) -> tuple[str, str | None]:
+    """Point ``next-id`` at the highest allocated id plus one.
+
+    ``--write`` owns this line for the same reason it owns the Board: the value
+    is derived from the items, and a hand-maintained counter drifts the moment a
+    capture is interrupted or two writers interleave. Returns the text and the
+    previous value when it changed, so the caller can report the bump.
+    """
+    numeric = [int(item.id.split("-")[1]) for item in items]
+    if not numeric:
+        return text, None
+    expected = f"IDEA-{max(numeric) + 1:03d}"
+    match = re.search(r"^- next-id: (\S+)$", text, re.MULTILINE)
+    if match is None or match.group(1) == expected:
+        return text, None
+    previous = match.group(1)
+    updated = text[: match.start(1)] + expected + text[match.end(1) :]
+    return updated, previous
+
+
+def meta_next_id(text: str) -> str:
+    """The ``next-id`` value currently on the meta line."""
+    match = re.search(r"^- next-id: (\S+)$", text, re.MULTILINE)
+    return match.group(1) if match else "?"
+
+
 def ready_items(meta: dict[str, str], items: list[Item]) -> list[Item]:
     current_phase = meta.get("current-phase", "")
     by_id = {item.id: item for item in items}
@@ -452,6 +478,9 @@ def main(argv: list[str] | None = None) -> int:
     meta, items, errors, warnings = validate(text)
     if not args.quiet:
         for warning in warnings:
+            # --write fixes this one, so reporting it would be noise.
+            if args.write and warning.startswith("meta: next-id is"):
+                continue
             print(f"warning: {warning}", file=sys.stderr)
     for error in errors:
         print(f"error: {error}", file=sys.stderr)
@@ -501,12 +530,15 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as error:
             print(f"error: {error}", file=sys.stderr)
             return 2
+        updated, previous_next_id = sync_next_id(updated, items)
         if updated != text:
             with path.open("w", encoding="utf-8", newline="\n") as handle:
                 handle.write(updated)
             print(f"refreshed Board and Index in {path.name}")
         else:
             print(f"{path.name}: generated sections already current")
+        if previous_next_id is not None:
+            print(f"next-id: bumped {previous_next_id} -> {meta_next_id(updated)}")
 
     print_summary(meta, items)
     return 0
