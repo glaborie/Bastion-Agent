@@ -38,6 +38,7 @@ router = APIRouter(tags=["approvals"])
 
 _WS_UNAUTHORIZED = 4401
 _WS_FORBIDDEN = 4403
+_CSRF_SUBPROTOCOL_PREFIX = "bastion.csrf."
 
 
 def get_approval_events_redis() -> Redis:
@@ -46,19 +47,26 @@ def get_approval_events_redis() -> Redis:
     return get_redis(settings.redis_url, max_connections=settings.redis_max_connections)
 
 
-def _csrf_from_subprotocol(websocket: WebSocket) -> str | None:
-    """Read ``bastion.csrf.<token>`` from the WebSocket subprotocol header.
+def _csrf_carrier(websocket: WebSocket) -> str | None:
+    """Return the ``bastion.csrf.<token>`` subprotocol the client offered.
 
     A browser cannot set custom headers on a WebSocket, so the token rides in a
-    subprotocol rather than the URL. That keeps it out of access logs while
-    still failing closed when absent. The query/header forms remain for
-    non-browser clients and tests.
+    subprotocol rather than the URL; that keeps it out of access logs while still
+    failing closed when absent. Only this carrier counts: an unrelated protocol
+    (``graphql-ws``, a vendor extension) is never selected.
     """
-    for raw in websocket.headers.get("sec-websocket-protocol", "").split(","):
+    offered = websocket.headers.get("sec-websocket-protocol", "")
+    for raw in offered.split(","):
         protocol = raw.strip()
-        if protocol.startswith("bastion.csrf."):
-            return protocol.removeprefix("bastion.csrf.")
+        if protocol.startswith(_CSRF_SUBPROTOCOL_PREFIX):
+            return protocol
     return None
+
+
+def _csrf_from_subprotocol(websocket: WebSocket) -> str | None:
+    """Read the token from the carrier subprotocol, if the client sent one."""
+    carrier = _csrf_carrier(websocket)
+    return carrier.removeprefix(_CSRF_SUBPROTOCOL_PREFIX) if carrier else None
 
 
 async def _reject(websocket: WebSocket, code: int, reason: str) -> None:
@@ -130,7 +138,7 @@ async def approvals_stream(
         return
     tenant_id, _session_id = authenticated
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=_csrf_carrier(websocket))
     # A refresh hint closes the gap between page render and socket open; the
     # client treats every message as "re-read the queue".
     await websocket.send_json({"type": "connected"})

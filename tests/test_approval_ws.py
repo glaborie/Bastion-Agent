@@ -233,6 +233,41 @@ def test_foreign_origin_is_rejected() -> None:
     assert refusal.value.code == 4403
 
 
+def test_handshake_echoes_the_offered_subprotocol() -> None:
+    """RFC 6455: a browser aborts when the 101 omits the protocol it offered.
+
+    The CSRF token rides in ``bastion.csrf.<token>`` because a browser cannot set
+    headers on a WebSocket; the server must select that exact subprotocol or the
+    connection dies before the first message and the page polls forever.
+    """
+    client, _broker, _sessions = _app()
+    with client:
+        client.cookies.set(_cookie(), "session-1")
+        with client.websocket_connect(
+            "/ws/approvals", subprotocols=["bastion.csrf.csrf-1"]
+        ) as socket:
+            assert socket.accepted_subprotocol == "bastion.csrf.csrf-1"
+            assert socket.receive_json()["type"] == "connected"
+            assert socket.receive_json()["type"] == "refresh"
+
+
+def test_clients_that_offer_no_csrf_subprotocol_still_connect() -> None:
+    """Non-browser clients use the query/header token and offer no protocol."""
+    client, _broker, _sessions = _app()
+    with client:
+        client.cookies.set(_cookie(), "session-1")
+        with client.websocket_connect("/ws/approvals?csrf_token=csrf-1") as socket:
+            assert socket.accepted_subprotocol is None
+            assert socket.receive_json()["type"] == "connected"
+
+        # An unrelated protocol is not echoed: only the CSRF carrier is selected.
+        with client.websocket_connect(
+            "/ws/approvals?csrf_token=csrf-1", subprotocols=["graphql-ws"]
+        ) as socket:
+            assert socket.accepted_subprotocol is None
+            assert socket.receive_json()["type"] == "connected"
+
+
 async def test_pubsub_round_trip_and_malformed_message() -> None:
     redis = FakeAsyncRedis(decode_responses=True)
     stream = subscribe_approval_events(redis, "acme")  # type: ignore[arg-type]

@@ -144,7 +144,7 @@ This document defines the full feature set for the Bastion-Agent Command Control
 ## Nice-to-Have Features (Priority 2)
 
 ### 9. Theme & UX Polish
-- **Dark/Light Toggle**: Tailwind `dark:` variant + `localStorage` persistence
+- **Dark/Light Toggle (implemented)**: three-state control — Auto / Light / Dark — in the operator bar. The choice is stored in the first-party `bastion_theme` cookie (one year, `HttpOnly`, `SameSite=Lax`) and rendered server-side into `<html data-theme>` so the first paint already matches; `theme.js` only makes a click instant, and the form works without JavaScript. Pico 2.0.6 supplies both palettes and every dashboard colour is a token (ADR-007 decision 1).
 - **WebSocket Live Updates**: Replace 3s polling with `hx-ext="ws"` for approval queue, worker health, routing metrics
 - **Keyboard Shortcuts**:
   - `a` → Approve selected

@@ -10,6 +10,8 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from gateway.dashboard.theme import theme_from_request
+
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -41,7 +43,7 @@ def render(
     headers: dict[str, str] | None = None,
 ) -> HTMLResponse:
     """Render a template with the request already wired into the context."""
-    payload: dict[str, Any] = {"request": request}
+    payload: dict[str, Any] = {"request": request, "theme": theme_from_request(request)}
     payload.update(context or {})
     return templates.TemplateResponse(
         request=request,

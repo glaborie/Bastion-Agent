@@ -11,7 +11,7 @@ must not be edited by hand.
 
 - current-phase: v0.3
 - wip-limit: 3
-- next-id: IDEA-032
+- next-id: IDEA-034
 
 ## Board
 
@@ -38,10 +38,10 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (23)
+### Done (25)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
-- `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
+- `IDEA-002` P1 v0.3 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-003` P1 v0.2 agent - Route the ONNX ensemble to GPU to meet the 50 ms classify budget
 - `IDEA-005` P1 v0.2 security - Reject canary prefixes shorter than eight characters at startup
 - `IDEA-006` P3 v0.2 docs - Add a deterministic egress canary demo
@@ -63,6 +63,8 @@ _none_
 - `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 - `IDEA-029` P2 v0.3 db - Escrow the delivered assistant answer so a conversation is reconstructable
 - `IDEA-030` P1 v0.3 security - Make the worker reject tool jobs whose identity the gateway did not mint
+- `IDEA-032` P3 v0.3 gateway - Add a persisted theme control and fix dark-mode contrast on the dashboard
+- `IDEA-033` P1 v0.3 gateway - Echo the approval WebSocket subprotocol so browsers keep the socket open (waiting on IDEA-002)
 
 _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 <!-- END BOARD -->
@@ -73,7 +75,7 @@ _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 | ID | Status | Prio | Phase | Area | Title |
 |---|---|---|---|---|---|
 | IDEA-001 | done | P2 | v0.3 | agent | Tenant isolation for Redis keys and Postgres rows |
-| IDEA-002 | done | P1 | v0.2 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
+| IDEA-002 | done | P1 | v0.3 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
 | IDEA-003 | done | P1 | v0.2 | agent | Route the ONNX ensemble to GPU to meet the 50 ms classify budget |
 | IDEA-004 | blocked | P2 | v0.3 | db | Export the audit ledger asynchronously for retention |
 | IDEA-005 | done | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
@@ -103,6 +105,8 @@ _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 | IDEA-029 | done | P2 | v0.3 | db | Escrow the delivered assistant answer so a conversation is reconstructable |
 | IDEA-030 | done | P1 | v0.3 | security | Make the worker reject tool jobs whose identity the gateway did not mint |
 | IDEA-031 | inbox | P2 | v0.3 | tooling | Fail CI when the threat-model control table drifts from the tree |
+| IDEA-032 | done | P3 | v0.3 | gateway | Add a persisted theme control and fix dark-mode contrast on the dashboard |
+| IDEA-033 | done | P1 | v0.3 | gateway | Echo the approval WebSocket subprotocol so browsers keep the socket open |
 <!-- END INDEX -->
 
 ## Items
@@ -149,7 +153,7 @@ construction, and a test proves it by attempting the access.
 
 - status: done
 - priority: P1
-- phase: v0.2
+- phase: v0.3
 - area: gateway
 - tags: dashboard, websocket, hitl, latency
 - depends-on: -
@@ -1785,3 +1789,97 @@ The worker executes a tool job only when it can establish identity without trust
 
 - Deduplication: grepped `BACKLOG.md`, `docs/adr/` and `scripts/` for `check_threat`, `control status`, `control table` and `drift`. IDEA-010 (restating an ADR-006 decision) and IDEA-011 (the `CONTROL.md` rate-limit claim) are the same genre of document reconciliation but each fixed one document by hand; nothing generalises the check. IDEA-019 updated the T11 rows inside the supply-chain work and left the gate absent, which is why the §4 table drifted again. `spec: -` because no ADR governs the threat model's lifecycle; `ADR-Index` is the nearest owner and could be cited instead.
 - Classification: `P2`/`v0.3`/`tooling`. A defect in shipped documentation, so the current phase; `P2` because no runtime control is affected and the drift misleads a reader rather than an attacker. `area: tooling` because the deliverable is a script and CI wiring; `docs` is the alternative reading.
+
+### IDEA-032: Add a persisted theme control and fix dark-mode contrast on the dashboard
+
+- status: done
+- priority: P3
+- phase: v0.3
+- area: gateway
+- tags: dashboard, accessibility, css, ux
+- depends-on: -
+- spec: ADR-007
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: session request on 2026-11-12 ("implement darkmode on the dashboard")
+
+**Problem**
+
+The dashboard already goes dark implicitly and cannot be told to. `gateway/dashboard/templates/base.html:6` sets `<meta name="color-scheme" content="light dark">` and Pico 2.0.6 resolves `prefers-color-scheme`, so the theme follows the operating system and an operator whose OS stays light has no way to choose dark for a night or on-call shift: no template carries a toggle, `gateway/dashboard/static/` holds no theme script, and nothing persists a choice. The dashboard's own colours are literals rather than tokens — `#1b7f4b` for `.badge-ok`/`.chat-status.ok` and `#a4161a` for `.badge-bad`, `.alert` and `.chat-status.error` (`gateway/dashboard/static/style.css:74-87,220-226`) — so they do not adapt, and the red status text is roughly 2.3:1 against Pico's dark surface, below the WCAG AA 4.5:1 threshold. `CONTROL.md:147` nonetheless lists "**Dark/Light Toggle**: Tailwind `dark:` variant + `localStorage` persistence" under shipped features while Tailwind appears nowhere in the tree, the same document-claims-a-control pattern IDEA-011 reconciled for rate limiting.
+
+**Outcome**
+
+Every dashboard page offers a three-state theme control — system, light, dark — that defaults to system so today's behaviour is unchanged, applies the stored choice in `<head>` before first paint so a dark reload does not flash light, and persists only the theme name as a first-party asset under the strict `script-src 'self'` CSP: no inline `<script>`, no CDN, no new asset host (ADR-007 decisions 1 and 5). Every colour the dashboard sets itself is either a Pico token or a scheme-aware value that meets AA in both schemes, and `CONTROL.md` plus ADR-007 decision 1 describe what actually ships.
+
+**Acceptance**
+
+- [x] `uv run pytest tests/test_dashboard_theme.py -q` asserts every dashboard page renders the control, loads exactly one first-party theme script from `/static/`, and contains no inline `<script>`; the CSP in `gateway/main.py:46` is unchanged
+- [x] No flash on reload: with the stored preference set to dark the first paint is dark, proven by a rendered-page test asserting the theme is resolved in `<head>` — a server-rendered `data-theme` on `<html>`, or a first-party script loaded synchronously there — never by a deferred script or an htmx swap
+- [x] A request with no stored preference keeps `system` and renders the markup shipped today, and the persisted value is one of `system|light|dark` carrying no principal, tenant or session identifier, so a shared browser exposes a display choice and nothing else; clearing it falls back to `system`
+- [x] A test computes the WCAG contrast ratio of every literal colour in `gateway/dashboard/static/style.css` against the Pico surface it is drawn on in both schemes and fails below 4.5:1, with the shipped `#a4161a` and `#1b7f4b` replaced by tokens or scheme-aware values so it passes
+- [x] `CONTROL.md:147` no longer claims a Tailwind `dark:` variant, `grep -rn "tailwind" CONTROL.md gateway/` returns nothing, and ADR-007 decision 1 records the three-state control, its storage and the first-paint rule; `uv run python scripts/check_adrs.py` passes
+- [x] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy` and `pylint` stay green, and `tests/test_dashboard.py` passes with the toggle added
+
+**Notes**
+
+- Deduplication: grepped `BACKLOG.md`, `docs/adr/`, `CONTROL.md`, `COMPLIANCE.md` and `HANDOVER_SPEC.md` for `dark`, `theme`, `stylesheet`, `css`, `prefers-color` and `contrast`. No backlog item covers theming; the only theme hits are ADR-007 decision 1 (which records the automatic media-query behaviour that already ships), `CONTROL.md:147`, `COMPLIANCE.md:40` and `HANDOVER_SPEC.md:92,182`. IDEA-011 (done) reconciled the rate-limit claim and left the theme line untouched; IDEA-012 (done) added the demo console; IDEA-002 (done) is the approvals transport. So this is not "already decided and built": automatic dark is built, the manual control and the contrast repair are not.
+- Classification: `P3`/`v0.3`/`gateway`. Cosmetic capability with no security invariant at stake and nothing broken in the guardrails, so not `P0`/`P1`; `P3` because it carries no phase commitment and no ADR-008 phase line names dashboard theming. `v0.3` is the current phase and the conservative home for a fix with no obvious phase; triage may pull it into `v0.2` as polish on shipped UI, or reject the toggle and keep only the documentation correction.
+- Two separable halves, as in IDEA-011: (a) the `CONTROL.md:147` and ADR-007 drift, provable without the control; (b) the control and the contrast repair. The acceptance is written so (a) can ship alone if triage declines (b).
+- Open decisions the ADR must take rather than this item preselecting: a cookie versus `localStorage` for persistence — a cookie renders the attribute server-side with no script but adds a per-response value, `localStorage` needs a first-party synchronous script in `<head>` — and whether the control is a three-state select or a two-state toggle with `system` reached by clearing it.
+- Honest limits: the contrast check covers the dashboard's own CSS, not Pico's defaults, the vendored htmx fragments or keyboard navigation; `CONTROL.md`'s P2 list (shortcuts, command palette) stays out of scope; and the automatic dark mode already shipping means the item is a manual override plus a colour repair, not a from-scratch dark theme.
+- Intake only: no template, CSS, script, test, document or ADR edit is part of this capture.
+
+**Implementation notes (2026-11-12)**
+
+- Started at explicit request while `inbox`/v0.3 on branch `idea-032-dashboard-theme`; promoted straight to `active` because the operator asked for the toggle and its persistence in the same turn.
+- Storage decision (was an open question): one first-party cookie `bastion_theme` (`HttpOnly`, `SameSite=Lax`, `Path=/`, one-year `Max-Age`) rather than `localStorage`. The server renders `data-theme` on `<html>`, so the first paint is correct without any script, the value is an allow-list entry (`system|light|dark` — anything else renders as `system`), and a shared browser stores a display choice and no identity. `POST /dashboard/theme` (`gateway/dashboard/routes.py`, operator/admin + CSRF + the login `next` guard) writes it; `gateway/dashboard/theme.py` owns the list and the cookie flags; `gateway/dashboard/templating.py` injects the resolved theme into every render, error pages included.
+- Control shape: three submit buttons (Auto / Light / Dark) in the operator bar, so it works with JavaScript disabled (full reload, server persists). `gateway/dashboard/static/theme.js` is progressive enhancement only: it posts the same form with `Accept: application/json`, gets `204`, flips the attribute and `aria-pressed` in place, and falls back to `form.submit()` if the request fails. It never touches `document.cookie` (the cookie is `HttpOnly`) and the CSP still allows only `script-src 'self'` with no inline script or handler.
+- Colour repair: `style.css` now has no literal colour. `--bastion-ok`/`--bastion-danger` resolve to Pico's `--pico-ins-color`/`--pico-del-color`, and badge text uses `var(--pico-background-color)` as the on-colour, so the same rule is white-on-dark-green in the light palette and dark-on-pale-green in the dark one. Measured ratios (recomputed by the test from the vendored palette): status text on page background 6.48 light / 6.94 dark for ok, 7.83 / 5.89 for danger; on the dark card 6.59 / 5.60; badge text 6.48 / 6.94 (ok) and 7.83 / 5.89 (danger). All ≥ 4.5:1.
+- `tests/test_dashboard_theme.py` (21 tests): control on all four dashboard pages, one `/static/theme.js`, zero inline scripts, unchanged `script-src 'self'`; server-rendered `data-theme` for `light`/`dark`; no attribute and no `Set-Cookie` identity for `system`; forged cookie → `system`; cookie flags and allow-list on a POST; `204` for the fetch path; `303` with a safe `next`; `//`, `https://` and backslash targets redirected to `/dashboard`; CSRF required; `readonly` refused; `theme.js` first-party and free of `innerHTML`/`eval`/`localStorage`; media-query dark and forced dark palettes equal; WCAG AA on both surfaces in all three palettes; stylesheet literal-free and token-mapped.
+- Documents: `CONTROL.md` §9 states the shipped three-state control instead of the Tailwind claim (`grep -rn tailwind CONTROL.md gateway/` is empty); ADR-007 decision 1 gains the colour-scheme paragraph (states, cookie, first-paint rule, progressive enhancement, token/contrast rule) and decision 5 names the control in `base.html`.
+- Gates on this branch: `scripts/gate.sh --integration` → 10/10 (ruff lint/format, mypy 79 files, pylint 10.00/10, pytest 741 passed / 12 skipped, ADRs, tool catalog, RBAC, DREAD, backlog).
+- Honest limits: no browser was available, so the toggle was verified through rendered HTML and the request/response contract, not a visual pass; the contrast test covers the dashboard's own CSS and the Pico surfaces it draws on, not Pico's own components, htmx fragments or focus rings; `system` follows the OS and cannot be previewed against the other palette without changing the OS setting.
+
+### IDEA-033: Echo the approval WebSocket subprotocol so browsers keep the socket open
+
+- status: done
+- priority: P1
+- phase: v0.3
+- area: gateway
+- tags: dashboard, websocket, bug, latency
+- depends-on: IDEA-002
+- spec: ADR-007
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: session report on 2026-11-12 ("the dashboard is polling /api/approvals every 3 seconds and it makes the bottom half of the page blink")
+
+**Problem**
+
+`gateway/dashboard/static/approvals.js:92` opens `new WebSocket(url, ["bastion.csrf." + csrf])`, but `gateway/routers/approval_ws.py:133` calls `await websocket.accept()` with no `subprotocol`. RFC 6455 requires the server to answer a requested subprotocol with `Sec-WebSocket-Protocol`; a browser that offered one aborts the connection when the 101 omits it. The gateway log shows the result: dozens of `WebSocket /ws/approvals [accepted]` lines, one per reconnect, while `approvals.js` treats every close as degradation and starts its 3 s poll. Each poll replaces `#approvals` wholesale, so the lower half of the dashboard blinks every three seconds. The tests missed it because Starlette's `TestClient` records `accepted_subprotocol` without enforcing the rule: `tests/test_approval_ws.py:126` offers the protocol but never asserts the echo.
+
+**Outcome**
+
+The handshake echoes the one offered `bastion.csrf.<token>` subprotocol, a browser keeps the socket open and the page never starts polling, and the fallback poll runs only when the socket really is unavailable. A test asserts the echo and fails against the pre-fix `accept()`.
+
+**Acceptance**
+
+- [x] `websocket.accept(subprotocol=...)` returns the offered `bastion.csrf.<token>` when present and `None` when the client offers none or an unrelated protocol, so query/header clients still connect
+- [x] `tests/test_approval_ws.py` asserts `accepted_subprotocol` equals the offered protocol; the assertion fails on the pre-fix code
+- [x] Fan-out, tenant isolation, role and CSRF rejections are unchanged
+- [x] ADR-007 decision 3 records the echo requirement; `uv run python scripts/check_adrs.py` passes
+- [x] `scripts/gate.sh --integration` is green (10/10: 768 passed / 16 skipped, mypy 80 files, pylint 10.00/10), after repairing two base lints inherited from `origin/master` (`wiki/API-Reference.md` code block, `tests/test_db_tls.py` empty-mapping assertion)
+
+**Notes**
+
+- Root cause, not a reconnect heuristic: the ASGI handshake was accepted and uvicorn logged `[accepted]`, but the browser closed the socket immediately because the response carried no `Sec-WebSocket-Protocol` for the protocol it requested.
+- Verification is at the ASGI handshake (`accepted_subprotocol`) plus the existing two-client fan-out tests. No browser was run.
+- Honest limit: the degraded path still replaces `#approvals` wholesale every 3 s, which is the documented fallback; skipping a no-op swap is a separate improvement, not part of this fix.
+
+**Implementation notes (2026-11-12)**
+
+- Red first: the new assertion in `tests/test_approval_ws.py` failed against the shipped code (`accepted_subprotocol` was `None`), so the test pins the actual defect rather than the fix.
+- Fix shape: `_csrf_carrier()` selects exactly the offered `bastion.csrf.<token>` protocol, `_csrf_from_subprotocol()` reuses it, and `approvals_stream` now calls `await websocket.accept(subprotocol=_csrf_carrier(websocket))`. A client offering no protocol (query/header token) still connects with no selected protocol; an unrelated protocol such as `graphql-ws` is never echoed.
+- Live proof against the rebuilt `bastion-agent:local`: seeded a throwaway operator session in Redis, sent a raw RFC 6455 upgrade to `localhost:8000/ws/approvals` with the CSRF subprotocol, and got `HTTP/1.1 101 Switching Protocols` plus `Sec-WebSocket-Protocol: bastion.csrf.live-check-csrf`. Before the fix that header was absent — uvicorn still logged `[accepted]`, which is why the symptom looked like a reconnect problem rather than a handshake failure. The throwaway session was deleted afterwards.
+- Base repair: `origin/master` (wiki + mTLS PRs) carried two repo-wide gate failures that arrived after the base I branched from — `ruff 0.17.4` reformats a Python block in `wiki/API-Reference.md`, and pylint flags `redis_tls_kwargs(settings) == {}` in `tests/test_db_tls.py`. Both are one-line, behaviour-free fixes kept in their own commit so this branch's gate is honest; they are unrelated to the socket.
+- Tests: `tests/test_approval_ws.py` now also proves that a client offering no protocol, and one offering only an unrelated protocol, still connect. Fan-out, tenant isolation, `readonly` and CSRF rejection tests are unchanged and green.
+- Limitation worth recording: the `websockets` library (17.4) returns `None` instead of failing when a server omits the echo, so only a real browser enforces RFC 6455 here. The ASGI-level assertion is the contract the browser checks; the raw upgrade above confirms uvicorn writes the header.

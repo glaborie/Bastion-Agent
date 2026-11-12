@@ -6,7 +6,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.demo.scenarios import SCENARIOS
@@ -22,8 +22,10 @@ from gateway.audit_service import (
     recent_security_incidents,
     session_timeline,
 )
-from gateway.auth.rbac import AuthContext, require_roles
+from gateway.auth.rbac import AuthContext, require_csrf, require_roles
+from gateway.auth.session import safe_next_path
 from gateway.dashboard.templating import render, render_error
+from gateway.dashboard.theme import apply_theme_cookie, normalise_theme
 from gateway.evals import load_latest_report
 from gateway.rate_limit import rate_limit
 from settings import get_settings
@@ -60,6 +62,32 @@ CHAT_SUGGESTIONS: tuple[dict[str, str], ...] = (
 @router.get("/")
 async def index() -> RedirectResponse:
     return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/dashboard/theme")
+async def set_theme(
+    request: Request,
+    _csrf: AuthContext = Depends(require_csrf),
+    _authorized: AuthContext = Depends(require_roles("operator", "admin")),
+) -> Response:
+    """Persist the colour-scheme preference and return to the page that asked.
+
+    The value is allow-listed before it reaches a header, so a forged cookie or
+    form field can only ever select ``system``. ``next`` passes through the same
+    open-redirect guard as the login flow. A caller that asks for JSON (the
+    first-party ``theme.js``) gets ``204`` and stays on the page.
+    """
+    form = await request.form()
+    theme = normalise_theme(form.get("theme"))
+    requested_next = form.get("next")
+    target = safe_next_path(requested_next if isinstance(requested_next, str) else None)
+
+    wants_json = request.headers.get("accept", "").startswith("application/json")
+    response: Response = (
+        Response(status_code=204) if wants_json else RedirectResponse(target, status_code=303)
+    )
+    apply_theme_cookie(response, theme)
+    return response
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
