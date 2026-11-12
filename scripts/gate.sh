@@ -14,6 +14,8 @@
 #   scripts/gate.sh --jobs 2        # cap the pool (1 = serial; default: cores-1, max 4)
 #   scripts/gate.sh --no-tests      # skip pytest (docs-only changes)
 #   scripts/gate.sh --verbose       # stream each step, prefixed with its name
+#   scripts/gate.sh --changed       # pylint only the .py files changed against origin/master
+#   scripts/gate.sh --changed --base origin/release   # ... against another ref
 #
 # `run_evals.py` runs the eval suites through pytest itself, so it is never
 # pooled with the pytest step: it runs alone once the pool drains.
@@ -30,6 +32,8 @@ RUN_EVALS=0
 INTEGRATION=0
 VERBOSE=0
 JOBS=""
+CHANGED_ONLY=0
+CHANGED_BASE="origin/master"
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
 
@@ -39,6 +43,12 @@ while (($#)); do
         --evals) RUN_EVALS=1 ;;
         --integration) INTEGRATION=1 ;;
         --verbose) VERBOSE=1 ;;
+        --changed) CHANGED_ONLY=1 ;;
+        --base)
+            [[ $# -ge 2 ]] || { echo "gate: --base needs a git ref" >&2; exit 2; }
+            CHANGED_BASE="$2"
+            shift
+            ;;
         --serial) JOBS=1 ;;
         --jobs)
             [[ $# -ge 2 ]] || { echo "gate: --jobs needs a number" >&2; exit 2; }
@@ -98,10 +108,39 @@ add_step() {
 }
 
 # Declared in canonical display order; launched in LAUNCH_ORDER (longest first).
+
+# Pylint targets: the whole tree by default. `--changed` narrows it to the .py
+# files this branch touches, and falls back to the whole tree when pylint's own
+# configuration or pin moved, because those changes are only meaningful against
+# every file. The same rule runs in CI (.github/workflows/ci.yml).
+PYLINT_TARGETS=(settings.py logging_setup.py telemetry.py db gateway agent tests scripts)
+if ((CHANGED_ONLY)); then
+    git rev-parse --verify -q "$CHANGED_BASE" >/dev/null || {
+        echo "gate: --changed base ref '$CHANGED_BASE' not found (fetch it or pass --base)" >&2
+        exit 2
+    }
+    # Diff the working tree, not just HEAD: a local run usually lints edits that
+    # are not committed yet. Untracked files count too.
+    mapfile -t changed_files < <(
+        { git diff --name-only --diff-filter=ACMR "$CHANGED_BASE";
+          git ls-files --others --exclude-standard; } | sort -u
+    )
+    if printf '%s\n' "${changed_files[@]}" |
+        grep -qE '^(pyproject\.toml|pylintrc|\.pylintrc|\.github/workflows/ci\.yml)$'; then
+        echo "gate: pylint config or pin changed against $CHANGED_BASE; linting the whole tree"
+    else
+        mapfile -t PYLINT_TARGETS < <(printf '%s\n' "${changed_files[@]}" | grep -E '\.py$' || true)
+        echo "gate: pylint narrowed to ${#PYLINT_TARGETS[@]} changed file(s) against $CHANGED_BASE"
+    fi
+fi
 add_step ruff-lint "uv run --no-sync ruff check ."
 add_step ruff-format "uv run --no-sync ruff format --check ."
 add_step mypy "uv run --no-sync mypy settings.py logging_setup.py db gateway agent scripts"
-add_step pylint "uv run --no-sync pylint settings.py logging_setup.py telemetry.py db gateway agent tests scripts"
+if ((${#PYLINT_TARGETS[@]})); then
+    add_step pylint "uv run --no-sync pylint ${PYLINT_TARGETS[*]}"
+else
+    add_step pylint "echo 'pylint skipped: no Python files changed'"
+fi
 ((RUN_TESTS)) && add_step pytest "uv run --no-sync pytest $PYTEST_FLAGS"
 add_step adrs "uv run --no-sync python scripts/check_adrs.py"
 add_step tool-catalog "uv run --no-sync python scripts/validate_tool_catalog.py --check"
