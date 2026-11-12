@@ -244,12 +244,14 @@ CREATE TABLE audit_logs (
 - **Root filesystem**: Read-only where possible
 - **Network**: Internal Docker network, no host exposure
 - **Ports**: Bound to `127.0.0.1` (use TLS reverse proxy for external access)
+- **East-west TLS**: opt-in `pki` profile; PostgreSQL is certificate-only, Redis has no plaintext port and Keycloak serves HTTPS (ADR-019, `docs/PKI.md`). The default profile is plaintext and loopback-only for local development.
 - **Volumes**: Read-only mounts for models and configs
 
 ### Secrets Management
 - **Environment variables**: `.env` file (never committed)
 - **Key rotation**: Quarterly rotation for `LLAMA_API_KEY`, `OPENROUTER_API_KEY`, `REDIS_PASSWORD`, `APPROVAL_HMAC_SECRET`, `JOB_SIGNING_SECRET`
 - **Job signing key**: Rotating `JOB_SIGNING_SECRET` is a coordinated restart, not a rolling one — drain the queue or expect bounded `bad_signature` refusals (ADR-018)
+- **PKI secrets**: `secrets/ca_password` and `secrets/provisioner_password` are compose secret files, mode `0600`, gitignored; the CA root key stays under `pki/ca` and is mounted only into the CA container
 - **Vault**: Use HashiCorp Vault or Azure Key Vault for production
 
 ### Health & Readiness

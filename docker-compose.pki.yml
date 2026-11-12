@@ -1,0 +1,253 @@
+# =============================================================================
+# Bastion-Agent — east-west mutual TLS (ADR-019)
+# -----------------------------------------------------------------------------
+# Opt-in overlay. The default profile stays plaintext and loopback-only:
+#
+#   ./scripts/pki/bootstrap.sh
+#   docker compose -f docker-compose.yml -f docker-compose.pki.yml \
+#       --profile pki up -d
+#
+# What it changes on the data plane:
+#   * PostgreSQL accepts only certificate authentication over TCP (pg_hba.conf
+#     `cert`); a password alone is refused and so is a plaintext connection.
+#   * Redis speaks TLS on the same port and requires a client certificate.
+#   * Keycloak serves HTTPS; the gateway trusts the internal CA for the JWKS and
+#     token endpoints.
+#
+# The CA root key lives in ./pki/ca and is mounted only into the `ca` service.
+# It never enters the image, .env or a volume the application can read.
+# =============================================================================
+
+name: bastion-agent
+
+x-pki-image: &pki-image
+  image: smallstep/step-ca:0.28.4@sha256:0f88382ac5af5c6b7bbba0c6e8fcefef52aee6f22ea364df8e02a09ffd0d22f3
+  profiles: [pki]
+  networks:
+    - bastion-net
+
+secrets:
+  ca_password:
+    file: ./secrets/ca_password
+  provisioner_password:
+    file: ./secrets/provisioner_password
+
+services:
+  # ---------------------------------------------------------------------------
+  # One-shot CA bootstrap. Idempotent: an existing ca.json is left untouched so
+  # a restart never regenerates the root key.
+  # ---------------------------------------------------------------------------
+  pki-init:
+    <<: *pki-image
+    command: ["/bin/sh", "/scripts/init-ca.sh"]
+    entrypoint: []
+    environment:
+      PKI_CA_NAME: ${PKI_CA_NAME:-Bastion Internal CA}
+      PKI_CA_DNS: ${PKI_CA_DNS:-ca,db,redis,keycloak,omniroute,otel-collector,localhost,127.0.0.1}
+      PKI_CA_ADDRESS: ${PKI_CA_ADDRESS:-:9000}
+      PKI_PROVISIONER: ${PKI_PROVISIONER:-bastion-admin}
+    secrets:
+      - ca_password
+      - provisioner_password
+    volumes:
+      - ./pki:/pki
+      - ./scripts/pki:/scripts:ro
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # The internal CA. Reachable only on bastion-net, never published.
+  # ---------------------------------------------------------------------------
+  ca:
+    <<: *pki-image
+    command:
+      - step-ca
+      - --password-file=/run/secrets/ca_password
+      - /pki/ca/config/ca.json
+    entrypoint: []
+    secrets:
+      - ca_password
+    volumes:
+      - ./pki:/pki
+    depends_on:
+      pki-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "step", "ca", "health", "--ca-url", "https://localhost:9000", "--root", "/pki/trust/ca.crt"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      # The step-ca binary requires NET_BIND_SERVICE at exec time even though
+      # this CA listens on :9000; without it the kernel returns EPERM.
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # One-shot issuance/renewal. Re-run it to renew; services that can reload
+  # their certificate (PostgreSQL via SIGHUP) pick the new leaf up.
+  # ---------------------------------------------------------------------------
+  pki-issue:
+    <<: *pki-image
+    command: ["/bin/sh", "/scripts/issue-certs.sh"]
+    entrypoint: []
+    # The issuance job writes leaves owned by each service's uid, which requires
+    # chown as root. It is a one-shot build step, not a long-running process.
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    environment:
+      PKI_CA_URL: https://ca:9000
+      PKI_CERT_TTL: ${PKI_CERT_TTL:-24h}
+      PKI_PROVISIONER: ${PKI_PROVISIONER:-bastion-admin}
+      POSTGRES_USER: ${POSTGRES_USER:-bastion}
+    secrets:
+      - provisioner_password
+    volumes:
+      - ./pki:/pki
+      - ./scripts/pki:/scripts:ro
+    depends_on:
+      ca:
+        condition: service_healthy
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL: TLS on, certificate-only auth over TCP.
+  # ---------------------------------------------------------------------------
+  db:
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/certs/tls.crt
+      - -c
+      - ssl_key_file=/certs/tls.key
+      - -c
+      - ssl_ca_file=/pki-ca/ca.crt
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./pki/db:/certs:ro
+      - ./pki/trust:/pki-ca:ro
+      - ./config/pki/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    depends_on:
+      pki-issue:
+        condition: service_completed_successfully
+
+  # ---------------------------------------------------------------------------
+  # Application tier: present the client certificate, verify the server.
+  # ---------------------------------------------------------------------------
+  gateway:
+    environment:
+      DATABASE_SSL_MODE: verify-full
+      REDIS_TLS_ENABLED: "true"
+      REDIS_URL: rediss://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+      PKI_CA_CERT_PATH: /pki/ca/ca.crt
+      PKI_CLIENT_CERT_PATH: /pki/client/tls.crt
+      PKI_CLIENT_KEY_PATH: /pki/client/tls.key
+      OIDC_CA_CERT_PATH: /pki/ca/ca.crt
+      KEYCLOAK_JWKS_URI: https://keycloak:8080/realms/${KEYCLOAK_REALM:-bastion}/protocol/openid-connect/certs
+      KEYCLOAK_TOKEN_URI: https://keycloak:8080/realms/${KEYCLOAK_REALM:-bastion}/protocol/openid-connect/token
+    volumes:
+      - ./pki/trust:/pki/ca:ro
+      - ./pki/gateway:/pki/client:ro
+    depends_on:
+      pki-issue:
+        condition: service_completed_successfully
+
+  worker:
+    environment:
+      DATABASE_SSL_MODE: verify-full
+      REDIS_TLS_ENABLED: "true"
+      REDIS_URL: rediss://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+      PKI_CA_CERT_PATH: /pki/ca/ca.crt
+      PKI_CLIENT_CERT_PATH: /pki/client/tls.crt
+      PKI_CLIENT_KEY_PATH: /pki/client/tls.key
+    volumes:
+      - ./pki/trust:/pki/ca:ro
+      - ./pki/worker:/pki/client:ro
+    depends_on:
+      pki-issue:
+        condition: service_completed_successfully
+
+  # ---------------------------------------------------------------------------
+  # Redis: TLS on the same port, client certificate required.
+  # ---------------------------------------------------------------------------
+  redis:
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      - --tls-port
+      - "6379"
+      - --port
+      - "0"
+      - --tls-cert-file
+      - /certs/tls.crt
+      - --tls-key-file
+      - /certs/tls.key
+      - --tls-ca-cert-file
+      - /pki-ca/ca.crt
+      - --tls-auth-clients
+      - "yes"
+    volumes:
+      - redisdata:/data
+      - ./pki/redis:/certs:ro
+      - ./pki/trust:/pki-ca:ro
+    depends_on:
+      pki-issue:
+        condition: service_completed_successfully
+    healthcheck:
+      # The default probe speaks plaintext, which a TLS-only server rejects.
+      test:
+        - CMD-SHELL
+        - >-
+          redis-cli -h 127.0.0.1 --tls --cacert /pki-ca/ca.crt
+          --cert /certs/tls.crt --key /certs/tls.key --no-auth-warning
+          -a "$${REDIS_PASSWORD}" ping | grep -q PONG
+
+  # ---------------------------------------------------------------------------
+  # Keycloak: HTTPS on the back channel; the gateway trusts the internal CA.
+  # ---------------------------------------------------------------------------
+  keycloak:
+    command:
+      # `start-dev` forces an HTTP listener on the same port; the supported
+      # mode is `start`.
+      - start
+      - --import-realm
+      - --https-port=8080
+      # `start-dev` turns the HTTP listener on by default; the HTTPS listener
+      # shares the port, so it has to be switched off explicitly.
+      - --http-enabled=false
+      - --https-certificate-file=/certs/tls.crt
+      - --https-certificate-key-file=/certs/tls.key
+    environment:
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-https://localhost:8080}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "false"
+      KC_HTTPS_ENABLED: "true"
+    volumes:
+      - ./config/keycloak:/opt/keycloak/data/import:ro
+      - keycloak_data:/opt/keycloak/data
+      - ./pki/keycloak:/certs:ro
+    depends_on:
+      pki-issue:
+        condition: service_completed_successfully

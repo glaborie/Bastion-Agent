@@ -98,6 +98,7 @@ Two facts shape the model:
 | Runtime syscall detection (Falco, opt-in `security` profile) | PARTIAL | `config/falco/`, ADR-017 |
 | Per-principal token and cost budgets | PLANNED | none found |
 | Signed job payloads for every identity-bearing enqueue (`execute_tool_job`, `run_demo_scenario_job`, `resume_tool_job`) | LIVE (host key access is still admin) | `agent/job_auth.py`, `agent/runtime.py`, ADR-018 |
+| East-west mTLS for PostgreSQL, Redis and Keycloak (opt-in `pki` profile) | LIVE (profile-scoped; host root still wins) | `docker-compose.pki.yml`, `docs/PKI.md`, ADR-019 |
 | External anchoring of the audit chain | PLANNED | see T10 |
 | Langfuse and Phoenix exporters | PLANNED | collector ships with the `debug` exporter |
 
@@ -230,7 +231,9 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
   - LIVE: every identity-bearing job carries an HMAC-SHA256 envelope over the exact field map (`agent/job_auth.py`, ADR-018). The worker verifies it in constant time before the guard runs, so an unsigned or tampered payload returns `unauthorized_job` and produces no tool call, no ticket and no ledger row.
   - LIVE: the envelope nonce is burned once with `SET NX EX`, so a captured payload cannot be replayed; the TTL is measured from the signature deadline.
   - LIVE: the signing key is `JOB_SIGNING_SECRET`, separate from `APPROVAL_HMAC_SECRET`, and `_reject_dev_secrets` refuses the development value in staging and production.
-  - PLANNED: separate Redis ACL users for gateway and worker, TLS, and no host port exposure. The development compose file publishes Redis on a host port for the demo. IDEA-023 owns this half.
+  - LIVE (profile-scoped): the opt-in `pki` profile puts TLS and per-service client certificates in front of PostgreSQL, Redis and Keycloak, so a shared password no longer authenticates east-west and Redis has no plaintext port. `docs/PKI.md` records the refusal cases; ADR-019 records the limit.
+  - PLANNED: separate Redis ACL users for gateway and worker, and no host port exposure. The development compose file still publishes Redis on a loopback port for the demo.
+  - PLANNED: OmniRoute and the OTLP endpoint stay plain HTTP under the `pki` profile, and `pgadmin`/`redis-ui` are excluded because they cannot present a client certificate.
 - Residual risk: whoever holds `JOB_SIGNING_SECRET` — host root, the `.env`, anything that can read the gateway environment — can mint any identity. The control moves the threshold from "write Redis" to "write Redis and hold the key"; it does not defend against a host attacker, and the key has no rotation schedule or version tag.
 - Verification: `tests/test_job_auth.py` (unsigned, tampered, cross-tenant, replayed and minted payloads), `tests/test_tool_execution.py` (the signed gateway path still executes), ADR-018.
 

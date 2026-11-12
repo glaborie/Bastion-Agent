@@ -1150,6 +1150,13 @@ is accounted for. If you see CUDA out-of-memory errors, lower
 - **Image pinning** — third-party images are pinned by tag **and** digest.
   Refresh with `docker buildx imagetools inspect <image>` and update the digest.
   `omniroute` is pinned to the public `diegosouzapw/omniroute` image by digest.
+- **East-west TLS (opt-in)** — the default stack is plaintext and local-only.
+  `docker compose -f docker-compose.yml -f docker-compose.pki.yml --profile pki
+  up -d`, after `./scripts/pki/bootstrap.sh`, turns PostgreSQL certificate-only,
+  gives Redis a TLS-only port with client certificates, and serves Keycloak over
+  HTTPS. `docs/PKI.md` is the runbook; `docs/adr/ADR-019.md` records the trust
+  model and its honest limit (a CA on the same host does not survive host root).
+  `scripts/pki/check.sh` asserts the CA key is untracked and owner-only.
 - **No `container_name` on gateway/worker** — they are replica-safe; Compose
   derives names such as `bastion-agent-worker-1`.
 - **No healthcheck on `otel-collector`** — the image is distroless (no shell).

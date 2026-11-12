@@ -3,6 +3,12 @@
 .env.*
 !.env.example
 
+# --- East-west PKI (ADR-019) -------------------------------------------------
+# The CA root key, issued certificates and the compose secret files are
+# generated per host by scripts/pki/bootstrap.sh and must never be committed.
+pki/
+secrets/
+
 # --- Python ------------------------------------------------------------------
 __pycache__/
 *.py[cod]

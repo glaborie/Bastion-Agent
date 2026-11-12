@@ -58,6 +58,26 @@ class Settings(BaseSettings):
     database_connect_timeout_seconds: float = 10.0
     database_echo: bool = False
 
+    # -- East-west TLS (ADR-019) -------------------------------------------
+    #: PostgreSQL transport. ``disable`` is the local default and the only mode
+    #: the default compose profile uses; the ``pki`` profile sets
+    #: ``verify-full`` so a password alone cannot reach the database.
+    database_ssl_mode: Literal["disable", "require", "verify-ca", "verify-full"] = "disable"
+    #: Redis transport. When set, the client requires a server certificate
+    #: signed by ``pki_ca_cert_path`` and presents its own client certificate.
+    redis_tls_enabled: bool = False
+    #: CA bundle every east-west client trusts. Read at engine/client creation,
+    #: so a missing file fails closed instead of falling back to plaintext.
+    pki_ca_cert_path: str = "/pki/ca/ca.crt"
+    #: Client certificate and key this process presents. Distinct per service
+    #: so a compromised workload holds only its own private key.
+    pki_client_cert_path: str = "/pki/client/tls.crt"
+    pki_client_key_path: str = "/pki/client/tls.key"
+    #: CA bundle the gateway trusts when it calls Keycloak over HTTPS. Empty
+    #: means the system store, which is the local plaintext default; the
+    #: ``pki`` profile points it at the internal CA.
+    oidc_ca_cert_path: str = ""
+
     # -- Redis -------------------------------------------------------------
     redis_url: str = "redis://:dev-only-redis-password@localhost:6379/0"
     redis_max_connections: int = 50

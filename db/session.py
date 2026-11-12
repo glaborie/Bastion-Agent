@@ -7,8 +7,10 @@ CLI or a test collector) never opens sockets or requires a running database.
 from __future__ import annotations
 
 import logging
+import ssl
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -35,9 +37,59 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+def database_ssl_context(config: Settings) -> ssl.SSLContext | None:
+    """Build the PostgreSQL client TLS context (ADR-019).
+
+    ``disable`` keeps the local default. Every other mode fails closed: a
+    missing CA bundle or client certificate raises here, at engine creation,
+    rather than silently falling back to a plaintext connection. Only the CA
+    bundle is trusted — the system store is deliberately not loaded, so a
+    public CA cannot impersonate the internal database.
+    """
+    mode = config.database_ssl_mode
+    if mode == "disable":
+        return None
+    ca_bundle = Path(config.pki_ca_cert_path)
+    if not ca_bundle.is_file():
+        raise RuntimeError(
+            f"DATABASE_SSL_MODE={mode} but the CA bundle {ca_bundle} is missing; "
+            "refusing to connect in plaintext"
+        )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_verify_locations(cafile=str(ca_bundle))
+    if mode == "require":
+        # Encryption without identity: kept for diagnostics only.
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    else:
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = mode == "verify-full"
+    cert, key = Path(config.pki_client_cert_path), Path(config.pki_client_key_path)
+    if config.pki_client_cert_path and config.pki_client_key_path:
+        if not (cert.is_file() and key.is_file()):
+            raise RuntimeError(
+                f"DATABASE_SSL_MODE={mode} but the client certificate {cert} or key {key} "
+                "is missing; refusing to connect without an identity"
+            )
+        context.load_cert_chain(certfile=str(cert), keyfile=str(key))
+    return context
+
+
 def create_engine(settings: Settings | None = None) -> AsyncEngine:
     """Build a new async engine from configuration (does not connect eagerly)."""
     config = settings or get_settings()
+    ssl_context = database_ssl_context(config)
+    connect_args: dict[str, object] = {
+        "timeout": config.database_connect_timeout_seconds,
+        "server_settings": {
+            "application_name": config.app_name,
+            # Canonical UTC storage keeps audit-chain hashes reproducible.
+            "timezone": "UTC",
+        },
+    }
+    if ssl_context is not None:
+        connect_args["ssl"] = ssl_context
     engine = create_async_engine(
         config.database_url,
         echo=config.database_echo,
@@ -45,19 +97,15 @@ def create_engine(settings: Settings | None = None) -> AsyncEngine:
         max_overflow=config.database_max_overflow,
         pool_recycle=config.database_pool_recycle_seconds,
         pool_pre_ping=True,
-        connect_args={
-            "timeout": config.database_connect_timeout_seconds,
-            "server_settings": {
-                "application_name": config.app_name,
-                # Canonical UTC storage keeps audit-chain hashes reproducible.
-                "timezone": "UTC",
-            },
-        },
+        connect_args=connect_args,
         future=True,
     )
     logger.debug(
         "Created async database engine",
-        extra={"database_url": config.redacted_database_url},
+        extra={
+            "database_url": config.redacted_database_url,
+            "ssl_mode": config.database_ssl_mode,
+        },
     )
     return engine
 
