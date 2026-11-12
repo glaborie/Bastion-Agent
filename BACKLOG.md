@@ -41,7 +41,7 @@ _none_
 ### Done (24)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
-- `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
+- `IDEA-002` P1 v0.3 gateway - Push approval decisions over WebSocket instead of 3 s polling
 - `IDEA-003` P1 v0.2 agent - Route the ONNX ensemble to GPU to meet the 50 ms classify budget
 - `IDEA-005` P1 v0.2 security - Reject canary prefixes shorter than eight characters at startup
 - `IDEA-006` P3 v0.2 docs - Add a deterministic egress canary demo
@@ -74,7 +74,7 @@ _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 | ID | Status | Prio | Phase | Area | Title |
 |---|---|---|---|---|---|
 | IDEA-001 | done | P2 | v0.3 | agent | Tenant isolation for Redis keys and Postgres rows |
-| IDEA-002 | done | P1 | v0.2 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
+| IDEA-002 | done | P1 | v0.3 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
 | IDEA-003 | done | P1 | v0.2 | agent | Route the ONNX ensemble to GPU to meet the 50 ms classify budget |
 | IDEA-004 | blocked | P2 | v0.3 | db | Export the audit ledger asynchronously for retention |
 | IDEA-005 | done | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
@@ -151,7 +151,7 @@ construction, and a test proves it by attempting the access.
 
 - status: done
 - priority: P1
-- phase: v0.2
+- phase: v0.3
 - area: gateway
 - tags: dashboard, websocket, hitl, latency
 - depends-on: -
