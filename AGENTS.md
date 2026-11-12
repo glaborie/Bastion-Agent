@@ -80,14 +80,21 @@ and nobody has decided yet.
 
 ## Worktree & PR discipline
 
-- One worktree per item, branched from `origin/master`, named after the item
-  (`idea-023-mtls`). The worktree tool takes only a name, so branch explicitly
-  afterwards; never assume the base.
+- **Create the worktree before touching a backlog item.** Never implement an
+  item in the main checkout. `scripts/dev/worktree.sh start IDEA-NNN` does the
+  whole start-up: worktree from `origin/master`, branch `idea-nnn-slug`, `.env`
+  symlink, `uv sync`, item marked `active` with the Board regenerated. It
+  prints the path; move the session there next.
+- One worktree per item, branched from `origin/master`, named after the item.
+  The worktree tool takes only a name, so branch explicitly afterwards; never
+  assume the base.
 - Do not stack pull requests. Merge the base first, then open the next one, or
   the second PR carries the first PR's commits.
 - Run `gh pr list --head <branch>` before `gh pr create`; a backgrounded
   create plus a retry produces "already exists".
-- At merge time, remove the worktree and delete the local and remote branch.
+- At merge time, run `scripts/dev/cleanup.sh` (dry-run first): it removes the
+  worktree and deletes local and remote branches only where the pull request is
+  merged, and reports the rest.
   Certificate material under a worktree's `pki/` is owned by container uids;
   clear it through a throwaway container rather than `sudo`.
 - Verify a claim about CI behaviour by reading `.github/workflows/ci.yml`
