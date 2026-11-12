@@ -15,6 +15,8 @@
 #   scripts/gate.sh --no-tests      # skip pytest (docs-only changes)
 #   scripts/gate.sh --verbose       # stream each step, prefixed with its name
 #   scripts/gate.sh --changed       # pylint and pytest only what changed against origin/master
+#   scripts/gate.sh --no-infra      # skip the compose-config validation step
+#   scripts/gate.sh --pytest-workers 0   # disable xdist (default: auto without a DB)
 #   scripts/gate.sh --changed --base origin/release   # ... against another ref
 #
 # `run_evals.py` runs the eval suites through pytest itself, so it is never
@@ -34,6 +36,8 @@ VERBOSE=0
 JOBS=""
 CHANGED_ONLY=0
 CHANGED_BASE="origin/master"
+RUN_INFRA=1
+PYTEST_WORKERS=""
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
 
@@ -44,6 +48,12 @@ while (($#)); do
         --integration) INTEGRATION=1 ;;
         --verbose) VERBOSE=1 ;;
         --changed) CHANGED_ONLY=1 ;;
+        --no-infra) RUN_INFRA=0 ;;
+        --pytest-workers)
+            [[ $# -ge 2 ]] || { echo "gate: --pytest-workers needs a number or 'auto'" >&2; exit 2; }
+            PYTEST_WORKERS="$2"
+            shift
+            ;;
         --base)
             [[ $# -ge 2 ]] || { echo "gate: --base needs a git ref" >&2; exit 2; }
             CHANGED_BASE="$2"
@@ -88,6 +98,21 @@ else
     PYTEST_FLAGS='-q -m "not integration"'
     TEST_MODE=unit
 fi
+
+# Parallel pytest only when no shared database is in play. The DB fixtures
+# truncate tables per module, so two workers against one test database would
+# clobber each other. `--dist loadfile` keeps each file on a single worker.
+if [[ -z "$PYTEST_WORKERS" ]]; then
+    if [[ -n "${TEST_DATABASE_URL:-}" ]]; then
+        PYTEST_WORKERS=0
+    else
+        PYTEST_WORKERS=auto
+    fi
+fi
+[[ "$PYTEST_WORKERS" == "auto" || "$PYTEST_WORKERS" =~ ^[1-9][0-9]*$ ]] ||
+    { echo "gate: --pytest-workers must be 'auto' or a positive integer" >&2; exit 2; }
+XDIST=""
+[[ "$PYTEST_WORKERS" != "0" ]] && XDIST="-n $PYTEST_WORKERS --dist loadfile"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 LOGDIR="artifacts/gate/$STAMP"
@@ -179,19 +204,22 @@ else
 fi
 if ((RUN_TESTS)); then
     if ((${#PYTEST_TARGETS[@]})); then
-        add_step pytest "uv run --no-sync pytest $PYTEST_FLAGS ${PYTEST_TARGETS[*]}"
+        add_step pytest "uv run --no-sync pytest $XDIST $PYTEST_FLAGS ${PYTEST_TARGETS[*]}"
     else
-        add_step pytest "uv run --no-sync pytest $PYTEST_FLAGS"
+        add_step pytest "uv run --no-sync pytest $XDIST $PYTEST_FLAGS"
     fi
 fi
 add_step adrs "uv run --no-sync python scripts/check_adrs.py"
 add_step tool-catalog "uv run --no-sync python scripts/validate_tool_catalog.py --check"
 add_step rbac "uv run --no-sync python scripts/validate_rbac.py"
+if ((RUN_INFRA)) && command -v docker >/dev/null && [[ -f .env ]]; then
+    add_step infra "docker compose config -q && docker compose -f docker-compose.yml -f docker-compose.pki.yml --profile pki config -q"
+fi
 add_step dread "uv run --no-sync python scripts/recalculate_dread.py --check"
 add_step backlog "uv run --no-sync python scripts/check_backlog.py --check"
 
+LAUNCH_ORDER+=(pylint mypy adrs rbac tool-catalog dread backlog infra ruff-lint ruff-format)
 ((RUN_TESTS)) && LAUNCH_ORDER+=(pytest)
-LAUNCH_ORDER+=(pylint mypy adrs rbac tool-catalog dread backlog ruff-lint ruff-format)
 EVALS_CMD="uv run --no-sync python scripts/run_evals.py"
 
 start_step() {
