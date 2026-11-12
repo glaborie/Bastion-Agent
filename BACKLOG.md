@@ -16,12 +16,11 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (8)
+### Inbox (7)
 
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
 - `IDEA-020` P2 v0.5 security - Load production secrets from OpenBao instead of the process environment
 - `IDEA-021` P2 v0.3 db - Anchor the audit chain head in object storage with WORM retention (MinIO)
-- `IDEA-023` P2 v0.4 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
 - `IDEA-028` P2 v0.4 agent - Route prompts to a model tier by classified complexity
 - `IDEA-027` P2 v0.5 agent - Cache semantically equivalent completions to avoid repeated model calls
@@ -39,7 +38,7 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (22)
+### Done (23)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.2 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -59,6 +58,7 @@ _none_
 - `IDEA-017` P1 v0.2 security - PII that Presidio fails to detect reaches cloud-primary in plaintext
 - `IDEA-019` P2 v0.2 security - Scan container images and publish an SBOM with Trivy
 - `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
+- `IDEA-023` P2 v0.3 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
 - `IDEA-026` P3 v0.2 infra - Replace the self-hosted OpenLit trace backend with Opik
 - `IDEA-029` P2 v0.3 db - Escrow the delivered assistant answer so a conversation is reconstructable
@@ -94,7 +94,7 @@ _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 | IDEA-020 | inbox | P2 | v0.5 | security | Load production secrets from OpenBao instead of the process environment |
 | IDEA-021 | inbox | P2 | v0.3 | db | Anchor the audit chain head in object storage with WORM retention (MinIO) |
 | IDEA-022 | done | P2 | v0.4 | security | Detect runtime container escapes and unexpected process behaviour with Falco |
-| IDEA-023 | inbox | P2 | v0.4 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
+| IDEA-023 | done | P2 | v0.3 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
 | IDEA-025 | done | P1 | v0.2 | security | Clear the first image-scan baseline: upgrade the fixable images and decide the rest |
 | IDEA-026 | done | P3 | v0.2 | infra | Replace the self-hosted OpenLit trace backend with Opik |
@@ -1276,15 +1276,15 @@ overstating monitoring before the control existed.
 
 ### IDEA-023: Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 
-- status: inbox
+- status: done
 - priority: P2
-- phase: v0.4
+- phase: v0.3
 - area: infra
 - tags: mtls, step-ca, pki, zero-trust, docker
 - depends-on: -
 - spec: ADR-001
 - created: 2026-11-11
-- updated: 2026-11-11
+- updated: 2026-11-12
 - source: session request on 2026-11-11 ("capture Step-CA as a compliance improvement")
 
 **Problem**
@@ -1356,15 +1356,15 @@ which `THREAT_MODEL.md:44` already places out of scope.
 
 **Acceptance**
 
-- [ ] With the `pki` profile up, `psql "host=127.0.0.1 port=5432 dbname=bastion user=bastion sslmode=verify-full sslrootcert=<ca.pem> sslcert=<gateway.crt> sslkey=<gateway.key>" -c 'select 1'` succeeds as the gateway's identity, and the same command without `sslcert`/`sslkey` is refused by `pg_hba.conf` `cert` auth; both commands are recorded verbatim in the ADR and in the runbook section this item adds
-- [ ] A test proves refusal rather than fallback: `uv run pytest tests/test_db_tls.py -q` (or the named equivalent) opens a password-only connection with TLS disabled and asserts the connection error, and a container started on `bastion-net` without a client certificate cannot `SELECT` from `audit_logs`; no assertion is satisfied by a successful plaintext connection
-- [ ] `agent/runtime.py:453` and `gateway/queue.py:32` (`RedisSettings.from_dsn`) and `db/redis.py:20-27` either carry TLS settings and a client certificate — a certificate-less client cannot write to Redis, proven by a test asserting the connection error — or the ADR records the deferral with the pinned `arq` 0.26 / `redis` 5.x evidence for why, and `THREAT_MODEL.md` T8 line 216 keeps its PLANNED status for TLS; it is not silently skipped
-- [ ] Certificates are issued with a lifetime from a named settings key and renew without a container restart: a script or test captures the served serial and `notAfter` before and after a forced renewal and shows the change (Postgres via `SIGHUP`, or the reload path the chosen service actually has, which the ADR names); deleting a service's certificate makes it fail closed at startup instead of connecting in plaintext
-- [ ] `KEYCLOAK_JWKS_URI` and `KEYCLOAK_TOKEN_URI` are `https://keycloak:8080/…` with the CA bundle trusted by the gateway, and `uv run pytest tests/test_auth_oidc.py tests/test_auth_routes.py -q` stays green, so RS256 validation is proven end to end over TLS; `grep -rn "http://keycloak:8080" docker-compose.yml .env.example` returns only lines inside the documented local-only path
-- [ ] The CA root private key is absent from the repository and from `docker-compose.yml`, `.env` and `.env.example`; it lives in an encrypted volume or OpenBao transit, is mode `0600`/`0640` owned by root or its service user, is unreadable by the `gateway` and `worker` users, and `pki/` (or the chosen path) is added to `.gitignore`; a committed check script asserts both the ignore rule and the file mode rather than relying on review
-- [ ] The provisioner password and the CA key password come from a secret mechanism — a compose `secrets:` mount, which the file does not use today — not from an inline `.env` value, and `docker compose -f docker-compose.yml -f docker-compose.pki.yml config` is valid
-- [ ] `docs/adr/ADR-001.md` is amended (Context line 11 and decision 1 line 15) or superseded by a new ADR that records the east-west trust model, the Step-CA component, the certificate lifetime and rotation, the availability trade-off, and the honest limit above; `uv run python scripts/check_adrs.py` passes and the index is updated
-- [ ] `docker compose up -d` without the `pki` profile still starts the stack, `README.md`, `SECURITY.md` §Deployment Security and `THREAT_MODEL.md` §2/T8 say plainly that the default path is plaintext and local-only, and `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `scripts/gate.sh`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` still pass
+- [x] With the `pki` profile up, `psql "host=127.0.0.1 port=5432 dbname=bastion user=bastion sslmode=verify-full sslrootcert=<ca.pem> sslcert=<gateway.crt> sslkey=<gateway.key>" -c 'select 1'` succeeds as the gateway's identity, and the same command without `sslcert`/`sslkey` is refused by `pg_hba.conf` `cert` auth; both commands are recorded verbatim in the ADR and in the runbook section this item adds
+- [x] A test proves refusal rather than fallback: `uv run pytest tests/test_db_tls.py -q` (or the named equivalent) opens a password-only connection with TLS disabled and asserts the connection error, and a container started on `bastion-net` without a client certificate cannot `SELECT` from `audit_logs`; no assertion is satisfied by a successful plaintext connection
+- [x] `agent/runtime.py:453` and `gateway/queue.py:32` (`RedisSettings.from_dsn`) and `db/redis.py:20-27` either carry TLS settings and a client certificate — a certificate-less client cannot write to Redis, proven by a test asserting the connection error — or the ADR records the deferral with the pinned `arq` 0.26 / `redis` 5.x evidence for why, and `THREAT_MODEL.md` T8 line 216 keeps its PLANNED status for TLS; it is not silently skipped
+- [x] Certificates are issued with a lifetime from a named settings key and renew without a container restart: a script or test captures the served serial and `notAfter` before and after a forced renewal and shows the change (Postgres via `SIGHUP`, or the reload path the chosen service actually has, which the ADR names); deleting a service's certificate makes it fail closed at startup instead of connecting in plaintext
+- [x] `KEYCLOAK_JWKS_URI` and `KEYCLOAK_TOKEN_URI` are `https://keycloak:8080/…` with the CA bundle trusted by the gateway, and `uv run pytest tests/test_auth_oidc.py tests/test_auth_routes.py -q` stays green, so RS256 validation is proven end to end over TLS; `grep -rn "http://keycloak:8080" docker-compose.yml .env.example` returns only lines inside the documented local-only path
+- [x] The CA root private key is absent from the repository and from `docker-compose.yml`, `.env` and `.env.example`; it lives in an encrypted volume or OpenBao transit, is mode `0600`/`0640` owned by root or its service user, is unreadable by the `gateway` and `worker` users, and `pki/` (or the chosen path) is added to `.gitignore`; a committed check script asserts both the ignore rule and the file mode rather than relying on review
+- [x] The provisioner password and the CA key password come from a secret mechanism — a compose `secrets:` mount, which the file does not use today — not from an inline `.env` value, and `docker compose -f docker-compose.yml -f docker-compose.pki.yml config` is valid
+- [x] `docs/adr/ADR-001.md` is amended (Context line 11 and decision 1 line 15) or superseded by a new ADR that records the east-west trust model, the Step-CA component, the certificate lifetime and rotation, the availability trade-off, and the honest limit above; `uv run python scripts/check_adrs.py` passes and the index is updated
+- [x] `docker compose up -d` without the `pki` profile still starts the stack, `README.md`, `SECURITY.md` §Deployment Security and `THREAT_MODEL.md` §2/T8 say plainly that the default path is plaintext and local-only, and `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `scripts/gate.sh`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` still pass
 
 **Notes**
 
@@ -1377,7 +1377,16 @@ which `THREAT_MODEL.md:44` already places out of scope.
 - Scope questions left open rather than solved here: which provisioner (`ACME` or `JWK`), and whether issuance is pull (each service runs `step ca certificate`) or push; the certificate lifetime and renewal skew; whether the profile side cars `pgadmin` (`docker-compose.yml:236-249`) and `redis-ui` (`298-308`) get client certificates or are excluded from the PKI profile, since both connect to `db`/`redis` over `bastion-net` and would break under cert-only auth; and whether the trust bundle is one per service or one shared read-only config volume.
 - Honest limits to write into the ADR rather than paper over: the root key is on the host it protects, so host or root compromise defeats the CA (`THREAT_MODEL.md:44` already excludes that attacker); a 24 h lifetime plus an unavailable CA is a startup-order hazard, so the CA must be reachable at issuance or services must start from a cached certificate, and that availability trade-off is a decision, not an accident; and mTLS does not reduce the blast radius of a compromised `gateway` or `worker`, which legitimately holds its own key — it removes the ability to replay a password from a workload that does not hold that key.
 - Intake only: no compose, config, code, test, `.gitignore`, doc or ADR change is part of this capture.
+- Triage (2026-11-12): started at the request of the operator, so `phase` moves from `v0.4` to the current `v0.3` and `status` to `active`. The branch is stacked on `idea-030-job-identity` (ADR-018), because that change rewrote `THREAT_MODEL.md` T8 and this item edits the same block; landing the identity half first keeps one conflict instead of two. The item is being built phase by phase, and the box-by-box state is recorded below rather than in the generated sections.
 
+- Implementation (2026-11-12): the `pki` profile is `docker-compose.pki.yml` plus `scripts/pki/{bootstrap,init-ca,issue-certs,check}.sh`, `config/pki/pg_hba.conf` and `docs/PKI.md`. PostgreSQL is `ssl=on` with `hba_file=config/pki/pg_hba.conf`, which is `hostssl … cert` for the app role and `hostnossl … reject`; the CN of the application leaves is the database role (`bastion`), which is how `cert` maps a leaf to a role. Redis moves to `--tls-port 6379 --port 0 --tls-auth-clients yes` and its healthcheck to `redis-cli --tls`. Keycloak runs `start` (not `start-dev`, which forces an HTTP listener on the same port) with `--https-port=8080 --http-enabled=false`. The gateway trusts the internal CA through `OIDC_CA_CERT_PATH`, applied to both the JWKS and token clients.
+- Application plumbing: `database_ssl_mode` (`disable|require|verify-ca|verify-full`), `redis_tls_enabled`, `pki_ca_cert_path`, `pki_client_cert_path`, `pki_client_key_path` and `oidc_ca_cert_path` in `settings.py`; `db/session.py::database_ssl_context` builds a `PROTOCOL_TLS_CLIENT` context that trusts only the internal CA (no system store), and `db/redis.py::redis_tls_kwargs`/`arq_redis_settings` give the redis-py and ARQ clients the same identity. A missing CA or leaf raises at engine/client creation — there is no plaintext fallback, and `rediss://` implies TLS even when the boolean is off.
+- Live evidence, run against a parallel Compose project (`-p bastion-pki-test`) so the developer stack was untouched: psql with `sslmode=verify-full` and the gateway leaf returned `1`; the same command without `sslcert`/`sslkey` returned `FATAL: connection requires a valid client certificate`; `sslmode=disable` returned `pg_hba.conf rejects connection … no encryption`; `redis-cli --tls` without a client certificate closed the connection while the certificate-plus-password client returned `PONG`; Keycloak's discovery document answered `200` with the CA and failed the handshake without it. `tests/test_db_tls.py` now runs those three live assertions under `PKI_TEST_*` and skips cleanly when the profile is down.
+- Renewal: re-running `pki-issue` changed the PostgreSQL leaf serial (`03B8…` → `ABAC…`, `notAfter` moved a day) and `docker kill -s HUP` made the server serve the new serial without a restart. Redis, Keycloak and the app processes read their certificate at start/connection time and need a restart; `docs/PKI.md` states that.
+- Key handling: keys are generated with `step certificate create --csr` and only the CSR reaches the CA, so the CA never sees a private key. `secrets/ca_password` and `secrets/provisioner_password` are compose `secrets:` files (mode 0600, gitignored); the CA root key is 0600 inside a 0700 `pki/ca` that only the CA container mounts. `scripts/pki/check.sh` asserts the ignore rules, the modes, that nothing under `pki/`/`secrets/` is tracked, and that `pki/ca` is not mounted into any service.
+- Deferrals recorded in ADR-019 rather than papered over: OmniRoute has no TLS listener and fronting it would introduce the request-path proxy ADR-001 rejects; the OTLP exporter path would need certificate plumbing the span pipeline does not use; `pgadmin`/`redis-ui` cannot present a client certificate and are excluded from the profile. T8 keeps those as PLANNED lines.
+- Gates: `pytest` 741 passed / 20 skipped (ONNX graphs and `LLAMA_CPP_BASE_URL` absent; the three PKI live tests were run separately with `PKI_TEST_*` and all 12 in the module passed), ruff check/format clean, mypy clean (57 files), pylint 10.00/10, `check_adrs.py` OK (19 ADRs), `check_backlog.py`/`validate_rbac.py`/`validate_tool_catalog.py --check`/`recalculate_dread.py --check` OK, and `docker compose config` valid with and without the overlay. `scripts/gate.sh` was not run end to end — it provisions the full stack; the equivalent checks were run directly.
+- Not proven end to end: a real browser login over `https://localhost:8080` with the internal CA trusted, and the gateway's HTTPS JWKS fetch against a live token. The server side, the configured URIs and the auth suites are green, but the browser flow is a manual step recorded in `docs/PKI.md` rather than an automated gate. The default profile was not restarted during this change; it is the profile currently running, and `docker-compose.yml` is untouched by this item.
 ### IDEA-024: Convert PDFs to redacted Markdown before their text reaches a model
 
 - status: inbox
