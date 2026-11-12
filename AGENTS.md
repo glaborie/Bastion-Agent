@@ -73,4 +73,24 @@ and nobody has decided yet.
   set `status: done`, bump `updated`, then
   `uv run python scripts/check_backlog.py --write`.
 - Never hand-edit the generated `## Board` or `## Index` sections.
-- Keep `- next-id:` in sync with the highest `IDEA-NNN` (the validator warns).
+- `--write` now sets `- next-id:` to the highest allocated id plus one; never
+  edit that line by hand.
+- One backlog writer at a time. Two concurrent captures race on the id
+  sequence and produce duplicates.
+
+## Worktree & PR discipline
+
+- One worktree per item, branched from `origin/master`, named after the item
+  (`idea-023-mtls`). The worktree tool takes only a name, so branch explicitly
+  afterwards; never assume the base.
+- Do not stack pull requests. Merge the base first, then open the next one, or
+  the second PR carries the first PR's commits.
+- Run `gh pr list --head <branch>` before `gh pr create`; a backgrounded
+  create plus a retry produces "already exists".
+- At merge time, remove the worktree and delete the local and remote branch.
+  Certificate material under a worktree's `pki/` is owned by container uids;
+  clear it through a throwaway container rather than `sudo`.
+- Verify a claim about CI behaviour by reading `.github/workflows/ci.yml`
+  first; do not describe a gate from memory.
+- When a local run looks broken, read `docs/TROUBLESHOOTING.md` before
+  debugging the client.
