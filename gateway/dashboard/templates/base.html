@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en"{% if theme != 'system' %} data-theme="{{ theme }}"{% endif %}>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/static/vendor/pico-2.0.6.min.css">
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/vendor/htmx-2.0.4.min.js" defer></script>
+    <script src="/static/theme.js" defer></script>
     {% block head_extra %}{% endblock %}
   </head>
   <body hx-headers='{"X-CSRF-Token": "{{ csrf_token or "" }}"}'>
@@ -42,10 +43,26 @@
             <strong>{{ principal.display_name }}</strong>
             <small>{{ principal.roles | sort | join(", ") }}</small>
           </span>
-          <form method="post" action="/auth/logout" class="inline-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
-            <button type="submit" class="secondary outline">Sign out</button>
-          </form>
+          <div class="operator-actions">
+            <form method="post" action="/dashboard/theme" class="theme-form" data-theme-form>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
+              <input type="hidden" name="next"
+                     value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+              <div role="group" aria-label="Colour scheme">
+                {% for value, label in [("system", "Auto"), ("light", "Light"), ("dark", "Dark")] %}
+                  <button type="submit"
+                          name="theme"
+                          value="{{ value }}"
+                          class="theme-option secondary outline"
+                          aria-pressed="{{ 'true' if theme == value else 'false' }}">{{ label }}</button>
+                {% endfor %}
+              </div>
+            </form>
+            <form method="post" action="/auth/logout" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
+              <button type="submit" class="secondary outline">Sign out</button>
+            </form>
+          </div>
         </div>
       {% endif %}
     </header>
