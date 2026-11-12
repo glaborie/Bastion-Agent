@@ -25,33 +25,24 @@ for tarball in "$images_dir"/*.tar; do
     count=$((count + 1))
     echo "trivy-scan: $name"
 
-    # Trivy cannot emit CycloneDX and JSON from one invocation, so the two
-    # analyses run concurrently: they read the same read-only tarball and share
-    # nothing, which roughly halves the per-image wall time on a multi-core
-    # runner. A failure in either format fails the image.
+    # Trivy cannot emit CycloneDX and JSON from one invocation, so each image
+    # costs two analyses. They must stay sequential: two Trivy processes share
+    # $TRIVY_CACHE_DIR and the second dies with "cache may be in use by another
+    # process" (observed on PR #9). Separate cache dirs would re-download the
+    # database per format, which costs more than the overlap saves.
     trivy image \
         --input "$tarball" \
         --scanners vuln \
         --format cyclonedx \
         --output "$reports_dir/$name.cdx.json" \
-        --quiet &
-    cdx_pid=$!
+        --quiet
 
     trivy image \
         --input "$tarball" \
         --scanners vuln \
         --format json \
         --output "$reports_dir/$name.json" \
-        --quiet &
-    json_pid=$!
-
-    rc=0
-    wait "$cdx_pid" || rc=1
-    wait "$json_pid" || rc=1
-    if [ "$rc" -ne 0 ]; then
-        echo "trivy-scan: a format failed for $name" >&2
-        exit 1
-    fi
+        --quiet
 done
 
 if [ "$count" -eq 0 ]; then

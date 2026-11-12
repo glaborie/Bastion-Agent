@@ -227,6 +227,7 @@ jobs:
           name: eval-report
           path: artifacts/evals/latest.json
           if-no-files-found: warn
+          retention-days: 7
 
   supply-chain:
     name: Supply chain (OSV + image SBOM)
@@ -260,12 +261,16 @@ jobs:
           name: threat-intel-report
           path: artifacts/threat-intel/latest.json
           if-no-files-found: warn
+          retention-days: 7
 
       # The image scan answers "do the shipped images still contain a CRITICAL?".
-      # Its inputs are the Dockerfile, the compose pins, the lockfile and the
-      # scanner policy — not application code. A pull request that touches none
-      # of them skips six minutes of pulling and scanning; master and the weekly
-      # run always scan, so a stale pin cannot hide.
+      # That answer only changes when a pin, a lockfile or the scanner itself
+      # changes — and during development a ~6.5 minute scan on every pull request
+      # is not worth the latency. Master and the weekly run always scan the full
+      # set, so a moved pin is caught within a day. A pull request scans only when
+      # it edits the scanning machinery itself: that is the one case where the
+      # scan's own behaviour needs validating before merge, and it is exactly the
+      # case that would have caught the cache-lock regression on PR #9.
       - name: Decide whether the images need scanning
         id: scan
         if: github.event_name == 'pull_request'
@@ -273,7 +278,7 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --quiet origin "${{ github.base_ref }}"
           changed=$(git diff --name-only FETCH_HEAD...HEAD)
-          if grep -qE '^(Dockerfile|docker-compose[^/]*\.ya?ml|pyproject\.toml|uv\.lock|trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py))$' <<<"$changed"; then
+          if grep -qE '^(trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py)|\.github/workflows/ci\.yml)$' <<<"$changed"; then
             echo "scan=true" >> "$GITHUB_OUTPUT"
           else
             echo "scan=false" >> "$GITHUB_OUTPUT"
@@ -313,6 +318,9 @@ jobs:
           name: compliance-reports
           path: artifacts/compliance/
           if-no-files-found: error
+          # Development cadence: keep the report long enough to review the run,
+          # not long enough to pay for storage. Raise it before an audit.
+          retention-days: 7
 
   # Single stable check name to require in branch protection.
   ci-ok:
