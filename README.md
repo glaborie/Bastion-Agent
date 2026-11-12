@@ -736,7 +736,8 @@ check runs at startup.
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/verify_audit_chain.py` | Recompute the audit hash chain (exit `1` on tamper, `2` if it cannot run) |
+| `scripts/verify_audit_chain.py` | Recompute the audit hash chain, optionally against the stored witness (exit `1` on tamper/divergence, `2` if it cannot run) |
+| `scripts/write_audit_witness.py` | Verify the chain and append a signed witness of the head to the WORM store (opt-in `compliance` profile) |
 | `scripts/show_conversation.sh` | List one conversation's audit rows; `--markdown` renders the escrowed request and delivered answer as a human transcript, `--escrow` decrypts every payload |
 | `scripts/purge_payload_escrow.py` | Delete expired pre-production payload-escrow rows; `--dry-run` only counts them |
 | `scripts/validate_tool_catalog.py` | Registry ↔ `docs/tools/v1.json` allow-list; `--write` approves the current set; the same check runs at startup |
@@ -756,6 +757,28 @@ check runs at startup.
 The validators are deterministic and offline; run them in CI before deployment.
 `verify_audit_chain.py` needs a reachable database and is therefore a
 post-deploy check rather than a unit test.
+
+### External audit witness (opt-in `compliance` profile)
+
+The chain lives in the database it protects, so an attacker holding the database
+credential can recompute it. The `compliance` profile adds a MinIO bucket with
+versioning and `COMPLIANCE` object lock (7 years) and a credential that may only
+append and read under `witness/`; deletion, versioning changes, object-lock
+reconfiguration and policy changes are refused server-side.
+
+```bash
+docker compose --profile compliance up -d minio minio-init
+uv run python scripts/write_audit_witness.py     # one signed witness per run
+uv run python scripts/verify_audit_chain.py --witness
+```
+
+`--witness` exits `0` only when the live head matches the stored witness. A
+missing store, an empty bucket or a stack started without the profile is exit
+`2` ("could not verify"), never a pass; a ledger whose head moved but still
+verifies internally is exit `1`. The witness carries only the scope, id range,
+row count, terminal hash, timestamp and an HMAC (`AUDIT_WITNESS_HMAC_SECRET`);
+no prompt, completion or tool argument. `tests/test_audit_witness.py` proves the
+retention, the refusals and the divergence path against a live store.
 
 ### Pre-production payload escrow
 

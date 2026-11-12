@@ -20,7 +20,8 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "docker-compose.yml"
 
-# The nine shipped image references from IDEA-019's Problem statement.
+# The ten shipped image references: IDEA-019's nine plus the audit-witness store
+# (IDEA-021).
 EXPECTED_IMAGES = {
     "bastion-agent:local",
 }
@@ -33,6 +34,7 @@ EXPECTED_IMAGE_PREFIXES = (
     "ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:",
     "otel/opentelemetry-collector-contrib:0.165.0@sha256:",
     "diegosouzapw/omniroute:3.8.53@sha256:",
+    "cgr.dev/chainguard/minio:latest@sha256:",
 )
 
 
@@ -113,7 +115,7 @@ def test_default_compose_inventory_is_the_shipped_set() -> None:
     )
     assert result.returncode == 0, result.stderr
     images = result.stdout.splitlines()
-    assert len(images) == 9
+    assert len(images) == 10
     assert set(images) >= EXPECTED_IMAGES
     for prefix in EXPECTED_IMAGE_PREFIXES:
         assert any(image.startswith(prefix) for image in images), prefix
@@ -139,22 +141,34 @@ def test_inventory_grows_with_a_new_image_line(tmp_path: Path) -> None:
     assert after.stdout.splitlines() == ["alpine:3.20", "busybox:1.36", "redis:7-alpine"]
 
 
-def test_inventory_excludes_services_that_only_exist_behind_tooling_profiles(
+def test_inventory_excludes_the_scanner_and_detector_but_keeps_services(
     tmp_path: Path,
 ) -> None:
+    # A profile alone no longer means "tooling": the MinIO witness store runs
+    # behind `compliance` and is a service the stack serves from, so it must be
+    # scanned. Only the Trivy scanner and Falco are controls around the stack.
     compose = tmp_path / "docker-compose.yml"
     compose.write_text(
         "services:\n"
         "  shipped:\n"
         "    image: alpine:3.20\n"
-        "  scanner:\n"
+        "  trivy-scan:\n"
         "    image: ghcr.io/aquasecurity/trivy:0.76.1\n"
+        "    profiles: [compliance]\n"
+        "  falco:\n"
+        "    image: falcosecurity/falco:0.45.2\n"
+        "    profiles: [security]\n"
+        "  minio:\n"
+        "    image: cgr.dev/chainguard/minio:latest\n"
         "    profiles: [compliance]\n",
         encoding="utf-8",
     )
     result = run_script("scripts/image_inventory.py", "--compose", str(compose), "--no-env-file")
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["alpine:3.20"]
+    assert result.stdout.splitlines() == [
+        "alpine:3.20",
+        "cgr.dev/chainguard/minio:latest",
+    ]
 
 
 def test_inventory_rejects_an_unset_required_variable(tmp_path: Path) -> None:

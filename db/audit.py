@@ -48,12 +48,20 @@ class AuditChainError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ChainVerification:
-    """Outcome of a full (or partial) chain verification pass."""
+    """Outcome of a full (or partial) chain verification pass.
+
+    ``head_hash`` is the terminal ``record_hash`` the pass ended on: the value an
+    external witness must match (ADR-005 decision 9). It is ``None`` when the
+    chain is broken, and the genesis hash when the ledger is empty.
+    """
 
     ok: bool
     checked: int
     first_bad_id: int | None = None
     reason: str | None = None
+    first_id: int | None = None
+    last_id: int | None = None
+    head_hash: str | None = None
 
     def __bool__(self) -> bool:
         return self.ok
@@ -165,7 +173,7 @@ async def verify_audit_chain(
     records = list(result.scalars())
 
     if not records:
-        return ChainVerification(ok=True, checked=0)
+        return ChainVerification(ok=True, checked=0, head_hash=GENESIS_HASH)
 
     # A full scan must begin at the genesis hash. A windowed scan cannot prove
     # the link into the window, so it trusts the first record's own
@@ -192,4 +200,10 @@ async def verify_audit_chain(
         checked += 1
 
     logger.debug("Audit chain verified", extra={"checked": checked, "windowed": limit is not None})
-    return ChainVerification(ok=True, checked=checked)
+    return ChainVerification(
+        ok=True,
+        checked=checked,
+        first_id=records[0].id,
+        last_id=records[-1].id,
+        head_hash=expected_previous,
+    )

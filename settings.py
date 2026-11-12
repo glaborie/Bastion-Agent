@@ -24,6 +24,7 @@ DEV_VAULT_MASTER_KEY = "YmFzdGlvbi1kZXYtaW5zZWN1cmUtdmF1bHQta2V5ISE="
 DEV_APPROVAL_HMAC_SECRET = "dev-only-approval-hmac-secret-change-me"
 DEV_JOB_SIGNING_SECRET = "dev-only-job-signing-secret-change-me"
 DEV_KEYCLOAK_CLIENT_SECRET = "dev-only-keycloak-client-secret"
+DEV_AUDIT_WITNESS_HMAC_SECRET = "dev-only-audit-witness-hmac-secret-change-me"
 
 Environment = Literal["local", "ci", "staging", "production"]
 
@@ -121,6 +122,24 @@ class Settings(BaseSettings):
     logout_target_ttl_seconds: int = 120
     audit_page_size: int = 50
     approval_page_size: int = 100
+
+    # -- Audit witness (ADR-005 decision 9) --------------------------------
+    #: Opt-in external anchor of the audit chain head. The `compliance` compose
+    #: profile supplies MinIO with a versioned bucket under COMPLIANCE object
+    #: lock; `scripts/write_audit_witness.py` stores one signed witness per run.
+    #: Leaving the credentials unset disables the feature; verification then
+    #: reports "could not verify" rather than passing.
+    audit_witness_endpoint: str = "http://localhost:9000"
+    audit_witness_bucket: str = "bastion-audit"
+    audit_witness_region: str = "us-east-1"
+    audit_witness_access_key: SecretStr | None = None
+    audit_witness_secret_key: SecretStr | None = None
+    #: Dedicated HMAC key. Keeping it separate from APPROVAL_HMAC_SECRET means
+    #: rotating the four-eyes token secret does not invalidate stored witnesses.
+    audit_witness_hmac_secret: SecretStr = SecretStr(DEV_AUDIT_WITNESS_HMAC_SECRET)
+    #: Server-enforced object-lock retention. COMPLIANCE mode cannot be
+    #: shortened once written, so change this before the first witness exists.
+    audit_witness_retention_years: int = 7
 
     # -- Evaluation reports ------------------------------------------------
     #: JSON summary written by the DeepEval harness (Milestone 6).
@@ -431,6 +450,7 @@ class Settings(BaseSettings):
         "rate_limit_chat_per_window",
         "payload_escrow_ttl_seconds",
         "response_store_max_chars",
+        "audit_witness_retention_years",
     )
     @classmethod
     def _validate_positive(cls, value: int) -> int:
@@ -503,6 +523,10 @@ class Settings(BaseSettings):
             raise ValueError("APPROVAL_HMAC_SECRET must be rotated before non-local deployment")
         if self.job_signing_secret.get_secret_value() == DEV_JOB_SIGNING_SECRET:
             raise ValueError("JOB_SIGNING_SECRET must be rotated before non-local deployment")
+        if self.audit_witness_hmac_secret.get_secret_value() == DEV_AUDIT_WITNESS_HMAC_SECRET:
+            raise ValueError(
+                "AUDIT_WITNESS_HMAC_SECRET must be rotated before non-local deployment"
+            )
         if self.keycloak_client_secret.get_secret_value() == DEV_KEYCLOAK_CLIENT_SECRET:
             raise ValueError("KEYCLOAK_CLIENT_SECRET must be rotated before non-local deployment")
         if not self.session_cookie_secure:

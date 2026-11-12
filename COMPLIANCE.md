@@ -115,7 +115,7 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 | **§4.2 Outsourcing** | ADR-001, ADR-004, `SECURITY.md` §Deployment Security | Single FastAPI ingress, deterministic DLP, local fallback, fail-closed design | ✅ Compliant |
 | **§4.3 Segregation of Duties** | ADR-003, ADR-009, `SECURITY.md` §Kill Switch Tiers | Four-eyes HITL approval, `approver_id != initiator_id`, time-bound operator roles | ✅ Compliant |
 | **§4.4 Monitoring** | ADR-007, ADR-017, `SECURITY.md` §Observability & Telemetry | Command Control dashboard, OTel spans, real-time approvals, opt-in Falco runtime alerts | ⚠️ Partial (opt-in) |
-| **§4.5 Audit Trail** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, 7-year retention | ✅ Compliant |
+| **§4.5 Audit Trail** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, signed head witness under 7-year WORM retention (opt-in `compliance` profile) | ⚠️ Partial (witness opt-in; ledger partitioning/export is IDEA-004) |
 | **§4.6 Change Management** | ADR-006, ADR-008, `SECURITY.md` §Secure Development Lifecycle | Golden regression suite, CI/CD gates, semantic versioning, 6-phase roadmap | ✅ Compliant |
 
 ---
@@ -135,7 +135,7 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 | Swiss Banking Act Article | Evidence Source | Bastion-Agent Implementation | Status |
 |---------------------------|-----------------|-------------------------------|--------|
 | **Art. 47 Banking Secrecy** | ADR-002, ADR-003, ADR-009, `SECURITY.md` §Data Protection & DLP | Presidio DLP, reversible tokenization, tool catalog allow-list, four-eyes approval | ✅ Compliant |
-| **Art. 48 Data Protection** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, 7-year retention | ✅ Compliant |
+| **Art. 48 Data Protection** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, signed head witness under 7-year WORM retention (opt-in `compliance` profile) | ⚠️ Partial (witness opt-in; ledger partitioning/export is IDEA-004) |
 
 ---
 

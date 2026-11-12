@@ -189,6 +189,17 @@ jobs:
       # The suite refuses to run destructive tests on a database whose name lacks "test".
       TEST_DATABASE_URL: postgresql+asyncpg://bastion:bastion@localhost:5432/bastion_test
       REDIS_TEST_URL: redis://localhost:6379/0
+      # Audit-witness store (IDEA-021). Started below; without it the witness
+      # tests skip, and the skip gate fails the job rather than hiding that.
+      AUDIT_WITNESS_IMAGE: cgr.dev/chainguard/minio:latest@sha256:786cb11d340b1a657de8dc899560e36e1d1fb371d3d6f3eb6c903a0bb0cec714
+      AUDIT_WITNESS_ENDPOINT: http://localhost:9000
+      AUDIT_WITNESS_BUCKET: bastion-audit
+      AUDIT_WITNESS_REGION: us-east-1
+      AUDIT_WITNESS_ACCESS_KEY: bastion-witness
+      AUDIT_WITNESS_SECRET_KEY: dev-only-minio-witness-password
+      AUDIT_WITNESS_HMAC_SECRET: dev-only-audit-witness-hmac-secret-change-me
+      MINIO_ROOT_USER: bastion-minio-root
+      MINIO_ROOT_PASSWORD: dev-only-minio-root-password
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -201,6 +212,31 @@ jobs:
 
       - name: Install locked dependencies
         run: uv sync --locked --group dev
+
+      # A GitHub Actions service cannot override an image's command, and the
+      # distroless MinIO image has no default one, so start it directly. The
+      # init script runs inside the same image (it ships mc) and is idempotent.
+      - name: Start the audit-witness store
+        run: |
+          docker run -d --name audit-witness -p 9000:9000 \
+            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
+            "${AUDIT_WITNESS_IMAGE}" server /data
+          # The port opens before the server is ready, and mc closes the probe
+          # connection; wait on the health endpoint the runner can curl.
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && break
+            sleep 1
+          done
+          docker run --rm --network host \
+            -v "$PWD/scripts/init_audit_witness.sh:/opt/bastion/init-audit-witness.sh:ro" \
+            -v "$PWD/config/minio/audit-witness-policy.json:/opt/bastion/audit-witness-policy.json:ro" \
+            -e MINIO_ENDPOINT=http://127.0.0.1:9000 \
+            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
+            -e AUDIT_WITNESS_BUCKET -e AUDIT_WITNESS_ACCESS_KEY \
+            -e AUDIT_WITNESS_SECRET_KEY -e AUDIT_WITNESS_RETENTION_YEARS=7 \
+            --entrypoint /bin/bash \
+            "${AUDIT_WITNESS_IMAGE}" /opt/bastion/init-audit-witness.sh ||
+            { docker logs audit-witness; exit 1; }
 
       - name: Run tests
         run: uv run --no-sync pytest -ra --junitxml=pytest-report.xml

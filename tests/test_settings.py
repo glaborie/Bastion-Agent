@@ -101,12 +101,22 @@ def test_production_rejects_development_secrets() -> None:
             job_signing_secret=DEV_JOB_SIGNING_SECRET,
         )
 
+    with pytest.raises(ValidationError, match="AUDIT_WITNESS_HMAC_SECRET"):
+        make_settings(
+            environment="production",
+            vault_master_key=rotated_key,
+            approval_hmac_secret="rotated-production-hmac-secret",
+            job_signing_secret="rotated-production-job-secret",
+            session_cookie_secure=True,
+        )
+
     with pytest.raises(ValidationError, match="KEYCLOAK_CLIENT_SECRET"):
         make_settings(
             environment="production",
             vault_master_key=rotated_key,
             approval_hmac_secret="rotated-production-hmac-secret",
             job_signing_secret="rotated-production-job-secret",
+            audit_witness_hmac_secret="rotated-production-witness-secret",
             session_cookie_secure=True,
         )
 
@@ -116,6 +126,7 @@ def test_production_rejects_development_secrets() -> None:
             vault_master_key=rotated_key,
             approval_hmac_secret="rotated-production-hmac-secret",
             job_signing_secret="rotated-production-job-secret",
+            audit_witness_hmac_secret="rotated-production-witness-secret",
             keycloak_client_secret="rotated-production-client-secret",
         )
 
@@ -124,6 +135,7 @@ def test_production_rejects_development_secrets() -> None:
         vault_master_key=rotated_key,
         approval_hmac_secret="rotated-production-hmac-secret",
         job_signing_secret="rotated-production-job-secret",
+        audit_witness_hmac_secret="rotated-production-witness-secret",
         keycloak_client_secret="rotated-production-client-secret",
         session_cookie_secure=True,
     )
@@ -175,6 +187,7 @@ def test_production_refuses_to_start_with_payload_escrow_enabled() -> None:
         "vault_master_key": base64.b64encode(b"p" * 32).decode(),
         "approval_hmac_secret": "rotated-production-approval-secret",
         "job_signing_secret": "rotated-production-job-secret",
+        "audit_witness_hmac_secret": "rotated-production-witness-secret",
         "keycloak_client_secret": "rotated-production-keycloak-secret",
         "session_cookie_secure": True,
     }

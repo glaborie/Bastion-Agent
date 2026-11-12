@@ -16,11 +16,10 @@ must not be edited by hand.
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (7)
+### Inbox (6)
 
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
 - `IDEA-020` P2 v0.5 security - Load production secrets from OpenBao instead of the process environment
-- `IDEA-021` P2 v0.3 db - Anchor the audit chain head in object storage with WORM retention (MinIO)
 - `IDEA-024` P2 v0.4 agent - Convert PDFs to redacted Markdown before their text reaches a model
 - `IDEA-028` P2 v0.4 agent - Route prompts to a model tier by classified complexity
 - `IDEA-027` P2 v0.5 agent - Cache semantically equivalent completions to avoid repeated model calls
@@ -38,7 +37,7 @@ _none_
 
 - `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
-### Done (25)
+### Done (26)
 
 - `IDEA-001` P2 v0.3 agent - Tenant isolation for Redis keys and Postgres rows
 - `IDEA-002` P1 v0.3 gateway - Push approval decisions over WebSocket instead of 3 s polling
@@ -57,6 +56,7 @@ _none_
 - `IDEA-016` P2 v0.3 db - Encrypted payload escrow for pre-production debugging, disabled in production
 - `IDEA-017` P1 v0.2 security - PII that Presidio fails to detect reaches cloud-primary in plaintext
 - `IDEA-019` P2 v0.2 security - Scan container images and publish an SBOM with Trivy
+- `IDEA-021` P2 v0.3 db - Anchor the audit chain head in object storage with WORM retention (MinIO)
 - `IDEA-022` P2 v0.4 security - Detect runtime container escapes and unexpected process behaviour with Falco
 - `IDEA-023` P2 v0.3 infra - Replace internal plaintext and password-only links with short-lived mTLS via Step-CA
 - `IDEA-025` P1 v0.2 security - Clear the first image-scan baseline: upgrade the fixable images and decide the rest
@@ -94,7 +94,7 @@ _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 | IDEA-018 | inbox | P2 | v0.4 | agent | Detect user frustration and escalate the conversation to a human operator |
 | IDEA-019 | done | P2 | v0.2 | security | Scan container images and publish an SBOM with Trivy |
 | IDEA-020 | inbox | P2 | v0.5 | security | Load production secrets from OpenBao instead of the process environment |
-| IDEA-021 | inbox | P2 | v0.3 | db | Anchor the audit chain head in object storage with WORM retention (MinIO) |
+| IDEA-021 | done | P2 | v0.3 | db | Anchor the audit chain head in object storage with WORM retention (MinIO) |
 | IDEA-022 | done | P2 | v0.4 | security | Detect runtime container escapes and unexpected process behaviour with Falco |
 | IDEA-023 | done | P2 | v0.3 | infra | Replace internal plaintext and password-only links with short-lived mTLS via Step-CA |
 | IDEA-024 | inbox | P2 | v0.4 | agent | Convert PDFs to redacted Markdown before their text reaches a model |
@@ -259,6 +259,10 @@ with a manifest, and verification can be rerun against an exported segment.
 - [ ] Manifest records segment bounds and the terminal hash
 - [ ] `scripts/verify_audit_chain.py` accepts an exported segment
 - [ ] Retention and deletion policy documented in COMPLIANCE.md
+
+**Notes**
+
+- 2026-11-12 (IDEA-021): the immutable store and the out-of-band head witness ship separately. `--profile compliance` supplies MinIO with versioning and 7-year `COMPLIANCE` object lock, the witness-only credential, `scripts/write_audit_witness.py` and `scripts/verify_audit_chain.py --witness`. This item still owns the missing half: paging the ledger into signed segments, the manifest with bounds and terminal hash, and the retention/deletion policy text. The witness is a head anchor, not an export; do not mark these boxes from it.
 
 ### IDEA-005: Reject canary prefixes shorter than eight characters at startup
 
@@ -1122,7 +1126,7 @@ OpenBao runs as a digest-pinned compose service behind a `secrets` (or `complian
 
 ### IDEA-021: Anchor the audit chain head in object storage with WORM retention (MinIO)
 
-- status: inbox
+- status: done
 - priority: P2
 - phase: v0.3
 - area: db
@@ -1130,7 +1134,7 @@ OpenBao runs as a digest-pinned compose service behind a `secrets` (or `complian
 - depends-on: -
 - spec: ADR-005
 - created: 2026-11-11
-- updated: 2026-11-11
+- updated: 2026-11-12
 - source: session request on 2026-11-11 ("capture MinIO WORM as a compliance improvement")
 
 **Problem**
@@ -1145,17 +1149,22 @@ A `compliance` compose profile supplies a digest-pinned MinIO with versioning an
 
 **Acceptance**
 
-- [ ] `docker compose --profile compliance up -d` starts `minio` (pinned by digest, as `db` and `redis` are) and a one-shot `minio-init` job; `mc retention info` on `bastion-audit` reports `COMPLIANCE` with a 7-year default and `mc version info` reports versioning enabled, asserted by the scripted check rather than by reading the compose file
-- [ ] Deleting or overwriting a retained witness with the application credentials fails (403 or an object-lock error) and `mc stat --versions` still lists the original version; `uv run pytest tests/test_audit_witness.py -q` asserts both the failure and the surviving version against the running MinIO
-- [ ] `uv run python scripts/verify_audit_chain.py --witness` exits `0` on an intact ledger and non-zero after one audit row is edited or deleted — mutated through the documented opt-out `SELECT set_config('bastion.allow_audit_mutation', 'on', true)` (ADR-005:46), not by disabling the trigger — and an unreachable MinIO exits `2`
-- [ ] The witness object carries only scope, range bounds, row count, terminal `record_hash`, timestamp and signature; a test reads the stored object and asserts no prompt, completion or tool-argument text and no plaintext PII is present
-- [ ] `mc admin policy info` (or the bucket policy) shows the app credential holds `s3:PutObject` on the witness prefix only, and a test asserts `s3:DeleteObject` and `s3:PutBucketObjectLockConfiguration` are denied, so retention cannot be shortened from the application
-- [ ] Both the DB chain and the witness survive `docker compose restart`, and a verification run afterwards still exits `0`
-- [ ] `docs/adr/ADR-005.md:50`, `SECURITY.md:132-133`, `COMPLIANCE.md:117`/`:137` and `THREAT_MODEL.md:240` describe retention and the external witness as implemented only once it is, narrowing T10's residual to host compromise and the missing INSERT-only role; `uv run python scripts/check_adrs.py` passes
-- [ ] `IDEA-004` gains a `**Notes**` line recording that the immutable store and the head witness ship here while its export supplies the segments, without changing its status or its own acceptance boxes
+- [x] `docker compose --profile compliance up -d` starts `minio` (pinned by digest, as `db` and `redis` are) and a one-shot `minio-init` job; `mc retention info` on `bastion-audit` reports `COMPLIANCE` with a 7-year default and `mc version info` reports versioning enabled, asserted by the scripted check rather than by reading the compose file
+- [x] Deleting or overwriting a retained witness with the application credentials fails (403 or an object-lock error) and `mc stat --versions` still lists the original version; `uv run pytest tests/test_audit_witness.py -q` asserts both the failure and the surviving version against the running MinIO
+- [x] `uv run python scripts/verify_audit_chain.py --witness` exits `0` on an intact ledger and non-zero after one audit row is edited or deleted — mutated through the documented opt-out `SELECT set_config('bastion.allow_audit_mutation', 'on', true)` (ADR-005:46), not by disabling the trigger — and an unreachable MinIO exits `2`
+- [x] The witness object carries only scope, range bounds, row count, terminal `record_hash`, timestamp and signature; a test reads the stored object and asserts no prompt, completion or tool-argument text and no plaintext PII is present
+- [x] `mc admin policy info` (or the bucket policy) shows the app credential holds `s3:PutObject` on the witness prefix only, and a test asserts `s3:DeleteObject` and `s3:PutBucketObjectLockConfiguration` are denied, so retention cannot be shortened from the application
+- [x] Both the DB chain and the witness survive `docker compose restart`, and a verification run afterwards still exits `0`
+- [x] `docs/adr/ADR-005.md:50`, `SECURITY.md:132-133`, `COMPLIANCE.md:117`/`:137` and `THREAT_MODEL.md:240` describe retention and the external witness as implemented only once it is, narrowing T10's residual to host compromise and the missing INSERT-only role; `uv run python scripts/check_adrs.py` passes
+- [x] `IDEA-004` gains a `**Notes**` line recording that the immutable store and the head witness ship here while its export supplies the segments, without changing its status or its own acceptance boxes
 
 **Notes**
 
+- Verification, 2026-11-12. Tests: `uv run pytest tests/test_audit_chain.py tests/test_audit_witness.py -q` -> 25 passed (14 witness cases: signing, retention clamp, publish/read-back, bucket versioning and lock, delete/config refusals, recomputed-chain divergence, signature tamper, unreachable store, three CLI exit codes); full `pytest -m "not integration"` -> 659 passed / 61 skipped / 78 deselected; `ruff check .` and `ruff format --check .` clean; `mypy` clean on 82 files; `pylint` 10.00/10; `check_adrs.py`, `check_backlog.py`, `validate_tool_catalog.py --check`, `validate_rbac.py`, `recalculate_dread.py --check` OK; `docker compose config` valid. Live proof on an isolated project (`-p bastion-witness-test`) because the running `bastion-agent` stack shares the compose project name: `minio-init` exits 0 and is idempotent on re-run; `mc retention info` -> "Object locking 'COMPLIANCE' is configured for 7YEARS"; `mc version info` -> enabled; `mc admin policy info audit-witness` -> PutObject only under `witness/*` plus the Deny list. `scripts/write_audit_witness.py` then `verify_audit_chain.py --witness` exited 0 (668 records, head f504a44f...); `docker compose restart minio` and a re-run still exited 0. On `bastion_test`, deleting the tail row after publishing left the chain internally valid but the CLI exited 1 with "DIVERGED from the witness"; `AUDIT_WITNESS_ENDPOINT=http://127.0.0.1:1` exited 2.
+- Image provenance: MinIO withdrew its free community images in October 2025; the archived Bitnami build first tried here carried 27 unsuppressed CRITICAL findings, including the MinIO server itself, so it was rejected. The store now uses the Chainguard-maintained build (`cgr.dev/chainguard/minio:latest@sha256:786cb11d...`), pinned by digest; it ships both the server and `mc`, so one digest covers the server and the init job, and it is rebuilt against current Go/Debian rather than frozen. The image is in the SBOM and the Trivy scan: `scripts/image_inventory.py` now excludes only the named controls (`trivy-scan`, `falco`) instead of every `compliance`/`security` service, and `tests/test_compliance_scan.py` pins the ten-image set.
+- Overwrite semantics: the acceptance asks for a failed overwrite. With versioning plus object lock, a `PutObject` to an existing key is a new version, not a 403; the retained version is what cannot be replaced or deleted. `tests/test_audit_witness.py` therefore asserts that `DeleteObject` is refused and that the original `VersionId` still appears in `mc stat --versions`/`ListObjectVersions` after an overwrite. The guarantee is "the original survives", and the ADR records it that way rather than promising a refusal the server does not implement.
+- The profile is opt-in: without `--profile compliance` there is no bucket, so `write_audit_witness.py` and `verify_audit_chain.py --witness` fail closed with exit 2. Cadence is one witness per run until IDEA-004 supplies the export job; the scope is global, and per-tenant witnesses wait on IDEA-001's partition-key decision. The witness is not off-host: MinIO shares the host and the volume, so a host/Docker-socket attacker is out of scope, as is the still-open INSERT-only database role.
+- Files changed: `db/audit.py` (terminal head, id range on `ChainVerification`), `db/witness.py` (signing, retention, publish/read, comparison), `scripts/write_audit_witness.py`, `scripts/verify_audit_chain.py` (`--witness`), `scripts/init_audit_witness.sh`, `config/minio/audit-witness-policy.json`, `docker-compose.yml`, `settings.py`, `.env.example`, `pyproject.toml`/`uv.lock` (boto3), `scripts/image_inventory.py`, `tests/test_audit_witness.py`, `tests/test_settings.py`, `tests/test_compliance_scan.py`, `docs/adr/ADR-005.md`, `SECURITY.md`, `COMPLIANCE.md`, `THREAT_MODEL.md`, `README.md`, `DEMO.md`.
 - Deduplication: IDEA-004 (blocked) is the async export job — segment paging, a manifest with "segment bounds and the terminal hash" (`BACKLOG.md:221`), and retention/deletion text in COMPLIANCE.md — so it produces the artifacts that land *in* the store; this item is the store and the out-of-band anchor, and the two are complementary rather than overlapping. IDEA-001 (inbox) supplies the tenant dimension that decides both the export partition key and, here, whether the witness is per-tenant. IDEA-016 is encrypted payload escrow — a PII store that recovers plaintext on purpose, the opposite direction. IDEA-009 is trace privacy (done); IDEA-015 is egress disclosure (done); IDEA-019 is image scanning. No item and no Accepted ADR covers a write-once store or an external head witness: the only four hits for `minio|object lock|write-once|archival` are `THREAT_MODEL.md:240`, `ADR-005.md:50`, `SECURITY.md:133` and `BACKLOG.md:215`, all of them either the residual or a promise.
 - Sequencing, honestly: IDEA-004 is `blocked` (`BACKLOG.md:195`) with `blocked-by: tenant scoping decides the partition key of the export` (`:201`) on IDEA-001, which is itself still `inbox` (`:63`). Depending on IDEA-004 would make this the third link of a chain that has not started, and the rubric forbids `depends-on` as "related to" rather than "unbuildable". The witness needs only the DB head and a row count, so **this is buildable today against the live ledger**; hence `depends-on: -`. If triage instead scopes the witness to exported segments only, set `depends-on: IDEA-001, IDEA-004` and expect it to wait.
 - Classification: `P2`/`v0.3`/`db`. No production guarantee is broken today (the chain verifies, nothing leaked), retention is explicitly scheduled for v0.3/v0.5, and `ADR-008.md:18` already lists "async audit export" in v0.3, so the next phase is the conservative home; a `P1` argument exists by the IDEA-011 precedent (a document asserting a shipped control that does not exist), and triage may split the doc correction out at `P1` — but the capability itself is new. `area: db` because the change is the ledger's external anchor: a witness writer beside `append_audit_event` (`db/audit.py:59`), a terminal hash on `ChainVerification`, the verification mode, and the IDEA-004 export as the primary caller; `security` is the fair alternative (the load-bearing content is the T10 invariant, and the store is mostly compose and bucket policy), rejected for consistency with IDEA-004 and IDEA-016, with the threat-model text riding along in the same change. Tags stop at five per the intake guidance; `compliance` is dropped because `retention` already carries it and IDEA-004 is the discoverable home for that word.
