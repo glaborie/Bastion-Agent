@@ -28,4 +28,4 @@ Bastion-Agent is an enterprise-grade agent runtime designed for high-security an
 - [Troubleshooting](Troubleshooting.md)
 
 ---
-*This wiki is synchronized from the wiki/ directory of the main repository.*
+*This page is synchronized from the [`wiki/`](https://github.com/glaborie/Bastion-Agent/tree/master/wiki) directory of the main repository.*
