@@ -22,6 +22,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: rejected at startup if these values are still in place (see ``_reject_dev_secrets``).
 DEV_VAULT_MASTER_KEY = "YmFzdGlvbi1kZXYtaW5zZWN1cmUtdmF1bHQta2V5ISE="
 DEV_APPROVAL_HMAC_SECRET = "dev-only-approval-hmac-secret-change-me"
+DEV_JOB_SIGNING_SECRET = "dev-only-job-signing-secret-change-me"
 DEV_KEYCLOAK_CLIENT_SECRET = "dev-only-keycloak-client-secret"
 
 Environment = Literal["local", "ci", "staging", "production"]
@@ -238,6 +239,13 @@ class Settings(BaseSettings):
     # -- HITL approvals ----------------------------------------------------
     approval_hmac_secret: SecretStr = SecretStr(DEV_APPROVAL_HMAC_SECRET)
     approval_ttl_seconds: int = 900
+    #: HMAC key for identity-bearing ARQ jobs (ADR-018). The gateway and the
+    #: demo CLI mint with it; the worker only verifies. Distinct from
+    #: ``APPROVAL_HMAC_SECRET`` so a leaked job key cannot mint capabilities.
+    job_signing_secret: SecretStr = SecretStr(DEV_JOB_SIGNING_SECRET)
+    #: How long an enqueued job envelope stays valid. Bounded because a queued
+    #: payload is a bearer token until the worker burns its nonce.
+    job_signature_ttl_seconds: int = 900
 
     # -- Guarded tools (four-eyes execution) ------------------------------
     #: ADR-009 Gate 1 allow-list. Relative to the working directory in local
@@ -473,6 +481,8 @@ class Settings(BaseSettings):
             raise ValueError("VAULT_MASTER_KEY must be rotated before non-local deployment")
         if self.approval_hmac_secret.get_secret_value() == DEV_APPROVAL_HMAC_SECRET:
             raise ValueError("APPROVAL_HMAC_SECRET must be rotated before non-local deployment")
+        if self.job_signing_secret.get_secret_value() == DEV_JOB_SIGNING_SECRET:
+            raise ValueError("JOB_SIGNING_SECRET must be rotated before non-local deployment")
         if self.keycloak_client_secret.get_secret_value() == DEV_KEYCLOAK_CLIENT_SECRET:
             raise ValueError("KEYCLOAK_CLIENT_SECRET must be rotated before non-local deployment")
         if not self.session_cookie_secure:
