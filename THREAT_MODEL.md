@@ -99,7 +99,7 @@ Two facts shape the model:
 | Per-principal token and cost budgets | PLANNED | none found |
 | Signed job payloads for every identity-bearing enqueue (`execute_tool_job`, `run_demo_scenario_job`, `resume_tool_job`) | LIVE (host key access is still admin) | `agent/job_auth.py`, `agent/runtime.py`, ADR-018 |
 | East-west mTLS for PostgreSQL, Redis and Keycloak (opt-in `pki` profile) | LIVE (profile-scoped; host root still wins) | `docker-compose.pki.yml`, `docs/PKI.md`, ADR-019 |
-| External anchoring of the audit chain | PLANNED | see T10 |
+| External anchoring of the audit chain (opt-in `compliance` profile) | LIVE (profile-scoped; not off-host) | `db/witness.py`, `scripts/write_audit_witness.py`, ADR-005 |
 | Langfuse and Phoenix exporters | PLANNED | collector ships with the `debug` exporter |
 
 Runtime detection is the only control in this table that is not started by the default
@@ -257,11 +257,15 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
   - LIVE: each record hashes its content plus the previous record's hash (SHA-256). Each stage commits independently, so evidence survives a later failure.
   - LIVE: `POST /api/audit/verify` and `scripts/verify_audit_chain.py` recompute the chain.
   - LIVE: payloads are stored as hashes in `audit_logs`. Argument values and prompt text never enter the ledger.
+  - LIVE (opt-in `compliance` profile): `scripts/write_audit_witness.py` appends a signed witness of the head, id range and row count to a versioned MinIO bucket under `COMPLIANCE` object lock with 7-year retention. The application credential can only put and read under `witness/*`; deletion, bucket-versioning changes, object-lock reconfiguration and bucket-policy changes are denied server-side. `scripts/verify_audit_chain.py --witness` compares the live head with it, and exits `2` when the store is unavailable rather than reporting a pass.
   - OPTIONAL, pre-production only: with `PAYLOAD_ESCROW_ENABLED=true`, `INPUT_RECEIVED` also writes the exact payload it hashed to the separate `payload_escrow` table as AES-256-GCM ciphertext (per-record nonce, AAD bound to the audit id, `payload_hash`, tenant and kind). A read is `admin`-only, requires an explicit `POST /api/audit/{record_id}/escrow`, and appends `ESCROW_ACCESSED`. Rows expire on `PAYLOAD_ESCROW_TTL_SECONDS` (24 h) and are hard-deleted; production refuses to start with the flag on.
 - Residual risk:
-  - A chain inside the same database detects partial edits. An attacker with write access can recompute the whole chain. Detecting that needs the head hash exported to a separate system or write-once store, plus an INSERT-only database role. Neither is implemented.
+  - Without the `compliance` profile there is no witness, so the database-only chain still cannot see an attacker who recomputes it; verification reports "could not verify" (exit `2`) in that mode rather than passing.
+  - The witness store shares the host and the Docker volume. A host-root or Docker-socket attacker can delete the volume or rewrite the compose file; the control defends the credential that reaches PostgreSQL, not the host. Off-site replication is not implemented.
+  - The INSERT-only database role that this residual also names is still open; the witness narrows the recompute path, not the write path.
+  - Witness coverage is manual until IDEA-004's export job exists: one witness per `scripts/write_audit_witness.py` run, not a continuous heartbeat.
   - When escrow is enabled, `payload_escrow` is a recoverable PII store: someone holding both the process key and the database can decrypt prompts for the retention window. That is the accepted trade of a debugging build, not a production posture; the ledger and its chain are unchanged either way.
-- Verification: `tests/test_audit_chain.py`, `tests/test_payload_escrow.py`.
+- Verification: `tests/test_audit_chain.py`, `tests/test_audit_witness.py`, `tests/test_payload_escrow.py`, `scripts/verify_audit_chain.py --witness`.
 
 ### T11. Supply chain and model-artifact tampering
 
@@ -328,7 +332,7 @@ Scores are the author's estimates of residual risk with the controls as they exi
 1. Close T8: authenticate queued jobs and isolate Redis.
 2. Run `pytest` and `scripts/run_evals.py` in CI and fail the build below threshold. The README states that evals gate merges, and CI does not do that yet.
 3. Add per-principal token and cost budgets (T12); request-rate limiting is live (ADR-013).
-4. Anchor the audit-chain head outside the database (T10).
+4. Add the INSERT-only database role that T10 pairs with the external witness (the anchor itself ships behind the `compliance` profile).
 5. Add Swiss identifier recognizers and grow the golden set beyond 83 cases (T1, T4).
 6. Sign and verify images (cosign), pin the three tag-only references, and add IaC and secret scanning (T11).
 7. Replace development secrets with a secret-manager integration (T4, T6).

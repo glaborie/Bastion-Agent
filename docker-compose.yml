@@ -500,6 +500,74 @@ services:
       - bastion-net
 
   # ---------------------------------------------------------------------------
+  # Audit witness store (opt-in, `compliance` profile).
+  #
+  # The chain lives in the same database it protects, so an attacker holding the
+  # database credential can recompute it. scripts/write_audit_witness.py copies
+  # the head into this bucket, which the application may append to but not
+  # rewrite: versioning on, object lock in COMPLIANCE mode, 7-year retention,
+  # and a credential scoped to the witness prefix (ADR-005 decision 9).
+  #
+  # MinIO stopped publishing free community images in October 2025. The last
+  # public Bitnami build is pinned by digest; it ships both `minio` and `mc`.
+  # minio-init is idempotent and also creates the witness-only credential.
+  # ---------------------------------------------------------------------------
+  minio:
+    image: bitnamilegacy/minio:2025.5.24-debian-12-r5@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+    container_name: bastion-minio
+    profiles: [compliance]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-bastion-minio-root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dev-only-minio-root-password}
+    volumes:
+      - miniodata:/bitnami/minio/data
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - bastion-net
+
+  minio-init:
+    image: bitnamilegacy/minio:2025.5.24-debian-12-r5@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+    container_name: bastion-minio-init
+    profiles: [compliance]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/opt/bastion/init-audit-witness.sh"]
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-bastion-minio-root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dev-only-minio-root-password}
+      # Fixed: config/minio/audit-witness-policy.json names this bucket.
+      AUDIT_WITNESS_BUCKET: bastion-audit
+      AUDIT_WITNESS_ACCESS_KEY: ${AUDIT_WITNESS_ACCESS_KEY:-bastion-witness}
+      AUDIT_WITNESS_SECRET_KEY: ${AUDIT_WITNESS_SECRET_KEY:-dev-only-minio-witness-password}
+      AUDIT_WITNESS_RETENTION_YEARS: ${AUDIT_WITNESS_RETENTION_YEARS:-7}
+    volumes:
+      - ./scripts/init_audit_witness.sh:/opt/bastion/init-audit-witness.sh:ro
+      - ./config/minio/audit-witness-policy.json:/opt/bastion/audit-witness-policy.json:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # One-shot: a permissions failure must be visible, not retried in a loop.
+    restart: "no"
+    networks:
+      - bastion-net
+
+  # ---------------------------------------------------------------------------
   # Trivy image scanner (opt-in, no Docker socket).
   #
   # scripts/scan_images.sh exports every image from `scripts/image_inventory.py`
@@ -591,6 +659,7 @@ volumes:
   keycloak_data:
   omniroute_data:
   trivy_cache:
+  miniodata:
 
 networks:
   bastion-net:

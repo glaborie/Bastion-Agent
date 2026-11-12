@@ -1,0 +1,55 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AppendWitnessObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectRetention"
+      ],
+      "Resource": [
+        "arn:aws:s3:::bastion-audit/witness/*"
+      ]
+    },
+    {
+      "Sid": "ReadWitnessObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::bastion-audit/witness/*"
+      ]
+    },
+    {
+      "Sid": "ListWitnessVersions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": [
+        "arn:aws:s3:::bastion-audit"
+      ]
+    },
+    {
+      "Sid": "DenyMutationOfRetention",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:BypassGovernanceRetention",
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:PutBucketVersioning",
+        "s3:PutBucketPolicy",
+        "s3:DeleteBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::bastion-audit",
+        "arn:aws:s3:::bastion-audit/*"
+      ]
+    }
+  ]
+}

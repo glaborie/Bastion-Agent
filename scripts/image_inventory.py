@@ -35,7 +35,6 @@ DEFAULT_COMPOSE = ROOT / "docker-compose.yml"
 
 IMAGE_LINE = re.compile(r"^\s*image:\s*(?P<ref>[^#\n]+?)\s*(?:#.*)?$")
 SERVICE_HEADER = re.compile(r"^ {2}(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*):\s*$")
-PROFILES_LINE = re.compile(r"^\s+profiles:\s*\[(?P<profiles>[^\]]*)\]\s*$")
 VAR_REF = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}")
 REQUIRED_REF = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*):\?")
 
@@ -87,19 +86,17 @@ def _blocks(text: str) -> list[tuple[str, list[str]]]:
     return blocks
 
 
-def _is_tooling_only(body: list[str]) -> bool:
-    """True when a service exists only behind a tooling profile.
+#: Controls that run behind a profile but are not part of the shipped stack.
+#: The Trivy scanner and Falco are tooling around it; the MinIO witness store is
+#: a service the compliance profile actually serves from, so it stays in the SBOM
+#: and the image scan.
+_TOOLING_SERVICES = frozenset({"trivy-scan", "falco"})
 
-    The Trivy scanner (`compliance`) and Falco (`security`) are controls, not
-    shipped service images: they are digest-pinned and excluded from the SBOM
-    so the artifact describes what the stack serves.
-    """
-    for line in body:
-        match = PROFILES_LINE.match(line)
-        if match is not None:
-            profiles = {item.strip() for item in match.group("profiles").split(",")}
-            return profiles in ({"compliance"}, {"security"})
-    return False
+
+def _is_tooling_only(name: str, body: list[str]) -> bool:
+    """True for the scanner and the runtime detector, not for profiled services."""
+    del body  # kept for signature stability; the decision is the service name
+    return name in _TOOLING_SERVICES
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -145,8 +142,8 @@ def read_images(
         raise InventoryError(f"cannot read {path}: {exc}") from exc
 
     images: list[str] = []
-    for _name, body in _blocks(text):
-        if _is_tooling_only(body):
+    for name, body in _blocks(text):
+        if _is_tooling_only(name, body):
             continue
         for line in body:
             if line.lstrip().startswith("#"):

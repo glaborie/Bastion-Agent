@@ -544,6 +544,20 @@ one entry would break verification for every later entry. The trigger blocks
 `UPDATE`/`DELETE` unless a transaction explicitly opts in
 (`bastion.allow_audit_mutation = on`, used only by integrity tests).
 
+To show the external anchor, start the opt-in store and compare the head:
+
+```bash
+docker compose --profile compliance up -d minio minio-init
+uv run python scripts/write_audit_witness.py
+uv run python scripts/verify_audit_chain.py --witness
+```
+
+Then delete the last ledger row with the documented opt-out and re-run the
+verification. The chain still verifies (every surviving link is intact), but the
+witness comparison fails: the head moved after the witness was written. Without
+`--profile compliance`, `--witness` exits `2` instead of pretending the ledger
+is anchored.
+
 ---
 
 ## 7. Act 5 — the Command Control dashboard
