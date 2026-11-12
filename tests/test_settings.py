@@ -174,6 +174,7 @@ def test_production_refuses_to_start_with_payload_escrow_enabled() -> None:
         "payload_escrow_enabled": True,
         "vault_master_key": base64.b64encode(b"p" * 32).decode(),
         "approval_hmac_secret": "rotated-production-approval-secret",
+        "job_signing_secret": "rotated-production-job-secret",
         "keycloak_client_secret": "rotated-production-keycloak-secret",
         "session_cookie_secure": True,
     }
