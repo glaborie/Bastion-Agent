@@ -508,24 +508,29 @@ services:
   # rewrite: versioning on, object lock in COMPLIANCE mode, 7-year retention,
   # and a credential scoped to the witness prefix (ADR-005 decision 9).
   #
-  # MinIO stopped publishing free community images in October 2025. The last
-  # public Bitnami build is pinned by digest; it ships both `minio` and `mc`.
+  # MinIO stopped publishing free community images in October 2025; this is the
+  # maintained Chainguard build, pinned by digest. It ships both `minio` and
+  # `mc`, so the server and the init job share one image and one CVE surface.
   # minio-init is idempotent and also creates the witness-only credential.
   # ---------------------------------------------------------------------------
   minio:
-    image: bitnamilegacy/minio:2025.5.24-debian-12-r5@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+    image: cgr.dev/chainguard/minio:latest@sha256:786cb11d340b1a657de8dc899560e36e1d1fb371d3d6f3eb6c903a0bb0cec714
     container_name: bastion-minio
     profiles: [compliance]
+    # The distroless image has no default command.
+    command: ["server", "/data"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-bastion-minio-root}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dev-only-minio-root-password}
     volumes:
-      - miniodata:/bitnami/minio/data
+      - miniodata:/data
     ports:
       - "127.0.0.1:${MINIO_PORT:-9000}:9000"
       - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live"]
+      # Distroless: no shell and no curl. The exec form opens a TCP socket
+      # through bash, which this image ships.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -539,7 +544,7 @@ services:
       - bastion-net
 
   minio-init:
-    image: bitnamilegacy/minio:2025.5.24-debian-12-r5@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+    image: cgr.dev/chainguard/minio:latest@sha256:786cb11d340b1a657de8dc899560e36e1d1fb371d3d6f3eb6c903a0bb0cec714
     container_name: bastion-minio-init
     profiles: [compliance]
     depends_on:

@@ -34,7 +34,7 @@ EXPECTED_IMAGE_PREFIXES = (
     "ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:",
     "otel/opentelemetry-collector-contrib:0.165.0@sha256:",
     "diegosouzapw/omniroute:3.8.53@sha256:",
-    "bitnamilegacy/minio:2025.5.24-debian-12-r5@sha256:",
+    "cgr.dev/chainguard/minio:latest@sha256:",
 )
 
 
@@ -159,7 +159,7 @@ def test_inventory_excludes_the_scanner_and_detector_but_keeps_services(
         "    image: falcosecurity/falco:0.45.2\n"
         "    profiles: [security]\n"
         "  minio:\n"
-        "    image: bitnamilegacy/minio:2025.5.24-debian-12-r5\n"
+        "    image: cgr.dev/chainguard/minio:latest\n"
         "    profiles: [compliance]\n",
         encoding="utf-8",
     )
@@ -167,7 +167,7 @@ def test_inventory_excludes_the_scanner_and_detector_but_keeps_services(
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
         "alpine:3.20",
-        "bitnamilegacy/minio:2025.5.24-debian-12-r5",
+        "cgr.dev/chainguard/minio:latest",
     ]
 
 

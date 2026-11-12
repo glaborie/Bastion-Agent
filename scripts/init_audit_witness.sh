@@ -9,7 +9,7 @@
 # client discipline.
 set -euo pipefail
 
-MC="${MC_BIN:-/opt/bitnami/minio-client/bin/mc}"
+MC="${MC_BIN:-mc}"
 POLICY="${AUDIT_WITNESS_POLICY:-/opt/bastion/audit-witness-policy.json}"
 : "${MINIO_ENDPOINT:?MINIO_ENDPOINT is required}"
 : "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}"
