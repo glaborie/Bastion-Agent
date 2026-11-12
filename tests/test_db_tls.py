@@ -101,7 +101,7 @@ def test_disable_is_the_local_default() -> None:
     assert settings.database_ssl_mode == "disable"
     assert settings.redis_tls_enabled is False
     assert database_ssl_context(settings) is None
-    assert redis_tls_kwargs(settings) == {}
+    assert not redis_tls_kwargs(settings)
 
 
 def test_a_missing_ca_bundle_refuses_to_start(tmp_path: Path) -> None:
