@@ -10,14 +10,15 @@
 
 ```bash
 # 1. Clone & enter directory
-cd /home/glaborie/projects/Bastion-Agent
+git clone https://github.com/glaborie/Bastion-Agent.git
+cd Bastion-Agent
 
 # 2. Configure environment
 cp .env.example .env
 
 # 3. Download the local inference model (once; ~4.7 GB)
-uvx --from huggingface_hub hf download \
-  bartowski/Qwen2.5-7B-Instruct-GGUF \
+uvx --from huggingface_hub hf download \\
+  bartowski/Qwen2.5-7B-Instruct-GGUF \\
   Qwen2.5-7B-Instruct-Q4_K_M.gguf --local-dir models
 
 mv models/Qwen2.5-7B-Instruct-Q4_K_M.gguf models/qwen2.5-7b-instruct-q4_k_m.gguf
