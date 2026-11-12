@@ -97,7 +97,7 @@ Two facts shape the model:
 | Per-principal request rate limits (`dashboard` 60/min, `chat` 120/min) | LIVE | `gateway/rate_limit.py`, ADR-013 |
 | Runtime syscall detection (Falco, opt-in `security` profile) | PARTIAL | `config/falco/`, ADR-017 |
 | Per-principal token and cost budgets | PLANNED | none found |
-| Signed or re-derived identity on queued jobs | PLANNED | see T8 |
+| Signed job payloads for every identity-bearing enqueue (`execute_tool_job`, `run_demo_scenario_job`, `resume_tool_job`) | LIVE (host key access is still admin) | `agent/job_auth.py`, `agent/runtime.py`, ADR-018 |
 | External anchoring of the audit chain | PLANNED | see T10 |
 | Langfuse and Phoenix exporters | PLANNED | collector ships with the `debug` exporter |
 
@@ -225,11 +225,14 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
 
 - References: `ASI03`, `LLM03:2026`
 - Attack: a party with write access to the ARQ Redis queue enqueues `execute_tool_job` with a chosen `actor_id` and `roles`.
-- Finding: `execute_tool_job` builds the `AgentContext` from job arguments. The worker does not re-verify the identity or the roles. Anyone who can enqueue can assert any principal. Because the approval check compares initiator and approver subjects, a forged initiator identity also weakens the four-eyes rule.
+- Finding: the queue was an unauthenticated trust boundary. `execute_tool_job` rebuilt `AgentContext` from job arguments and the worker re-verified neither the identity nor the roles, so anyone who could write the queue could assert any principal; a forged initiator also weakened the four-eyes rule, and a forged tenant crossed ADR-015's boundary.
 - Controls:
-  - PLANNED: sign job payloads with a key the enqueuer alone holds, or enqueue only an opaque reference and resolve identity and roles from a server-side record.
-  - PLANNED: separate Redis ACL users for gateway and worker, TLS, and no host port exposure. The development compose file publishes Redis on a host port for the demo.
-- Residual risk: until this is closed, treat Redis write access as equivalent to administrator access.
+  - LIVE: every identity-bearing job carries an HMAC-SHA256 envelope over the exact field map (`agent/job_auth.py`, ADR-018). The worker verifies it in constant time before the guard runs, so an unsigned or tampered payload returns `unauthorized_job` and produces no tool call, no ticket and no ledger row.
+  - LIVE: the envelope nonce is burned once with `SET NX EX`, so a captured payload cannot be replayed; the TTL is measured from the signature deadline.
+  - LIVE: the signing key is `JOB_SIGNING_SECRET`, separate from `APPROVAL_HMAC_SECRET`, and `_reject_dev_secrets` refuses the development value in staging and production.
+  - PLANNED: separate Redis ACL users for gateway and worker, TLS, and no host port exposure. The development compose file publishes Redis on a host port for the demo. IDEA-023 owns this half.
+- Residual risk: whoever holds `JOB_SIGNING_SECRET` — host root, the `.env`, anything that can read the gateway environment — can mint any identity. The control moves the threshold from "write Redis" to "write Redis and hold the key"; it does not defend against a host attacker, and the key has no rotation schedule or version tag.
+- Verification: `tests/test_job_auth.py` (unsigned, tampered, cross-tenant, replayed and minted payloads), `tests/test_tool_execution.py` (the signed gateway path still executes), ADR-018.
 
 ### T9. Approval workflow abuse
 

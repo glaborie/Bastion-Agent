@@ -50,6 +50,16 @@ from agent.demo.scenarios import (
     UnknownScenarioError,
     get_scenario,
 )
+from agent.job_auth import (
+    DEMO_JOB,
+    RESUME_JOB,
+    TOOL_JOB,
+    JobSignatureError,
+    demo_job_fields,
+    resume_job_fields,
+    tool_job_fields,
+    verify_and_consume,
+)
 from agent.routing.client import close_model_router
 from agent.tools.decorator import (
     TOOL_NOT_IN_CATALOG_CODE,
@@ -135,11 +145,19 @@ async def execute_tool_job(
     session_id: str,
     roles: list[str] | None = None,
     arguments: dict[str, Any] | None = None,
+    job_nonce: str = "",
+    job_expires_at: str = "",
+    job_signature: str = "",
 ) -> dict[str, Any]:
     """Authorize and either run a read-only tool or suspend a mutating one.
 
     ``actor_id`` must be the caller's OIDC subject (JWT ``sub``), because the
     approval decision compares it with the approver's subject.
+
+    The identity in this payload is only accepted when the envelope proves a
+    trusted enqueuer minted it (ADR-018). Anything else is refused before the
+    guard runs, so a forged principal cannot reach the ledger, create a ticket
+    or execute a tool.
 
     One span per job, named after the tool, so the worker half of a four-eyes
     decision is visible next to the gateway span that approved it.
@@ -153,6 +171,23 @@ async def execute_tool_job(
                 }
             )
         )
+        rejected = await _reject_unsigned_job(
+            span,
+            TOOL_JOB,
+            tool_job_fields(
+                tool_name=tool_name,
+                actor_id=actor_id,
+                tenant_id=tenant_id,
+                session_id=session_id,
+                roles=roles,
+                arguments=arguments,
+            ),
+            nonce=job_nonce,
+            expires_at=job_expires_at,
+            signature=job_signature,
+        )
+        if rejected is not None:
+            return {"status": "unauthorized_job", "tool": tool_name, "error": rejected}
         result = await _run_tool_job(
             ctx,
             tool_name=tool_name,
@@ -164,6 +199,51 @@ async def execute_tool_job(
         )
         span.set_attributes(_outcome_attributes(result))
         return result
+
+
+async def _reject_unsigned_job(
+    span: trace.Span,
+    kind: str,
+    fields: Mapping[str, Any],
+    *,
+    nonce: str,
+    expires_at: str,
+    signature: str,
+) -> str | None:
+    """Verify a job envelope; return a rejection reason or ``None``.
+
+    A rejection is deliberately not written to the audit ledger: the only
+    identity available is the forged one, and a hash-chained row naming an
+    attacker-chosen principal is worse than a log line. The span and the worker
+    log carry the reason, and the refusal happens before any guard, ticket or
+    execution row exists.
+    """
+    settings = get_settings()
+    try:
+        await verify_and_consume(
+            get_redis(settings.redis_url),
+            kind,
+            fields,
+            nonce=nonce,
+            expires_at=expires_at,
+            signature=signature,
+            secret=settings.job_signing_secret.get_secret_value(),
+            ttl_seconds=settings.job_signature_ttl_seconds,
+        )
+    except JobSignatureError as exc:
+        logger.error(
+            "Rejected a job whose identity was not minted by a trusted enqueuer",
+            extra={"job": kind, "reason": exc.reason},
+        )
+        span.set_attribute("bastion.job.rejected", exc.reason)
+        return exc.reason
+    # A worker that cannot read Redis cannot prove single use; the queue is a
+    # Redis list, so this is an outage path rather than a reachable state.
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception("Could not verify a job signature", extra={"job": kind})
+        span.set_attribute("bastion.job.rejected", "signature_unverifiable")
+        return "signature_unverifiable"
+    return None
 
 
 async def _run_tool_job(
@@ -278,14 +358,36 @@ async def _persist_refusal(
         )
 
 
-async def resume_tool_job(ctx: dict[str, Any], *, ticket_id: str) -> dict[str, Any]:
+async def resume_tool_job(
+    ctx: dict[str, Any],
+    *,
+    ticket_id: str,
+    tenant_id: str = "",
+    job_nonce: str = "",
+    job_expires_at: str = "",
+    job_signature: str = "",
+) -> dict[str, Any]:
     """Execute an approved ticket; safe to call more than once.
+
+    The ticket id is harmless to guess — execution re-derives the initiator,
+    tenant and role from the row and re-checks four-eyes — but the job is signed
+    anyway so every enqueue site shares one mint/verify path (ADR-018).
 
     The span carries the ticket id, the same attribute the gateway puts on the
     four-eyes decision, so the two traces join on the approval in the ledger.
     """
     with _tracer.start_as_current_span("tool.resume") as span:
         span.set_attribute("bastion.approval.ticket_id", ticket_id)
+        rejected = await _reject_unsigned_job(
+            span,
+            RESUME_JOB,
+            resume_job_fields(ticket_id=ticket_id, tenant_id=tenant_id),
+            nonce=job_nonce,
+            expires_at=job_expires_at,
+            signature=job_signature,
+        )
+        if rejected is not None:
+            return {"status": "unauthorized_job", "ticket_id": ticket_id, "error": rejected}
         try:
             async with session_scope() as session:
                 result = await resume_approved_tool(session, ticket_id=ticket_id)
@@ -359,12 +461,16 @@ async def run_demo_scenario_job(
     tenant_id: str,
     roles: list[str],
     session_id: str,
+    job_nonce: str = "",
+    job_expires_at: str = "",
+    job_signature: str = "",
 ) -> dict[str, Any]:
     """Execute one allow-listed demo scenario and record its outcome.
 
     The gateway never runs a scenario in the request process. The actor and the
     roles were captured from the authenticated session before the job was
-    queued; this function never sees the HTTP request.
+    queued; this function never sees the HTTP request, which is exactly why the
+    envelope is checked before the scenario runs (ADR-018).
     """
     settings = get_settings()
     redis = get_redis(settings.redis_url)
@@ -377,6 +483,23 @@ async def run_demo_scenario_job(
                 }
             )
         )
+        rejected = await _reject_unsigned_job(
+            span,
+            DEMO_JOB,
+            demo_job_fields(
+                run_id=run_id,
+                scenario_id=scenario_id,
+                actor_id=actor_id,
+                tenant_id=tenant_id,
+                roles=roles,
+                session_id=session_id,
+            ),
+            nonce=job_nonce,
+            expires_at=job_expires_at,
+            signature=job_signature,
+        )
+        if rejected is not None:
+            return {"status": "unauthorized_job", "run_id": run_id, "error": rejected}
         run = await load_run(redis, run_id)
         if run is None:
             logger.warning(

@@ -8,10 +8,18 @@ the worker's ``resume_approved_tickets_job`` cron sweep picks the ticket up.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
+from agent.job_auth import (
+    DEMO_JOB,
+    RESUME_JOB,
+    demo_job_fields,
+    resume_job_fields,
+    sign_job,
+)
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -53,6 +61,8 @@ async def enqueue_tool_resume(tenant_id: str, ticket_id: str) -> bool:
         await pool.enqueue_job(
             "resume_tool_job",
             ticket_id=ticket_id,
+            tenant_id=tenant_id,
+            **_mint(RESUME_JOB, resume_job_fields(ticket_id=ticket_id, tenant_id=tenant_id)),
             _job_id=f"{_RESUME_JOB_PREFIX}{tenant_id}:{ticket_id}",
             _queue_name=settings.arq_queue_name,
         )
@@ -83,16 +93,20 @@ async def enqueue_demo_run(
     the caller marks the run failed instead of leaving it queued forever.
     """
     settings = get_settings()
+    fields = demo_job_fields(
+        run_id=run_id,
+        scenario_id=scenario_id,
+        actor_id=actor_id,
+        tenant_id=tenant_id,
+        roles=roles,
+        session_id=session_id,
+    )
     try:
         pool = await get_arq_pool()
         await pool.enqueue_job(
             "run_demo_scenario_job",
-            run_id=run_id,
-            scenario_id=scenario_id,
-            actor_id=actor_id,
-            tenant_id=tenant_id,
-            roles=roles,
-            session_id=session_id,
+            **fields,
+            **_mint(DEMO_JOB, fields),
             _job_id=f"{_DEMO_JOB_PREFIX}{run_id}",
             _queue_name=settings.arq_queue_name,
         )
@@ -103,6 +117,17 @@ async def enqueue_demo_run(
         )
         return False
     return True
+
+
+def _mint(kind: str, fields: dict[str, Any]) -> dict[str, Any]:
+    """Mint the envelope kwargs; the worker refuses jobs without one (ADR-018)."""
+    settings = get_settings()
+    return sign_job(
+        kind,
+        fields,
+        secret=settings.job_signing_secret.get_secret_value(),
+        ttl_seconds=settings.job_signature_ttl_seconds,
+    )
 
 
 async def close_arq_pool() -> None:

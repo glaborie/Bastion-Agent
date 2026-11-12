@@ -116,6 +116,24 @@ def _disable_payload_escrow(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _fake_job_nonce_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep the suite's job-signature checks off the live Redis server.
+
+    The worker burns a job nonce in Redis before executing anything. Every test
+    gets a fresh in-memory server instead, because the process-wide client would
+    otherwise bind to the first test's event loop. The real server's SET NX / TTL
+    semantics are covered by ``tests/test_job_auth.py`` under the
+    ``redis_integration`` marker, the same split the egress quarantine tests use.
+    """
+    from fakeredis import FakeAsyncRedis
+
+    client = FakeAsyncRedis(decode_responses=True)
+    monkeypatch.setattr("agent.runtime.get_redis", lambda *_args, **_kwargs: client)
+    yield
+    # In-memory only: nothing to close, and the object dies with the test.
+
+
+@pytest.fixture(autouse=True)
 def _disable_rate_limiting(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep the suite from spending the development Redis rate-limit budget.
 

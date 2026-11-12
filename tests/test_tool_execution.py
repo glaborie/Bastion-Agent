@@ -14,6 +14,13 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from agent.job_auth import (
+    RESUME_JOB,
+    TOOL_JOB,
+    resume_job_fields,
+    sign_job,
+    tool_job_fields,
+)
 from agent.tools.catalog import CatalogTool, get_tool_catalog, override_tool_catalog
 from agent.tools.decorator import (
     TOOL_NOT_IN_CATALOG_CODE,
@@ -44,12 +51,42 @@ from db.models import (
     utcnow,
 )
 from gateway.approvals import ApprovalDecisionError, decide_ticket
-from settings import reset_settings_cache
+from settings import get_settings, reset_settings_cache
 from tests.conftest import requires_database
 
 pytestmark = requires_database
 
 ARGUMENTS = {"path": "reports/q3.txt", "content": "revenue"}
+
+
+def signed_tool_job(**fields: Any) -> dict[str, Any]:
+    """The payload plus the envelope a trusted enqueuer would mint (ADR-018)."""
+    payload = tool_job_fields(**fields)
+    settings = get_settings()
+    return {
+        **payload,
+        **sign_job(
+            TOOL_JOB,
+            payload,
+            secret=settings.job_signing_secret.get_secret_value(),
+            ttl_seconds=settings.job_signature_ttl_seconds,
+        ),
+    }
+
+
+def signed_resume_job(*, ticket_id: str, tenant_id: str) -> dict[str, Any]:
+    """The envelope kwargs for ``resume_tool_job``."""
+    payload = resume_job_fields(ticket_id=ticket_id, tenant_id=tenant_id)
+    settings = get_settings()
+    return {
+        **payload,
+        **sign_job(
+            RESUME_JOB,
+            payload,
+            secret=settings.job_signing_secret.get_secret_value(),
+            ttl_seconds=settings.job_signature_ttl_seconds,
+        ),
+    }
 
 
 @pytest.fixture
@@ -522,12 +559,14 @@ async def test_worker_commits_a_catalog_refusal_after_the_request_rolls_back(
     try:
         result = await execute_tool_job(
             {"job_id": "test-job"},
-            tool_name="test_rogue_write",
-            actor_id="alice",
-            tenant_id="acme",
-            roles=["operator"],
-            session_id="sess-gate1",
-            arguments={"path": "rogue.txt"},
+            **signed_tool_job(
+                tool_name="test_rogue_write",
+                actor_id="alice",
+                tenant_id="acme",
+                roles=["operator"],
+                session_id="sess-gate1",
+                arguments={"path": "rogue.txt"},
+            ),
         )
     finally:
         unregister_tool("test_rogue_write")
@@ -582,12 +621,14 @@ async def test_worker_span_records_the_suspension_ticket(
     exporter = capture_worker_spans(monkeypatch)
     result = await execute_tool_job(
         {"job_id": "test-span-job"},
-        tool_name="execute_file_write",
-        actor_id="alice",
-        tenant_id="acme",
-        roles=["operator"],
-        session_id="sess-span",
-        arguments=dict(ARGUMENTS),
+        **signed_tool_job(
+            tool_name="execute_file_write",
+            actor_id="alice",
+            tenant_id="acme",
+            roles=["operator"],
+            session_id="sess-span",
+            arguments=dict(ARGUMENTS),
+        ),
     )
 
     spans = exporter.get_finished_spans()
@@ -617,12 +658,14 @@ async def test_worker_publishes_ticket_created_after_commit(
     monkeypatch.setattr("agent.runtime.publish_approval_event", fake_publish)
     result = await execute_tool_job(
         {"job_id": "test-publish-job"},
-        tool_name="execute_file_write",
-        actor_id="alice",
-        tenant_id="acme",
-        roles=["operator"],
-        session_id="sess-publish",
-        arguments=dict(ARGUMENTS),
+        **signed_tool_job(
+            tool_name="execute_file_write",
+            actor_id="alice",
+            tenant_id="acme",
+            roles=["operator"],
+            session_id="sess-publish",
+            arguments=dict(ARGUMENTS),
+        ),
     )
 
     assert result["status"] == "approval_pending"
@@ -641,12 +684,14 @@ async def test_resume_span_records_the_executed_ticket(
     exporter = capture_worker_spans(monkeypatch)
     pending = await execute_tool_job(
         {"job_id": "test-span-job"},
-        tool_name="execute_file_write",
-        actor_id="alice",
-        tenant_id="acme",
-        roles=["operator"],
-        session_id="sess-span",
-        arguments=dict(ARGUMENTS),
+        **signed_tool_job(
+            tool_name="execute_file_write",
+            actor_id="alice",
+            tenant_id="acme",
+            roles=["operator"],
+            session_id="sess-span",
+            arguments=dict(ARGUMENTS),
+        ),
     )
     assert pending["ticket_id"] is not None
 
@@ -656,7 +701,10 @@ async def test_resume_span_records_the_executed_ticket(
         await approver.commit()
 
     exporter.clear()
-    result = await resume_tool_job({"job_id": "test-resume-job"}, ticket_id=pending["ticket_id"])
+    result = await resume_tool_job(
+        {"job_id": "test-resume-job"},
+        **signed_resume_job(ticket_id=pending["ticket_id"], tenant_id="acme"),
+    )
 
     spans = exporter.get_finished_spans()
     assert result["status"] == "executed"
@@ -676,16 +724,21 @@ async def test_resume_span_marks_a_ticket_that_is_not_ready(
     exporter = capture_worker_spans(monkeypatch)
     pending = await execute_tool_job(
         {"job_id": "test-span-job"},
-        tool_name="execute_file_write",
-        actor_id="alice",
-        tenant_id="acme",
-        roles=["operator"],
-        session_id="sess-span",
-        arguments=dict(ARGUMENTS),
+        **signed_tool_job(
+            tool_name="execute_file_write",
+            actor_id="alice",
+            tenant_id="acme",
+            roles=["operator"],
+            session_id="sess-span",
+            arguments=dict(ARGUMENTS),
+        ),
     )
     exporter.clear()
 
-    result = await resume_tool_job({"job_id": "test-resume-job"}, ticket_id=pending["ticket_id"])
+    result = await resume_tool_job(
+        {"job_id": "test-resume-job"},
+        **signed_resume_job(ticket_id=pending["ticket_id"], tenant_id="acme"),
+    )
 
     spans = exporter.get_finished_spans()
     assert result["status"] == "not_approved"
@@ -704,12 +757,14 @@ async def test_read_only_worker_span_has_no_ticket(
     exporter = capture_worker_spans(monkeypatch)
     result = await execute_tool_job(
         {"job_id": "test-read-job"},
-        tool_name="read_system_status",
-        actor_id="alice",
-        tenant_id="acme",
-        roles=["operator"],
-        session_id="sess-read",
-        arguments={},
+        **signed_tool_job(
+            tool_name="read_system_status",
+            actor_id="alice",
+            tenant_id="acme",
+            roles=["operator"],
+            session_id="sess-read",
+            arguments={},
+        ),
     )
 
     assert result["status"] == "executed"

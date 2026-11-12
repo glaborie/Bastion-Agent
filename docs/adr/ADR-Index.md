@@ -22,6 +22,7 @@ a file in this directory; this page is the index and the process guide.
 | 015 | Tenant Isolation for Keys, Rows and Queries | Accepted |
 | 016 | Container Image Scanning & SBOM Publication | Accepted |
 | 017 | Runtime Detection with Falco | Accepted |
+| 018 | Signed Job Envelopes for Worker Identity | Accepted |
 
 ---
 

@@ -28,6 +28,7 @@ from typing import Any
 from arq import create_pool
 from arq.connections import RedisSettings
 
+from agent.job_auth import TOOL_JOB, sign_job, tool_job_fields
 from settings import get_settings
 
 
@@ -92,16 +93,26 @@ def _arguments(items: list[str]) -> dict[str, Any]:
 async def run(args: argparse.Namespace) -> int:
     settings = get_settings()
     session_id = args.session_id or f"demo-{uuid.uuid4().hex[:8]}"
+    fields = tool_job_fields(
+        tool_name=args.tool,
+        actor_id=args.actor_sub,
+        tenant_id=args.tenant_id,
+        session_id=session_id,
+        roles=list(args.role),
+        arguments=_arguments(args.arg),
+    )
+    envelope = sign_job(
+        TOOL_JOB,
+        fields,
+        secret=settings.job_signing_secret.get_secret_value(),
+        ttl_seconds=settings.job_signature_ttl_seconds,
+    )
     pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     try:
         job = await pool.enqueue_job(
             "execute_tool_job",
-            tool_name=args.tool,
-            actor_id=args.actor_sub,
-            tenant_id=args.tenant_id,
-            roles=list(args.role),
-            session_id=session_id,
-            arguments=_arguments(args.arg),
+            **fields,
+            **envelope,
             _queue_name=settings.arq_queue_name,
         )
         if job is None:  # pragma: no cover - defensive

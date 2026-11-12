@@ -102,6 +102,13 @@ Bastion-Agent is a **high-assurance, zero-trust AI agent harness** designed for 
    - Untrusted output framing
    - Egress canary tripwires
 
+### Worker Job Identity
+- **Rule**: A queued job is not proof of identity (ADR-018)
+- **Envelope**: HMAC-SHA256 over the exact field map, minted by the enqueuer
+- **Verification**: Constant-time, before the guard; an unsigned, expired or replayed payload is `unauthorized_job`
+- **Key**: `JOB_SIGNING_SECRET`, separate from `APPROVAL_HMAC_SECRET`, refused outside local development
+- **Replay**: The envelope nonce is burned once in Redis; a second delivery is refused
+
 ### Request Context ≠ Authorization
 - **Rule**: Treat everything in agent request context as tainted input
 - **Authorization**: Derived only from verified identity
@@ -241,7 +248,8 @@ CREATE TABLE audit_logs (
 
 ### Secrets Management
 - **Environment variables**: `.env` file (never committed)
-- **Key rotation**: Quarterly rotation for `LLAMA_API_KEY`, `OPENROUTER_API_KEY`, `REDIS_PASSWORD`
+- **Key rotation**: Quarterly rotation for `LLAMA_API_KEY`, `OPENROUTER_API_KEY`, `REDIS_PASSWORD`, `APPROVAL_HMAC_SECRET`, `JOB_SIGNING_SECRET`
+- **Job signing key**: Rotating `JOB_SIGNING_SECRET` is a coordinated restart, not a rolling one — drain the queue or expect bounded `bad_signature` refusals (ADR-018)
 - **Vault**: Use HashiCorp Vault or Azure Key Vault for production
 
 ### Health & Readiness
