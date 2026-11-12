@@ -23,6 +23,7 @@ a file in this directory; this page is the index and the process guide.
 | 016 | Container Image Scanning & SBOM Publication | Accepted |
 | 017 | Runtime Detection with Falco | Accepted |
 | 018 | Signed Job Envelopes for Worker Identity | Accepted |
+| 019 | East-West Mutual TLS with an Internal Step-CA | Accepted |
 
 ---
 

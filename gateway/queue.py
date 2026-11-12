@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from arq import create_pool
-from arq.connections import ArqRedis, RedisSettings
+from arq.connections import ArqRedis
 
 from agent.job_auth import (
     DEMO_JOB,
@@ -20,6 +20,7 @@ from agent.job_auth import (
     resume_job_fields,
     sign_job,
 )
+from db.redis import arq_redis_settings
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ async def get_arq_pool() -> ArqRedis:
     global _pool
     if _pool is None:
         settings = get_settings()
-        redis_settings = RedisSettings.from_dsn(settings.redis_url)
+        redis_settings = arq_redis_settings(settings)
         # Never let a dashboard request block on a dead Redis: fail fast and let
         # the worker's sweep do the work later.
         redis_settings.conn_timeout = int(settings.arq_connection_timeout_seconds)

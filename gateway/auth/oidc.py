@@ -26,6 +26,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Final
 
 import httpx
@@ -44,8 +45,26 @@ from jwt.exceptions import (
 
 from db.tenancy import TenantIdError, normalise_tenant_id
 from gateway.auth.roles import normalise_roles
+from settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _tls_verify() -> Any:
+    """CA bundle for Keycloak calls, or the system store (ADR-019).
+
+    The ``pki`` profile points ``OIDC_CA_CERT_PATH`` at the internal CA. A
+    configured but missing bundle is a startup error rather than a silent
+    fallback, matching the database and Redis clients.
+    """
+    settings = get_settings()
+    path = settings.oidc_ca_cert_path
+    if not path:
+        return True
+    if not Path(path).is_file():
+        raise RuntimeError(f"OIDC_CA_CERT_PATH is set to {path} but the file is missing")
+    return path
+
 
 #: Access tokens are small; anything longer is a DoS attempt or a mistake.
 MAX_TOKEN_LENGTH: Final[int] = 8192
@@ -179,6 +198,7 @@ class JWKSClient:
             timeout=timeout_seconds,
             follow_redirects=False,
             headers={"accept": "application/json"},
+            verify=_tls_verify(),
         )
         self._owns_client = client is None
         self._keys: dict[str, dict[str, Any]] = {}
@@ -461,6 +481,7 @@ class OIDCTokenClient:
             timeout=timeout_seconds,
             follow_redirects=False,
             headers={"accept": "application/json"},
+            verify=_tls_verify(),
         )
         self._owns_client = client is None
 

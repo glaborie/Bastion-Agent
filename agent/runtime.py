@@ -83,7 +83,7 @@ from agent.tools.execution import (
 )
 from db.escrow import purge_expired_escrow
 from db.models import AuditEventType
-from db.redis import get_redis
+from db.redis import arq_redis_settings, get_redis
 from db.session import dispose_engine, init_models, session_scope
 from logging_setup import configure_logging
 from settings import get_settings
@@ -611,7 +611,7 @@ class WorkerSettings:
         # keeps each delete small.
         cron(purge_expired_payload_escrow_job, minute={0, 15, 30, 45}),
     ]
-    redis_settings: ClassVar[RedisSettings] = RedisSettings.from_dsn(get_settings().redis_url)
+    redis_settings: ClassVar[RedisSettings] = arq_redis_settings()
     queue_name: ClassVar[str] = get_settings().arq_queue_name
     on_startup: ClassVar[Any] = startup
     on_shutdown: ClassVar[Any] = shutdown
