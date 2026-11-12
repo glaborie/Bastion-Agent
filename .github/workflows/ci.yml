@@ -226,12 +226,14 @@ jobs:
     name: Supply chain (OSV + image SBOM)
     runs-on: ubuntu-latest
     # A full scan saves every image, including the CUDA llama.cpp image, so the
-    # job is disk- and network-heavy. See ADR-015 for the cadence trade-off.
+    # job is disk- and network-heavy. See ADR-016 for the cadence trade-off.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          # The scan is gated on the paths a pull request touches.
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
@@ -253,15 +255,53 @@ jobs:
           path: artifacts/threat-intel/latest.json
           if-no-files-found: warn
 
+      # The image scan answers "do the shipped images still contain a CRITICAL?".
+      # Its inputs are the Dockerfile, the compose pins, the lockfile and the
+      # scanner policy — not application code. A pull request that touches none
+      # of them skips six minutes of pulling and scanning; master and the weekly
+      # run always scan, so a stale pin cannot hide.
+      - name: Decide whether the images need scanning
+        id: scan
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet origin "${{ github.base_ref }}"
+          changed=$(git diff --name-only FETCH_HEAD...HEAD)
+          if grep -qE '^(Dockerfile|docker-compose[^/]*\.ya?ml|pyproject\.toml|uv\.lock|trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py))$' <<<"$changed"; then
+            echo "scan=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scan=false" >> "$GITHUB_OUTPUT"
+            echo "no image inputs changed; skipping the image scan"
+          fi
+
+      - name: Restore the Trivy database cache
+        if: github.event_name != 'pull_request' || steps.scan.outputs.scan == 'true'
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .cache/trivy
+          # The run id makes every save unique; restore-keys always picks the
+          # newest previous copy and Trivy refreshes it when it is stale.
+          key: trivy-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
       # Builds the local gateway image, exports every image the compose stack
       # ships and scans the tarballs with the digest-pinned Trivy service (no
       # Docker socket). Exits 1 on an unsuppressed CRITICAL or an expired entry
       # in trivy.yaml; writes artifacts/compliance/<date>/.
       - name: Scan images and publish the SBOM
-        run: ./scripts/scan_images.sh --build-missing
+        if: github.event_name != 'pull_request' || steps.scan.outputs.scan == 'true'
+        env:
+          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+          SCAN_JOBS: "6"
+        run: |
+          mkdir -p "$TRIVY_CACHE_DIR"
+          # The scanner runs as root with cap_drop: ALL and no DAC_OVERRIDE.
+          chmod 0777 "$TRIVY_CACHE_DIR"
+          ./scripts/scan_images.sh --build-missing
 
       - name: Upload image SBOM and CVE report
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || steps.scan.outputs.scan == 'true')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: compliance-reports

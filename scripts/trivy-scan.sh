@@ -25,19 +25,33 @@ for tarball in "$images_dir"/*.tar; do
     count=$((count + 1))
     echo "trivy-scan: $name"
 
+    # Trivy cannot emit CycloneDX and JSON from one invocation, so the two
+    # analyses run concurrently: they read the same read-only tarball and share
+    # nothing, which roughly halves the per-image wall time on a multi-core
+    # runner. A failure in either format fails the image.
     trivy image \
         --input "$tarball" \
         --scanners vuln \
         --format cyclonedx \
         --output "$reports_dir/$name.cdx.json" \
-        --quiet
+        --quiet &
+    cdx_pid=$!
 
     trivy image \
         --input "$tarball" \
         --scanners vuln \
         --format json \
         --output "$reports_dir/$name.json" \
-        --quiet
+        --quiet &
+    json_pid=$!
+
+    rc=0
+    wait "$cdx_pid" || rc=1
+    wait "$json_pid" || rc=1
+    if [ "$rc" -ne 0 ]; then
+        echo "trivy-scan: a format failed for $name" >&2
+        exit 1
+    fi
 done
 
 if [ "$count" -eq 0 ]; then
