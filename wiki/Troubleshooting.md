@@ -12,8 +12,8 @@
 ls -lh models/
 
 # If file is 0 bytes, re-download
-uvx --from huggingface_hub hf download \
-  bartowski/Qwen2.5-7B-Instruct-GGUF \
+uvx --from huggingface_hub hf download \\
+  bartowski/Qwen2.5-7B-Instruct-GGUF \\
   Qwen2.5-7B-Instruct-Q4_K_M.gguf --local-dir models
 
 # Rename to match expected filename
