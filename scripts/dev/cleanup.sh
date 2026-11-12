@@ -76,13 +76,25 @@ for branch in $(git for-each-ref --format='%(refname:short)' refs/heads/); do
         continue
     fi
 
+    # Uncommitted work always wins: a worktree can hold a half-finished item,
+    # and a branch that merely sits on the base commit looks "merged" to git.
+    if [[ -n "$path" && -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]]; then
+        skipped+=("$branch (uncommitted changes in $path)")
+        continue
+    fi
+
+    ahead="$(git rev-list --count "$BASE..refs/heads/$branch")"
     merged_pr=0
     [[ ",$states," == *",MERGED,"* ]] && merged_pr=1
     ancestor=0
-    git merge-base --is-ancestor "refs/heads/$branch" "$BASE" 2>/dev/null && ancestor=1
+    ((ahead > 0)) && git merge-base --is-ancestor "refs/heads/$branch" "$BASE" 2>/dev/null && ancestor=1
 
     if ((!merged_pr && !ancestor)); then
-        skipped+=("$branch (unmerged, no merged pull request)")
+        if ((ahead == 0)); then
+            skipped+=("$branch (no commits beyond $BASE, no pull request)")
+        else
+            skipped+=("$branch (unmerged, no merged pull request)")
+        fi
         continue
     fi
 

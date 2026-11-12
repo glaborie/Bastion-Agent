@@ -139,6 +139,7 @@ add_step() {
 # configuration or pin moved, because those changes are only meaningful against
 # every file. The same rule runs in CI (.github/workflows/ci.yml).
 PYLINT_TARGETS=(settings.py logging_setup.py telemetry.py db gateway agent tests scripts)
+PYTEST_TARGETS=()
 if ((CHANGED_ONLY)); then
     git rev-parse --verify -q "$CHANGED_BASE" >/dev/null || {
         echo "gate: --changed base ref '$CHANGED_BASE' not found (fetch it or pass --base)" >&2
@@ -291,8 +292,14 @@ WALL_START=$(date +%s%N)
 
 for name in "${LAUNCH_ORDER[@]}"; do
     while (($(jobs -rp | wc -l) >= JOBS)); do wait -n; done
-    idx=0
+    idx=-1
     for i in "${!NAMES[@]}"; do [[ "${NAMES[$i]}" == "$name" ]] && { idx=$i; break; }; done
+    if ((idx < 0)); then
+        # A name in LAUNCH_ORDER with no registered command would otherwise run
+        # the first step's command under this name (observed while adding a step).
+        echo "gate: internal error: step '$name' is in LAUNCH_ORDER but not registered" >&2
+        exit 2
+    fi
     start_step "$name" "${CMDS[$idx]}"
 done
 wait

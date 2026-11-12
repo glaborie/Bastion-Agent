@@ -1126,7 +1126,8 @@ live in `usageDetails` and `totalCost`.
 
 Environment-level failures that cost time before they were diagnosed — reset connections after a
 stack restart, Trivy cache locks, backlog write races, local gate shortcuts — are collected in
-[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md). The day-to-day shortcuts (worktree, gate,
+pull request, cleanup) are in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ### `llama-cpp` restarts with `failed to open GGUF file ... (No such file or directory)`
 
