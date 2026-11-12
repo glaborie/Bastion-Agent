@@ -52,7 +52,8 @@ Tools are decorated with required roles:
 
 ```python
 @tool(name="read_file", required_role="operator")
-def read_file(path: str) -> str: ...
+def read_file(path: str) -> str:
+    ...
 ```
 
 ---
