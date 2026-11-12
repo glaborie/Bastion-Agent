@@ -17,8 +17,8 @@ cd Bastion-Agent
 cp .env.example .env
 
 # 3. Download the local inference model (once; ~4.7 GB)
-uvx --from huggingface_hub hf download \\
-  bartowski/Qwen2.5-7B-Instruct-GGUF \\
+uvx --from huggingface_hub hf download \
+  bartowski/Qwen2.5-7B-Instruct-GGUF \
   Qwen2.5-7B-Instruct-Q4_K_M.gguf --local-dir models
 
 mv models/Qwen2.5-7B-Instruct-Q4_K_M.gguf models/qwen2.5-7b-instruct-q4_k_m.gguf
@@ -47,4 +47,4 @@ uv run arq agent.runtime.WorkerSettings
 ```
 
 ---
-*This wiki is synchronized from the docs/ directory of the main repository.*
+*This page is synchronized from the [`wiki/`](https://github.com/glaborie/Bastion-Agent/tree/master/wiki) directory of the main repository.*

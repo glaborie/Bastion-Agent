@@ -48,4 +48,4 @@ Bastion-Agent is **designed from the ground up** for Swiss-regulated environment
 - **SBOM publication** for supply chain transparency
 
 ---
-*This wiki is synchronized from the docs/ directory of the main repository.*
+*This page is synchronized from the [`wiki/`](https://github.com/glaborie/Bastion-Agent/tree/master/wiki) directory of the main repository.*

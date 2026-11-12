@@ -42,11 +42,11 @@ uv run mypy gateway/*.py agent/*.py
 uv run pytest -m "not integration"
 
 # Run integration tests (requires test database)
-docker run --rm -d --name bastion-test-db -p 55433:5432 \\
-  -e POSTGRES_USER=bastion -e POSTGRES_PASSWORD=bastion \\
+docker run --rm -d --name bastion-test-db -p 55433:5432 \
+  -e POSTGRES_USER=bastion -e POSTGRES_PASSWORD=bastion \
   -e POSTGRES_DB=bastion_test postgres:16-alpine
 
-TEST_DATABASE_URL=postgresql+asyncpg://bastion:bastion@localhost:55433/bastion_test \\
+TEST_DATABASE_URL=postgresql+asyncpg://bastion:bastion@localhost:55433/bastion_test \
   uv run pytest -m integration
 ```
 
@@ -58,4 +58,4 @@ TEST_DATABASE_URL=postgresql+asyncpg://bastion:bastion@localhost:55433/bastion_t
 - **CI**: All gates must pass before merge
 
 ---
-*This wiki is synchronized from the docs/ directory of the main repository.*
+*This page is synchronized from the [`wiki/`](https://github.com/glaborie/Bastion-Agent/tree/master/wiki) directory of the main repository.*

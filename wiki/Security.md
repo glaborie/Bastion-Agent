@@ -66,4 +66,4 @@ CREATE TABLE audit_logs (
 | `readonly` | Read-only, no tool execution |
 
 ---
-*This wiki is synchronized from the docs/ directory of the main repository.*
+*This page is synchronized from the [`wiki/`](https://github.com/glaborie/Bastion-Agent/tree/master/wiki) directory of the main repository.*

@@ -63,4 +63,4 @@ Bastion-Agent is an enterprise-grade agent harness that serves as a hardened pol
 | [ADR-008](ADR-Index) | Evolution Roadmap & Version Policy |
 
 ---
-*This wiki is synchronized from the docs/ directory of the main repository.*
+*This page is synchronized from the [`wiki/`](https://github.com/glaborie/Bastion-Agent/tree/master/wiki) directory of the main repository.*
