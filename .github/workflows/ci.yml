@@ -136,6 +136,12 @@ jobs:
               # unprivileged job does not pull it. scripts/falco_smoke.sh is the
               # host-level check (ADR-017).
               "Falco image is not present locally",
+              # The east-west TLS tests need the opt-in `pki` profile, which this
+              # job does not start (ADR-019). The refusal cases are exercised by
+              # `scripts/scan_images.sh`'s sibling run and locally per docs/PKI.md;
+              # the unit half of tests/test_db_tls.py still runs here.
+              "the pki profile is not running",
+              "PKI_TEST_REDIS_URL is not set",
           )
           unexpected = []
           for case in ET.parse("pytest-report.xml").iter("testcase"):
