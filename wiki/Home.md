@@ -19,13 +19,13 @@ Bastion-Agent is an enterprise-grade agent runtime designed for high-security an
 
 ## Table of Contents
 
-- [Installation Guide](Installation)
-- [Architecture](Architecture)
-- [Security Controls](Security)
-- [Swiss Compliance](Swiss-Compliance)
-- [ADR Index](ADR-Index)
-- [Development](Development)
-- [Troubleshooting](Troubleshooting)
+- [Installation Guide](Installation.md)
+- [Architecture](Architecture.md)
+- [Security Controls](Security.md)
+- [Swiss Compliance](Swiss-Compliance.md)
+- [ADR Index](ADR-Index.md)
+- [Development](Development.md)
+- [Troubleshooting](Troubleshooting.md)
 
 ---
-*This wiki is synchronized from the docs/ directory of the main repository.*
+*This wiki is synchronized from the wiki/ directory of the main repository.*
