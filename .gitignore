@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# --- Trivy database cache restored by CI --------------------------------------
+.cache/
+
 # --- East-west PKI (ADR-019) -------------------------------------------------
 # The CA root key, issued certificates and the compose secret files are
 # generated per host by scripts/pki/bootstrap.sh and must never be committed.

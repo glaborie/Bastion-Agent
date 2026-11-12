@@ -25,6 +25,11 @@ for tarball in "$images_dir"/*.tar; do
     count=$((count + 1))
     echo "trivy-scan: $name"
 
+    # Trivy cannot emit CycloneDX and JSON from one invocation, so each image
+    # costs two analyses. They must stay sequential: two Trivy processes share
+    # $TRIVY_CACHE_DIR and the second dies with "cache may be in use by another
+    # process" (observed on PR #9). Separate cache dirs would re-download the
+    # database per format, which costs more than the overlap saves.
     trivy image \
         --input "$tarball" \
         --scanners vuln \

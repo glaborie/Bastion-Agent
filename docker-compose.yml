@@ -522,7 +522,9 @@ services:
       - ./artifacts/compliance/work/images:/images:ro
       - ./artifacts/compliance/work/raw:/reports
       # Vulnerability DB cache: repeated runs do not re-download the database.
-      - trivy_cache:/cache
+      # CI points TRIVY_CACHE_DIR at a path it can restore with actions/cache;
+      # a local run keeps the named volume.
+      - ${TRIVY_CACHE_DIR:-trivy_cache}:/cache
     security_opt:
       - no-new-privileges:true
     cap_drop:

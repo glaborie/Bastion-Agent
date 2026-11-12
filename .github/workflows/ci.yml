@@ -168,6 +168,12 @@ jobs:
               # unprivileged job does not pull it. scripts/falco_smoke.sh is the
               # host-level check (ADR-017).
               "Falco image is not present locally",
+              # The east-west TLS tests need the opt-in `pki` profile, which this
+              # job does not start (ADR-019). The refusal cases are exercised by
+              # `scripts/scan_images.sh`'s sibling run and locally per docs/PKI.md;
+              # the unit half of tests/test_db_tls.py still runs here.
+              "the pki profile is not running",
+              "PKI_TEST_REDIS_URL is not set",
           )
           unexpected = []
           for case in ET.parse("pytest-report.xml").iter("testcase"):
@@ -253,17 +259,20 @@ jobs:
           name: eval-report
           path: artifacts/evals/latest.json
           if-no-files-found: warn
+          retention-days: 7
 
   supply-chain:
     name: Supply chain (OSV + image SBOM)
     runs-on: ubuntu-latest
     # A full scan saves every image, including the CUDA llama.cpp image, so the
-    # job is disk- and network-heavy. See ADR-015 for the cadence trade-off.
+    # job is disk- and network-heavy. See ADR-016 for the cadence trade-off.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          # The scan is gated on the paths a pull request touches.
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
@@ -284,21 +293,66 @@ jobs:
           name: threat-intel-report
           path: artifacts/threat-intel/latest.json
           if-no-files-found: warn
+          retention-days: 7
+
+      # The image scan answers "do the shipped images still contain a CRITICAL?".
+      # That answer only changes when a pin, a lockfile or the scanner itself
+      # changes — and during development a ~6.5 minute scan on every pull request
+      # is not worth the latency. Master and the weekly run always scan the full
+      # set, so a moved pin is caught within a day. A pull request scans only when
+      # it edits the scanning machinery itself: that is the one case where the
+      # scan's own behaviour needs validating before merge, and it is exactly the
+      # case that would have caught the cache-lock regression on PR #9.
+      - name: Decide whether the images need scanning
+        id: scan
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet origin "${{ github.base_ref }}"
+          changed=$(git diff --name-only FETCH_HEAD...HEAD)
+          if grep -qE '^(trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py)|\.github/workflows/ci\.yml)$' <<<"$changed"; then
+            echo "scan=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scan=false" >> "$GITHUB_OUTPUT"
+            echo "no image inputs changed; skipping the image scan"
+          fi
+
+      - name: Restore the Trivy database cache
+        if: github.event_name != 'pull_request' || steps.scan.outputs.scan == 'true'
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .cache/trivy
+          # The run id makes every save unique; restore-keys always picks the
+          # newest previous copy and Trivy refreshes it when it is stale.
+          key: trivy-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
 
       # Builds the local gateway image, exports every image the compose stack
       # ships and scans the tarballs with the digest-pinned Trivy service (no
       # Docker socket). Exits 1 on an unsuppressed CRITICAL or an expired entry
       # in trivy.yaml; writes artifacts/compliance/<date>/.
       - name: Scan images and publish the SBOM
-        run: ./scripts/scan_images.sh --build-missing
+        if: github.event_name != 'pull_request' || steps.scan.outputs.scan == 'true'
+        env:
+          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+          SCAN_JOBS: "6"
+        run: |
+          mkdir -p "$TRIVY_CACHE_DIR"
+          # The scanner runs as root with cap_drop: ALL and no DAC_OVERRIDE.
+          chmod 0777 "$TRIVY_CACHE_DIR"
+          ./scripts/scan_images.sh --build-missing
 
       - name: Upload image SBOM and CVE report
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || steps.scan.outputs.scan == 'true')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: compliance-reports
           path: artifacts/compliance/
           if-no-files-found: error
+          # Development cadence: keep the report long enough to review the run,
+          # not long enough to pay for storage. Raise it before an audit.
+          retention-days: 7
 
   # Single stable check name to require in branch protection.
   ci-ok:

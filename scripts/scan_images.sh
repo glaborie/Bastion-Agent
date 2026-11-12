@@ -10,6 +10,7 @@
 #   scripts/scan_images.sh --build-missing    # build/pull what is absent first
 #   scripts/scan_images.sh --keep-work        # keep tarballs (debugging)
 #   scripts/scan_images.sh --compose FILE     # inventory from another compose file
+#   scripts/scan_images.sh --jobs 8           # concurrent registry pulls (default 4)
 #
 # Images are scanned one archive at a time so peak disk stays bounded.
 #
@@ -24,10 +25,16 @@ cd "$ROOT" || exit 2
 BUILD_MISSING=0
 KEEP_WORK=0
 COMPOSE_FILE="docker-compose.yml"
+JOBS="${SCAN_JOBS:-4}"
 while (($#)); do
     case "$1" in
         --build-missing) BUILD_MISSING=1 ;;
         --keep-work) KEEP_WORK=1 ;;
+        --jobs)
+            [[ $# -ge 2 ]] || { echo "scan-images: --jobs needs a number" >&2; exit 2; }
+            JOBS="$2"
+            shift
+            ;;
         --compose)
             [[ $# -ge 2 ]] || { echo "scan-images: --compose needs a file" >&2; exit 2; }
             COMPOSE_FILE="$2"
@@ -38,6 +45,8 @@ while (($#)); do
     esac
     shift
 done
+
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "scan-images: --jobs must be a positive integer" >&2; exit 2; }
 
 command -v docker >/dev/null || { echo "scan-images: docker is not on PATH" >&2; exit 2; }
 command -v uv >/dev/null || { echo "scan-images: uv is not on PATH" >&2; exit 2; }
@@ -66,22 +75,44 @@ mkdir -p "$WORK/images" "$WORK/raw" "$OUT"
 chmod 0777 "$WORK/raw"
 
 echo "scan-images: ${#IMAGES[@]} image reference(s)"
+
+# Fetch phase. Pulling eight registry images one after another is the single
+# slowest part of a CI run on a fresh runner, and a pull is network-bound rather
+# than CPU- or disk-bound, so they run concurrently. The local image is built
+# once and serialised because `docker compose build` already parallelises its
+# own stages.
 pulled=()
+missing=()
 for image in "${IMAGES[@]}"; do
-    if ! docker image inspect "$image" >/dev/null 2>&1; then
-        if [ "$BUILD_MISSING" -eq 1 ] && [[ "$image" == bastion-agent:* ]]; then
+    docker image inspect "$image" >/dev/null 2>&1 || missing+=("$image")
+done
+
+if ((${#missing[@]})); then
+    if [ "$BUILD_MISSING" -ne 1 ]; then
+        for image in "${missing[@]}"; do
+            echo "scan-images: image not present: $image" >&2
+        done
+        echo "scan-images: run with --build-missing (or docker pull/build it first)" >&2
+        exit 2
+    fi
+    registry=()
+    for image in "${missing[@]}"; do
+        if [[ "$image" == bastion-agent:* ]]; then
             echo "scan-images: building $image"
             docker compose build gateway
-        elif [ "$BUILD_MISSING" -eq 1 ]; then
-            echo "scan-images: pulling $image"
-            docker pull "$image"
-            pulled+=("$image")
         else
-            echo "scan-images: image not present: $image" >&2
-            echo "scan-images: run with --build-missing (or docker pull/build it first)" >&2
-            exit 2
+            registry+=("$image")
         fi
+    done
+    if ((${#registry[@]})); then
+        echo "scan-images: pulling ${#registry[@]} image(s) with ${JOBS} workers"
+        printf '%s\n' "${registry[@]}" |
+            xargs -r -P "$JOBS" -I{} sh -c 'echo "scan-images: pull $1"; docker pull "$1"' _ {}
+        pulled+=("${registry[@]}")
     fi
+fi
+
+for image in "${IMAGES[@]}"; do
     slug="$(uv run python scripts/image_inventory.py --slug "$image")"
     echo "scan-images: export $slug"
     docker save "$image" -o "$WORK/images/$slug.tar"
