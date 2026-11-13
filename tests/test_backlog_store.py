@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -212,3 +213,34 @@ def test_list_rejects_an_unknown_status(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit):
         check_backlog.main(["--root", str(root), "--list", "nonsense"])
+
+
+def test_set_promotes_an_item_and_bumps_updated(tmp_path: Path) -> None:
+    root = make_store(tmp_path, ("First", "inbox", "-"))
+    path = root / "backlog" / "items" / "IDEA-001-item.md"
+
+    assert check_backlog.main(["--root", str(root), "--set", "IDEA-001", "ready"]) == 0
+
+    text = path.read_text(encoding="utf-8")
+    assert "- status: ready" in text
+    assert f"- updated: {date.today().isoformat()}" in text
+
+
+def test_set_refuses_a_transition_that_would_be_invalid(tmp_path: Path) -> None:
+    # 'done' with an unticked acceptance box, and 'blocked' with no reason, are
+    # both rejected by the validator; the file must be left untouched.
+    root = make_store(tmp_path, ("First", "inbox", "-"))
+    path = root / "backlog" / "items" / "IDEA-001-item.md"
+    before = path.read_text(encoding="utf-8")
+
+    assert check_backlog.main(["--root", str(root), "--set", "IDEA-001", "done"]) == 1
+    assert check_backlog.main(["--root", str(root), "--set", "IDEA-001", "blocked"]) == 1
+
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_set_rejects_an_unknown_item_or_status(tmp_path: Path) -> None:
+    root = make_store(tmp_path, ("First", "inbox", "-"))
+
+    assert check_backlog.main(["--root", str(root), "--set", "IDEA-999", "ready"]) == 1
+    assert check_backlog.main(["--root", str(root), "--set", "IDEA-001", "nonsense"]) == 1

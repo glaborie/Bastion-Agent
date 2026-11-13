@@ -71,6 +71,11 @@ without its document fails CI, not review.
   allocates the next id from the highest existing one and creates the file
   exclusively, so concurrent captures cannot overwrite each other or reuse an id.
   Never hand-pick an id.
+- Triage is a human decision, and it is one command:
+  `--list inbox` shows what is waiting and `--set IDEA-NNN ready` promotes an
+  item and bumps `updated`. The script refuses a transition the validator would
+  reject (`done` with unticked boxes, `blocked` with no reason) and writes
+  nothing in that case.
 - A branch edits only the item file it is working on. Do not touch another item,
   `backlog/config.toml`, or `BACKLOG.md`.
 - Two branches can still allocate the same id, because each worktree sees its own
