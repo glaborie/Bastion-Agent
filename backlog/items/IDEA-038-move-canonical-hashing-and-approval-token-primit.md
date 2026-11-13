@@ -1,6 +1,6 @@
 ### IDEA-038: Move canonical hashing and approval-token primitives out of db/models.py
 
-- status: inbox
+- status: active
 - priority: P3
 - phase: v0.3
 - area: db
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-005
 - created: 2026-11-12
-- updated: 2026-11-12
+- updated: 2026-11-13
 - source: review of db/models.py size and import graph, 2026-11-12
 
 **Problem**
