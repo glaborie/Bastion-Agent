@@ -25,9 +25,11 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from db.audit import verify_audit_chain
+from db.export import AuditExportIntegrityError, parse_segment, verify_segment
 from db.session import session_scope
 from db.witness import (
     DEFAULT_SCOPE,
@@ -35,6 +37,7 @@ from db.witness import (
     compare,
     latest_witness,
 )
+from settings import get_settings
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,12 +59,21 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SCOPE,
         help="witness scope to read (default: global)",
     )
+    parser.add_argument(
+        "--segment",
+        metavar="PATH",
+        help="verify an exported segment file (ADR-005 decision 10) instead of the database",
+    )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be a positive integer")
     if args.witness and args.limit is not None:
         parser.error("--witness compares the whole ledger head; it cannot be combined with --limit")
+    if args.segment and (args.witness or args.limit is not None):
+        parser.error(
+            "--segment verifies a stored export; it cannot be combined with --witness/--limit"
+        )
     return args
 
 
@@ -103,8 +115,54 @@ async def verify(limit: int | None, *, witness_mode: bool, scope: str) -> dict[s
     return payload
 
 
+def verify_export(path: Path) -> tuple[dict[str, Any] | None, int]:
+    """Verify one exported segment file; ``None`` payload means the file was unusable."""
+    try:
+        segment = parse_segment(path.read_bytes())
+    except OSError as exc:
+        print(f"could not read the segment: {exc}", file=sys.stderr)
+        return None, 2
+    except AuditExportIntegrityError as exc:
+        print(f"could not parse the segment: {exc}", file=sys.stderr)
+        return None, 2
+
+    result = verify_segment(segment, get_settings().audit_witness_hmac_secret.get_secret_value())
+    payload: dict[str, Any] = {
+        "ok": result.ok,
+        "segment": str(path),
+        "tenant_id": segment.manifest.tenant_id,
+        "first_id": segment.manifest.first_id,
+        "last_id": segment.manifest.last_id,
+        "checked": result.checked,
+        "links": result.links,
+        "gaps": result.gaps,
+        "first_bad_id": result.first_bad_id,
+        "reason": result.reason,
+        "terminal_hash": segment.manifest.terminal_hash,
+        "head_hash": segment.manifest.head_hash,
+    }
+    return payload, 0 if result.ok else 1
+
+
 def main() -> int:
     args = parse_args()
+    if args.segment:
+        payload, code = verify_export(Path(args.segment))
+        if payload is None:
+            return code
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        elif payload["ok"]:
+            print(
+                f"OK: {payload['checked']} record(s) in segment {args.segment} form an intact "
+                f"chain slice ({payload['links']} link(s) checked, {payload['gaps']} gap(s) "
+                "owned by other tenants)."
+            )
+        else:
+            bad = f" at id {payload['first_bad_id']}" if payload["first_bad_id"] is not None else ""
+            print(f"TAMPERED{bad}: {payload['reason']}", file=sys.stderr)
+        return code
+
     try:
         payload = asyncio.run(verify(args.limit, witness_mode=args.witness, scope=args.scope))
     except AuditWitnessError as exc:

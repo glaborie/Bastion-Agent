@@ -2,25 +2,28 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AppendWitnessObjects",
+      "Sid": "AppendAuditObjects",
       "Effect": "Allow",
       "Action": [
         "s3:PutObject",
         "s3:PutObjectRetention"
       ],
       "Resource": [
-        "arn:aws:s3:::bastion-audit/witness/*"
+        "arn:aws:s3:::bastion-audit/witness/*",
+        "arn:aws:s3:::bastion-audit/export/*"
       ]
     },
     {
-      "Sid": "ReadWitnessObjects",
+      "Sid": "ReadAuditObjects",
       "Effect": "Allow",
       "Action": [
         "s3:GetObject",
-        "s3:GetObjectVersion"
+        "s3:GetObjectVersion",
+        "s3:GetObjectRetention"
       ],
       "Resource": [
-        "arn:aws:s3:::bastion-audit/witness/*"
+        "arn:aws:s3:::bastion-audit/witness/*",
+        "arn:aws:s3:::bastion-audit/export/*"
       ]
     },
     {

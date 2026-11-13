@@ -31,14 +31,14 @@ mkdir -p "$MC_CONFIG_DIR"
 "$MC" version enable "bastion/$AUDIT_WITNESS_BUCKET" >/dev/null
 "$MC" retention set --default compliance "${RETENTION_YEARS}y" "bastion/$AUDIT_WITNESS_BUCKET" >/dev/null
 
-# Re-running the init must not reset an existing credential or policy, so
-# create them only when absent instead of swallowing a failing create.
+# Re-running the init must not reset an existing credential, so create it only
+# when absent. The policy is declarative config, though: it is re-applied on
+# every run so a new statement (the ledger export prefix, ADR-005 decision 10)
+# reaches an existing bucket without an operator remembering to do it.
 if ! "$MC" admin user info bastion "$AUDIT_WITNESS_ACCESS_KEY" >/dev/null 2>&1; then
     "$MC" admin user add bastion "$AUDIT_WITNESS_ACCESS_KEY" "$AUDIT_WITNESS_SECRET_KEY" >/dev/null
 fi
-if ! "$MC" admin policy info bastion audit-witness >/dev/null 2>&1; then
-    "$MC" admin policy create bastion audit-witness "$POLICY" >/dev/null
-fi
+"$MC" admin policy create bastion audit-witness "$POLICY" >/dev/null
 "$MC" admin policy attach bastion audit-witness --user "$AUDIT_WITNESS_ACCESS_KEY" 2>/dev/null ||
     echo "minio-init: witness policy already attached"
 

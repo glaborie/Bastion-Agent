@@ -1,6 +1,6 @@
 ### IDEA-004: Export the audit ledger asynchronously for retention
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.3
 - area: db
@@ -8,7 +8,7 @@
 - depends-on: IDEA-001
 - spec: ADR-008
 - created: 2026-11-09
-- updated: 2026-11-09
+- updated: 2026-11-13
 - source: ADR-008, phase v0.3 scope
 
 **Problem**
@@ -24,10 +24,10 @@ with a manifest, and verification can be rerun against an exported segment.
 
 **Acceptance**
 
-- [ ] Export job pages the ledger without breaking the hash chain
-- [ ] Manifest records segment bounds and the terminal hash
-- [ ] `scripts/verify_audit_chain.py` accepts an exported segment
-- [ ] Retention and deletion policy documented in COMPLIANCE.md
+- [x] Export job pages the ledger without breaking the hash chain
+- [x] Manifest records segment bounds and the terminal hash
+- [x] `scripts/verify_audit_chain.py` accepts an exported segment
+- [x] Retention and deletion policy documented in COMPLIANCE.md
 
 **Notes**
 

@@ -736,8 +736,9 @@ check runs at startup.
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/verify_audit_chain.py` | Recompute the audit hash chain, optionally against the stored witness (exit `1` on tamper/divergence, `2` if it cannot run) |
+| `scripts/verify_audit_chain.py` | Recompute the audit hash chain, against the stored witness (`--witness`) or one exported segment (`--segment`); exit `1` on tamper/divergence, `2` if it cannot run |
 | `scripts/write_audit_witness.py` | Verify the chain and append a signed witness of the head to the WORM store (opt-in `compliance` profile) |
+| `scripts/export_audit_ledger.py` | Page each tenant's ledger into signed, locked segments in the WORM store (opt-in `compliance` profile) |
 | `scripts/show_conversation.sh` | List one conversation's audit rows; `--markdown` renders the escrowed request and delivered answer as a human transcript, `--escrow` decrypts every payload |
 | `scripts/purge_payload_escrow.py` | Delete expired pre-production payload-escrow rows; `--dry-run` only counts them |
 | `scripts/validate_tool_catalog.py` | Registry ↔ `docs/tools/v1.json` allow-list; `--write` approves the current set; the same check runs at startup |
@@ -756,21 +757,24 @@ check runs at startup.
 | `scripts/check_threat_model.py` | Fail when the `THREAT_MODEL.md` control table drifts from the tree |
 
 The validators are deterministic and offline; run them in CI before deployment.
-`verify_audit_chain.py` needs a reachable database and is therefore a
-post-deploy check rather than a unit test.
+`verify_audit_chain.py` needs a reachable database in its default and `--witness`
+modes and is therefore a post-deploy check rather than a unit test; `--segment`
+verifies a downloaded export with no database at all.
 
 ### External audit witness (opt-in `compliance` profile)
 
 The chain lives in the database it protects, so an attacker holding the database
 credential can recompute it. The `compliance` profile adds a MinIO bucket with
 versioning and `COMPLIANCE` object lock (7 years) and a credential that may only
-append and read under `witness/`; deletion, versioning changes, object-lock
-reconfiguration and policy changes are refused server-side.
+append and read under `witness/` and `export/`; deletion, versioning changes,
+object-lock reconfiguration and policy changes are refused server-side.
 
 ```bash
 docker compose --profile compliance up -d minio minio-init
 uv run python scripts/write_audit_witness.py     # one signed witness per run
 uv run python scripts/verify_audit_chain.py --witness
+uv run python scripts/export_audit_ledger.py --tenant acme   # signed segments under export/acme/
+uv run python scripts/verify_audit_chain.py --segment export/acme/000000000187-000000000188.json
 ```
 
 `--witness` exits `0` only when the live head matches the stored witness. A
@@ -780,6 +784,16 @@ verifies internally is exit `1`. The witness carries only the scope, id range,
 row count, terminal hash, timestamp and an HMAC (`AUDIT_WITNESS_HMAC_SECRET`);
 no prompt, completion or tool argument. `tests/test_audit_witness.py` proves the
 retention, the refusals and the divergence path against a live store.
+
+The same bucket holds the ledger export (ADR-005 decision 10).
+`scripts/export_audit_ledger.py` pages each tenant's rows by id cursor into
+`export/<tenant>/<first_id>-<last_id>.json`: a signed segment whose manifest records
+the bounds, the terminal hash and the global head at export time. Rows carry only the
+fields `record_hash` covers, and the object is `COMPLIANCE` locked like the witness.
+`--segment` recomputes every record hash and every link between consecutive exported
+ids without a database; gaps belong to other tenants and are counted rather than
+guessed. The export is manual, and `export_audit_ledger_job` exposes the same path to
+the worker without a timer.
 
 ### Pre-production payload escrow
 
