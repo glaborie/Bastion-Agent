@@ -82,8 +82,19 @@ without its document fails CI, not review.
 - **Create the worktree before touching a backlog item.** Never implement an
   item in the main checkout. `scripts/dev/worktree.sh start IDEA-NNN` does the
   whole start-up: worktree from `origin/master`, branch `idea-nnn-slug`, `.env`
-  symlink, `uv sync`, item marked `active` with the Board regenerated. It
+  symlink, `uv sync`, `status: active` committed, and the branch pushed. It
   prints the path; move the session there next.
+- **The pushed branch is the claim, and `worktree.sh start` enforces it.** It
+  refuses an id that already has a worktree, a local branch, or a remote
+  `idea-nnn-*` branch, so two agents cannot start the same item. Before picking
+  work, `uv run python scripts/check_backlog.py --list active` shows claims that
+  have merged and `git ls-remote --heads origin 'refs/heads/idea-*'` shows the
+  ones that have not. If an item is claimed, take another or ask; do not start it
+  anyway.
+- **The item must be on the base before it can be started.** Capturing is not
+  starting: commit and merge the item first, or `worktree.sh start` stops with
+  "is not on origin/master". A worktree created from a base without the item has
+  nothing to mark active, and the board then shows no claim at all.
 - One worktree per item, branched from `origin/master`, named after the item.
   The worktree tool takes only a name, so branch explicitly afterwards; never
   assume the base.
