@@ -1,6 +1,6 @@
 ### IDEA-047: Refuse caller-supplied system turns instead of appending them after the canary instruction
 
-- status: inbox
+- status: ready
 - priority: P1
 - phase: v0.3
 - area: gateway

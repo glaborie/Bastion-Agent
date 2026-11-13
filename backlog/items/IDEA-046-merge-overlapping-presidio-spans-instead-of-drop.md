@@ -1,6 +1,6 @@
 ### IDEA-046: Merge overlapping Presidio spans instead of dropping the longer one
 
-- status: inbox
+- status: ready
 - priority: P0
 - phase: v0.3
 - area: agent

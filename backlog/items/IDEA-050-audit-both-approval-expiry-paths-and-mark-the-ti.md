@@ -1,6 +1,6 @@
 ### IDEA-050: Audit both approval expiry paths and mark the ticket decided
 
-- status: inbox
+- status: ready
 - priority: P1
 - phase: v0.3
 - area: agent

@@ -1,6 +1,6 @@
 ### IDEA-051: Scope the tool workspace to the tenant
 
-- status: inbox
+- status: ready
 - priority: P1
 - phase: v0.3
 - area: agent

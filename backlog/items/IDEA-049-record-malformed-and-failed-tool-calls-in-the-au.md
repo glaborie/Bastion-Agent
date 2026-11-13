@@ -1,6 +1,6 @@
 ### IDEA-049: Record malformed and failed tool calls in the audit ledger
 
-- status: inbox
+- status: ready
 - priority: P1
 - phase: v0.3
 - area: agent

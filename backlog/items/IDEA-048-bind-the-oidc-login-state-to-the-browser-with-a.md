@@ -1,6 +1,6 @@
 ### IDEA-048: Bind the OIDC login state to the browser with a cookie
 
-- status: inbox
+- status: ready
 - priority: P1
 - phase: v0.3
 - area: gateway
