@@ -217,9 +217,10 @@ if ((RUN_INFRA)) && command -v docker >/dev/null && [[ -f .env ]]; then
     add_step infra "docker compose config -q && docker compose -f docker-compose.yml -f docker-compose.pki.yml --profile pki config -q"
 fi
 add_step dread "uv run --no-sync python scripts/recalculate_dread.py --check"
+add_step threat-model "uv run --no-sync python scripts/check_threat_model.py --check"
 add_step backlog "uv run --no-sync python scripts/check_backlog.py --check"
 
-LAUNCH_ORDER+=(pylint mypy adrs rbac tool-catalog dread backlog infra ruff-lint ruff-format)
+LAUNCH_ORDER+=(pylint mypy adrs rbac tool-catalog threat-model dread backlog infra ruff-lint ruff-format)
 ((RUN_TESTS)) && LAUNCH_ORDER+=(pytest)
 EVALS_CMD="uv run --no-sync python scripts/run_evals.py"
 

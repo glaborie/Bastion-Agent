@@ -148,6 +148,7 @@ jobs:
           uv run --no-sync python scripts/validate_tool_catalog.py --check
           uv run --no-sync python scripts/validate_rbac.py
           uv run --no-sync python scripts/recalculate_dread.py --check
+          uv run --no-sync python scripts/check_threat_model.py --check
 
   tests:
     name: Tests (Python ${{ matrix.python-version }}, PostgreSQL 16)
