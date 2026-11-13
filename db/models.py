@@ -144,7 +144,7 @@ class ApprovalStatus(StrEnum):
     FAILED = "failed"
 
 
-def _enum_values(enum_cls: type[Any]) -> list[str]:
+def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
     """Persist the *values* (not member names) of a ``StrEnum``."""
     return [str(member.value) for member in enum_cls]
 

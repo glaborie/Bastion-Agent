@@ -134,6 +134,13 @@ exclude = ["^\\.venv/", "^tests/data/"]
 module = ["arq.*", "presidio_analyzer.*", "presidio_anonymizer.*", "spacy.*", "onnxruntime.*", "deepeval.*", "langdetect.*", "boto3.*", "botocore.*"]
 ignore_missing_imports = true
 
+[tool.pyright]
+# The editor's language server runs from its own environment, so without this
+# it reports every third-party import as unresolved (sqlalchemy, fastapi, ...).
+# `uv sync` creates `.venv` in each checkout and worktree.
+venvPath = "."
+venv = ".venv"
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
