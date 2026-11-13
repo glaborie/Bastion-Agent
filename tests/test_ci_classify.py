@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -23,12 +24,12 @@ def classify(*paths: str) -> dict[str, str]:
     return dict(line.split("=", 1) for line in result.stdout.splitlines())
 
 
-def test_a_root_shell_script_skips_the_suite_but_not_supply_chain() -> None:
+def test_a_root_shell_script_skips_the_suite_and_osv() -> None:
     outputs = classify("run_opencode.sh")
 
     assert outputs["tests"] == "false"
-    # docs_only also gates supply-chain, whose OSV audit reads uv.lock.
     assert outputs["docs_only"] == "false"
+    assert outputs["osv"] == "false"
 
 
 def test_docs_only_skips_both_documented_suites() -> None:
@@ -56,12 +57,50 @@ def test_an_empty_diff_runs_the_suite() -> None:
 
     assert outputs["tests"] == "true"
     assert outputs["docs_only"] == "false"
+    assert outputs["osv"] == "true"
+
+
+def test_osv_runs_for_audit_inputs_and_gate_changes() -> None:
+    for path in (
+        "uv.lock",
+        "pyproject.toml",
+        "scripts/update_threat_intel.py",
+        "scripts/ci_classify_changes.sh",
+        "tests/test_threat_intel.py",
+        ".github/workflows/ci.yml",
+    ):
+        assert classify(path)["osv"] == "true", path
+    assert classify("gateway/main.py")["osv"] == "false"
+
+
+def test_deletions_and_both_sides_of_renames_are_classified(tmp_path: Path) -> None:
+    git_path = shutil.which("git")
+    assert git_path is not None
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            [git_path, *args], cwd=tmp_path, text=True, capture_output=True, check=True
+        ).stdout
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "CI test")
+    (tmp_path / "uv.lock").write_text("locked", encoding="utf-8")
+    git("add", "uv.lock")
+    git("commit", "-qm", "base")
+    git("mv", "uv.lock", "notes.md")
+    paths = git("diff", "--cached", "--no-renames", "--name-only", "--diff-filter=ACDMT")
+
+    assert classify(*paths.splitlines())["osv"] == "true"
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "git diff --no-renames --name-only --diff-filter=ACDMT" in workflow
 
 
 def test_evals_and_scan_keep_their_own_filters() -> None:
     assert classify("agent/routing/classifier.py")["evals"] == "true"
     assert classify("tests/data/goldens.jsonl")["evals"] == "true"
     assert classify("trivy.yaml")["scan"] == "true"
+    assert classify("scripts/ci_classify_changes.sh")["scan"] == "true"
     assert classify("README.md")["scan"] == "false"
     assert classify("README.md")["evals"] == "false"
 
