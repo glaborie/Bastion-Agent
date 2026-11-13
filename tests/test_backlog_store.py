@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -171,3 +172,43 @@ def test_repository_store_renders_every_item() -> None:
     assert rendered == render(meta, load(root)[1])
     for item in items:
         assert f"`{item.id}`" in rendered
+
+
+def test_list_shows_only_the_requested_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_store(
+        tmp_path, ("First", "inbox", "-"), ("Second", "inbox", "-"), ("Third", "ready", "-")
+    )
+
+    assert check_backlog.main(["--root", str(root), "--list", "inbox"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "IDEA-001" in printed
+    assert "IDEA-002" in printed
+    assert "IDEA-003" not in printed
+
+
+def test_list_reports_an_empty_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = make_store(tmp_path, ("First", "inbox", "-"))
+
+    assert check_backlog.main(["--root", str(root), "--list", "done"]) == 0
+
+    assert "no done items" in capsys.readouterr().out
+
+
+def test_list_json_carries_the_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = make_store(tmp_path, ("First", "inbox", "-"))
+
+    assert check_backlog.main(["--root", str(root), "--list", "inbox", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "inbox"
+    assert [item["id"] for item in payload["items"]] == ["IDEA-001"]
+
+
+def test_list_rejects_an_unknown_status(tmp_path: Path) -> None:
+    root = make_store(tmp_path, ("First", "inbox", "-"))
+
+    with pytest.raises(SystemExit):
+        check_backlog.main(["--root", str(root), "--list", "nonsense"])
