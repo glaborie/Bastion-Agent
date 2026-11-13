@@ -29,6 +29,7 @@ from gateway.auth.oidc import (
 )
 from gateway.auth.roles import ROLE_NAMES, any_satisfied
 from gateway.auth.session import SessionManager, SessionRecord
+from gateway.web import is_htmx
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -319,10 +320,27 @@ async def require_csrf(
             value = form.get("csrf_token")
             presented = value if isinstance(value, str) else None
     if not presented or not hmac.compare_digest(presented, context.session.csrf_token):
-        logger.warning("CSRF check failed", extra={"subject": context.principal.subject})
+        # `path` and `token_presented` are what make a single warning
+        # attributable: a missing token (a non-browser client) and a stale one
+        # (a document from a session a later sign-in replaced) are different
+        # incidents, and neither is visible from the subject alone.
+        logger.warning(
+            "CSRF check failed",
+            extra={
+                "subject": context.principal.subject,
+                "path": request.url.path,
+                "token_presented": presented is not None,
+                "content_type": request.headers.get("content-type", ""),
+            },
+        )
+        # A stale tab cannot recover on its own: the token it holds belongs to
+        # a session the cookie no longer names, so every mutation from it would
+        # 403. Reloading is the fix, and htmx obeys HX-Redirect on any status.
+        headers = {"HX-Redirect": "/dashboard"} if is_htmx(request) else None
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="CSRF token missing or invalid",
+            headers=headers,
         )
     if not _same_origin(request):
         logger.warning(

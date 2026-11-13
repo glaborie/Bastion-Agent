@@ -162,6 +162,10 @@ def create_app() -> FastAPI:
                     safe_next_path(target), safe=""
                 )
                 return RedirectResponse(login_url, status_code=303)
+        if exc.status_code == 403 and (exc.headers or {}).get("HX-Redirect"):
+            # An htmx caller whose document predates a re-login: reload it with
+            # the session the cookie names now, instead of a dead-end fragment.
+            return Response(status_code=403, headers=dict(exc.headers or {}))
         if exc.status_code == 403 and path.startswith("/dashboard"):
             return render_error(
                 request,

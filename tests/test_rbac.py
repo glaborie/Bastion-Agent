@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -129,6 +130,29 @@ def test_session_authentication_requires_a_matching_csrf_token() -> None:
     assert client.post("/mutate").status_code == 403
     assert client.post("/mutate", headers={"X-CSRF-Token": "wrong"}).status_code == 403
     assert client.post("/mutate", headers={"X-CSRF-Token": "csrf-token"}).status_code == 200
+
+
+def test_a_stale_htmx_document_is_told_to_reload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    context = AuthContext(principal=BOB, method="session", session=_session(BOB))
+    client = TestClient(_app_with_context(context))
+
+    with caplog.at_level(logging.WARNING, logger="gateway.auth.rbac"):
+        response = client.post("/mutate", headers={"HX-Request": "true"})
+
+    assert response.status_code == 403
+    assert response.headers["HX-Redirect"] == "/dashboard"
+    (record,) = [r for r in caplog.records if r.getMessage() == "CSRF check failed"]
+    assert record.path == "/mutate"  # type: ignore[attr-defined]
+    assert record.token_presented is False  # type: ignore[attr-defined]
+
+    # A caller without the htmx marker keeps the JSON refusal, so the redirect
+    # is never a way out of the check for a plain client.
+    plain = client.post("/mutate")
+    assert plain.status_code == 403
+    assert "HX-Redirect" not in plain.headers
+    assert plain.json()["detail"] == "CSRF token missing or invalid"
 
 
 def test_csrf_token_can_arrive_in_the_form_body() -> None:

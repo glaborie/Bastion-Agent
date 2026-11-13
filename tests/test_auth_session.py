@@ -22,6 +22,7 @@ from gateway.auth.oidc import (
 )
 from gateway.auth.session import (
     SESSION_KEY_PREFIX,
+    SUBJECT_SESSIONS_KEY_PREFIX,
     LoginState,
     SessionManager,
     SessionRecord,
@@ -29,6 +30,9 @@ from gateway.auth.session import (
 )
 
 BOB = Principal(subject="bob-sub", tenant_id="acme", username="bob", roles=frozenset({"operator"}))
+ALICE = Principal(
+    subject="alice-sub", tenant_id="acme", username="alice", roles=frozenset({"operator"})
+)
 
 
 class StubValidator:
@@ -112,6 +116,64 @@ async def test_create_persists_an_opaque_session_with_a_ttl() -> None:
     assert resolved is not None
     assert resolved.principal.subject == "bob-sub"
     assert resolved.access_token == "access-1"
+
+
+async def test_a_subject_index_tracks_every_live_session_with_a_ttl() -> None:
+    manager, redis = await _manager()
+    first = await manager.create(_tokens())
+    second = await manager.create(_tokens())
+
+    index = SUBJECT_SESSIONS_KEY_PREFIX + "bob-sub"
+    assert await redis.smembers(index) == {first.session_id, second.session_id}
+    ttl = await redis.ttl(index)
+    assert 0 < ttl <= 3600
+
+
+async def test_revoking_a_subject_ends_every_session_but_no_other() -> None:
+    manager, redis = await _manager()
+    first = await manager.create(_tokens())
+    second = await manager.create(_tokens())
+    now = datetime.now(UTC)
+    other = SessionRecord(
+        session_id="alice-session",
+        principal=ALICE,
+        access_token="access-1",
+        csrf_token="csrf-alice",
+        created_at=now,
+        access_expires_at=now + timedelta(minutes=5),
+        last_seen_at=now,
+    )
+    await manager._save(other)
+
+    revoked = await manager.delete_all_for_subject("bob-sub")
+
+    assert revoked == 2
+    assert await redis.exists(SESSION_KEY_PREFIX + first.session_id) == 0
+    assert await redis.exists(SESSION_KEY_PREFIX + second.session_id) == 0
+    assert await redis.exists(SUBJECT_SESSIONS_KEY_PREFIX + "bob-sub") == 0
+    assert await redis.exists(SESSION_KEY_PREFIX + other.session_id) == 1
+    assert await redis.exists(SUBJECT_SESSIONS_KEY_PREFIX + "alice-sub") == 1
+    assert await manager.resolve(other.session_id) is not None
+
+
+async def test_deleting_one_session_prunes_it_from_the_subject_index() -> None:
+    manager, redis = await _manager()
+    record = await manager.create(_tokens())
+
+    await manager.delete(record.session_id)
+
+    assert await redis.smembers(SUBJECT_SESSIONS_KEY_PREFIX + "bob-sub") == set()
+
+
+async def test_the_subject_index_cannot_resurrect_a_missing_session() -> None:
+    # Membership is advisory: only the session key itself authenticates, so a
+    # leftover id in the index must resolve to nothing and be pruned on revoke.
+    manager, redis = await _manager()
+    await redis.sadd(SUBJECT_SESSIONS_KEY_PREFIX + "bob-sub", "gone-session")
+
+    assert await manager.resolve("gone-session") is None
+    assert await manager.delete_all_for_subject("bob-sub") == 0
+    assert await redis.exists(SUBJECT_SESSIONS_KEY_PREFIX + "bob-sub") == 0
 
 
 async def test_unknown_session_is_none() -> None:

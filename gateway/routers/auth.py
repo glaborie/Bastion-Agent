@@ -172,8 +172,12 @@ async def logout(
     """
     settings = get_settings()
     id_token = context.session.id_token if context.session is not None else None
+    revoked = 0
     if context.session is not None:
         await sessions.delete(context.session.session_id)
+        # A replaced cookie leaves earlier sessions of the same operator live
+        # for the whole TTL; "Sign out" is expected to end all of them.
+        revoked = await sessions.delete_all_for_subject(context.principal.subject)
 
     target = _end_session_url(id_token)
     token = await sessions.store_logout_target(target)
@@ -192,7 +196,10 @@ async def logout(
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"
-    logger.info("Operator signed out", extra={"subject": context.principal.subject})
+    logger.info(
+        "Operator signed out",
+        extra={"subject": context.principal.subject, "revoked_sessions": revoked},
+    )
     return response
 
 
