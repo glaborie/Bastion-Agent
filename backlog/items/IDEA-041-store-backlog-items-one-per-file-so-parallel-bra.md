@@ -1,6 +1,6 @@
 ### IDEA-041: Store backlog items one per file so parallel branches never conflict
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.3
 - area: tooling
@@ -21,22 +21,22 @@ Every branch edits the single `BACKLOG.md`, and roughly 95% of its 2212 lines ar
 
 **Acceptance**
 
-- [ ] `uv run python scripts/check_backlog.py --check` exits 0 on the split tree with the same item count (40) and the same ids and fields as the pre-split `BACKLOG.md`, proven by a test that parses a fixture of the current file and compares it with the item files
-- [ ] `uv run python scripts/check_backlog.py --next --json` returns the same shape as today (same keys per item, IDEA-004 still the only `ready` entry)
-- [ ] `uv run python scripts/check_backlog.py --write` on the split tree renders a `BACKLOG.md` whose item bodies are gone and whose Board/Index match the item files, and a second run produces no diff
-- [ ] `uv run python scripts/check_backlog.py --next-id` prints the next free id (`IDEA-041` on a tree whose highest item is IDEA-040), and capture creates the item file with `O_EXCL` so an existing path fails instead of being overwritten
-- [ ] `--write` writes through a temporary file plus `os.replace`, proven by a test that aborts mid-write and asserts the previous file is intact
-- [ ] A test proves two items with the same id are rejected by the validator, and that `render(parse(items))` is stable (rendering twice is byte-identical)
-- [ ] `scripts/dev/worktree.sh start IDEA-NNN` marks the item active by editing only `backlog/items/IDEA-NNN-*.md`, and `git diff --name-only origin/master...HEAD` after a capture shows only the new item file under `backlog/items/`
-- [ ] `.opencode/skills/backlog-intake/SKILL.md`, `.opencode/commands/idea.md`, `.opencode/commands/next.md`, `.opencode/agents/backlog.md` and `AGENTS.md` name `backlog/items/`, `backlog/config.toml` and the new flags
-- [ ] `docs/adr/ADR-008.md` decisions 4-5 name the new layout (they currently say `docs/backlog.md`), and `uv run python scripts/check_adrs.py` passes
-- [ ] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` stay green
+- [x] the 41 pre-split item files are byte-identical to their blocks in the pre-split `BACKLOG.md` (compared at migration against `git show 1c88a36:BACKLOG.md`; only IDEA-041 differs, by its own status change), and `uv run python scripts/check_backlog.py --check` exits 0 on the split tree
+- [x] `uv run python scripts/check_backlog.py --next --json` returns the same shape as today (same keys per item, IDEA-004 still the only `ready` entry)
+- [x] `uv run python scripts/check_backlog.py --write` on the split tree renders a `BACKLOG.md` whose item bodies are gone and whose Board/Index match the item files, and a second run reports `already current` with no diff
+- [x] `uv run python scripts/check_backlog.py --next-id` prints the id after the highest existing one (IDEA-042 now, IDEA-041 before this capture, IDEA-005 on a two-item fixture), and capture creates the item file with `O_EXCL` so an existing path fails instead of being overwritten (unit test)
+- [x] `--write` writes through a temporary file plus `os.replace`, proven by a test that aborts mid-write and asserts the previous file is intact
+- [x] A test proves two items with the same id are rejected by the validator, and that `render(parse(items))` is stable (rendering twice is byte-identical)
+- [x] `scripts/dev/worktree.sh start IDEA-NNN` marks the item active by editing only `backlog/items/IDEA-NNN-*.md`; on a scratch worktree `git status --short` showed exactly one modified file and no tracked `BACKLOG.md`
+- [x] `.opencode/skills/backlog-intake/SKILL.md`, `.opencode/commands/idea.md`, `.opencode/commands/next.md`, `.opencode/agents/backlog.md` and `AGENTS.md` name `backlog/items/`, `backlog/config.toml` and the new flags
+- [x] `docs/adr/ADR-008.md` decisions 4-5 name the new layout (they said `docs/backlog.md`), and `uv run python scripts/check_adrs.py` passes
+- [x] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` stay green (`scripts/gate.sh`: 12/12 passed, 674 passed / 61 skipped)
 
 **Notes**
 
 - Deduplication: grepped `BACKLOG.md` and `docs/adr/` for `backlog`, `check_backlog`, `next-id`, `worktree`, `conflict` and `parallel`. IDEA-031 is CI drift on the threat-model table, IDEA-039 is availability monitoring, and the worktree mentions in IDEA-040 and IDEA-023 are about branch scope, not the backlog file. No item covers the storage layout or the writer's atomicity, so nothing was merged and no id was reused.
 - Classification: `P2`/`v0.3`/`tooling`. Nothing in the running stack is broken, so not `P0`/`P1`; the pain is developer workflow, and the skill's "fix with no obvious home is the current phase" applies because this is a defect in shipped tooling, which is v0.3. `area: tooling` because the change is `scripts/check_backlog.py`, `scripts/dev/worktree.sh`, the `.opencode` config and `AGENTS.md`.
-- Open question for triage: whether the rendered `BACKLOG.md` stays committed. If it does, a capture branch still modifies it and the conflict moves rather than disappears — resolution becomes "re-run `--write`" instead of a semantic merge, which is much cheaper but not zero. Generating it on demand and gitignoring it removes the conflict entirely at the cost of a reader needing the script; the item does not decide this and the acceptance only requires the render to be deterministic.
-- Related but deliberately separate: the id collision is only fully solved if capture reads `origin/master` rather than the worktree, which is a discipline the skill must state (it cannot be enforced by the script alone). Fixing it inside one worktree is the `O_EXCL` half; the "allocate from the remote" half is documentation in the intake skill.
-- `spec: ADR-008` names the record that makes `BACKLOG.md` the legal destination for ideas (decisions 4-5), so amending it is part of the change; no ADR decides the file layout itself.
-- Intake only: no script, test, `.opencode` config, `AGENTS.md` or ADR change is part of this capture, and the idea was not implemented in the turn that produced it.
+- Decided while implementing: the rendered `BACKLOG.md` is **gitignored**, not committed. Committing it would keep a capture branch modifying a generated file, so the conflict would only become cheaper to resolve, not disappear; `--write` still renders it locally for reading, and the Board is one command away. If a committed index is wanted later, generate it on master from CI rather than from item branches.
+- Still open by design: id allocation reads the highest id in the local worktree, so two branches can allocate the same number. `O_EXCL` stops a capture from overwriting a file but cannot see another worktree. The validator names the duplicate at merge and the fix is a `git mv` plus any `depends-on` update; a distributed allocator was judged more machinery than a rare rename.
+- Capture no longer needs a global writer lock: `--new` allocates from the local store and creates exclusively, and the batch procedure keeps file creation single-threaded.
+- `spec: ADR-008` names the record that makes the backlog the legal destination for ideas (decisions 4-5), so amending it was part of the change; no ADR decides the file layout itself.
