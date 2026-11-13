@@ -18,19 +18,16 @@ Three append-only-in-spirit tables back the control plane:
     and append-only, the chain is never rewritten, and expiry is a row delete
     here rather than an update there (ADR-005 decision 7).
 
-The pure functions in this module (hashing, canonicalisation, token signing) are
-deliberately side-effect free so they can be property-tested and reused by both
-the gateway and the ARQ worker.
+The ORM tables and their DDL live here. The pure primitives they depend on —
+canonical serialisation, SHA-256 chain hashing and approval-token signing — live
+in :mod:`db.hashing` and :mod:`db.tokens` and are re-exported below, so
+``from db.models import compute_record_hash`` keeps working.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import hmac
-import json
 import uuid
-from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Final
@@ -56,15 +53,29 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from db.hashing import HASH_HEX_LENGTH as _HASH_HEX_LENGTH
+
+# Re-exported for callers that import the primitive from here (ADR-005 decision
+# 2); the definitions live in db.hashing and db.tokens. The redundant aliases
+# are what mark the re-export as explicit for mypy.
+# pylint: disable=useless-import-alias,unused-import
+from db.hashing import canonical_payload_bytes as canonical_payload_bytes
+from db.hashing import canonical_timestamp as canonical_timestamp
+from db.hashing import compute_record_hash as compute_record_hash
+from db.hashing import hash_payload as hash_payload
+from db.tokens import fingerprint_request as fingerprint_request
+from db.tokens import hash_approval_token as hash_approval_token
+from db.tokens import sign_approval_token as sign_approval_token
+from db.tokens import verify_approval_token as verify_approval_token
+
+# pylint: enable=useless-import-alias,unused-import
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 #: Hash assigned to the ``previous_hash`` column of the very first audit record.
 GENESIS_HASH: Final[str] = "0" * 64
-
-#: Hex digest length for SHA-256 / HMAC-SHA256 material.
-_HASH_HEX_LENGTH: Final[int] = 64
 
 #: PostgreSQL advisory-lock key serialising audit-chain appends. Any constant
 #: works; it only has to be stable and distinct from other locks in the system.
@@ -163,80 +174,13 @@ def _enum_column(name: str, enum_cls: type[Any]) -> SAEnum:
 
 
 # ---------------------------------------------------------------------------
-# Canonicalisation & hashing primitives
+# Clock
 # ---------------------------------------------------------------------------
 
 
 def utcnow() -> datetime:
     """Timezone-aware UTC clock (monkeypatchable in tests)."""
     return datetime.now(UTC)
-
-
-def canonical_timestamp(value: datetime) -> str:
-    """Render a timestamp so Python and PostgreSQL agree on the exact string."""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.astimezone(UTC).isoformat(timespec="microseconds")
-
-
-def canonical_payload_bytes(payload: Any) -> bytes:
-    """Serialise a payload in the canonical form every hash and escrow uses.
-
-    ``bytes``/``str`` are taken verbatim; everything else becomes deterministic
-    JSON (sorted keys, no whitespace). The escrow stores exactly these bytes, so
-    hashing the decrypted payload reproduces ``payload_hash`` bit for bit.
-    """
-    if isinstance(payload, bytes):
-        return payload
-    if isinstance(payload, str):
-        return payload.encode("utf-8")
-    return json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        default=str,
-    ).encode("utf-8")
-
-
-def hash_payload(payload: Any) -> str:
-    """SHA-256 a payload in a canonical, order-independent form.
-
-    ``bytes``/``str`` are hashed verbatim; everything else is serialised as
-    deterministic JSON (sorted keys, no whitespace) so that semantically equal
-    payloads always produce the same digest.
-    """
-    return hashlib.sha256(canonical_payload_bytes(payload)).hexdigest()
-
-
-def compute_record_hash(
-    *,
-    record_id: int,
-    timestamp: datetime,
-    actor_id: str,
-    event_type: str,
-    payload_hash: str,
-    previous_hash: str,
-) -> str:
-    """Compute ``record_hash`` exactly as specified in HANDOVER_SPEC §3.5.
-
-    ``SHA256(id + timestamp + actor_id + event_type + payload_hash + previous_hash)``
-    with fields joined by ``|`` after canonicalisation.
-    """
-    for label, digest in (("payload_hash", payload_hash), ("previous_hash", previous_hash)):
-        if len(digest) != _HASH_HEX_LENGTH:
-            raise ValueError(f"{label} must be a {_HASH_HEX_LENGTH}-character hex digest")
-    material = "|".join(
-        (
-            str(record_id),
-            canonical_timestamp(timestamp),
-            actor_id,
-            str(event_type),
-            payload_hash,
-            previous_hash,
-        )
-    )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -460,73 +404,6 @@ $$;
 # ---------------------------------------------------------------------------
 # Four-eyes pending approvals
 # ---------------------------------------------------------------------------
-
-
-def fingerprint_request(tool_name: str, arguments: Mapping[str, Any]) -> str:
-    """Bind an approval to the *exact* tool invocation (prevents TOCTOU swaps)."""
-    return hash_payload({"tool": tool_name, "arguments": dict(arguments)})
-
-
-_APPROVAL_TOKEN_VERSION: Final[str] = "v1"  # noqa: S105 - format tag, not a secret
-
-
-def _approval_token_message(
-    *, ticket_id: uuid.UUID | str, request_fingerprint: str, expires_at: datetime
-) -> bytes:
-    return "|".join(
-        (
-            _APPROVAL_TOKEN_VERSION,
-            str(ticket_id),
-            request_fingerprint,
-            canonical_timestamp(expires_at),
-        )
-    ).encode("utf-8")
-
-
-def sign_approval_token(
-    *,
-    ticket_id: uuid.UUID | str,
-    request_fingerprint: str,
-    expires_at: datetime,
-    secret: str,
-) -> str:
-    """Produce an HMAC-SHA256 capability token for one specific approval ticket."""
-    if not secret:
-        raise ValueError("approval HMAC secret must not be empty")
-    digest = hmac.new(
-        secret.encode("utf-8"),
-        _approval_token_message(
-            ticket_id=ticket_id,
-            request_fingerprint=request_fingerprint,
-            expires_at=expires_at,
-        ),
-        hashlib.sha256,
-    ).digest()
-    encoded = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-    return f"{_APPROVAL_TOKEN_VERSION}.{encoded}"
-
-
-def hash_approval_token(token: str) -> str:
-    """Hash a token for at-rest storage; the plaintext token is never persisted."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def verify_approval_token(
-    *,
-    token: str,
-    ticket_id: uuid.UUID | str,
-    request_fingerprint: str,
-    expires_at: datetime,
-    secret: str,
-) -> bool:
-    """Constant-time verification of a presented approval token."""
-    expected = sign_approval_token(
-        ticket_id=ticket_id,
-        request_fingerprint=request_fingerprint,
-        expires_at=expires_at,
-        secret=secret,
-    )
-    return hmac.compare_digest(token, expected)
 
 
 class PendingApproval(Base):

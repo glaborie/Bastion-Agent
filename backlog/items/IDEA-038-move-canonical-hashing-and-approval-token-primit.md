@@ -1,6 +1,6 @@
 ### IDEA-038: Move canonical hashing and approval-token primitives out of db/models.py
 
-- status: active
+- status: done
 - priority: P3
 - phase: v0.3
 - area: db
@@ -35,11 +35,11 @@ change.
 
 **Acceptance**
 
-- [ ] `db/hashing.py` and `db/tokens.py` exist, and `python -c "from db.models import compute_record_hash, sign_approval_token, canonical_timestamp"` succeeds; `grep -c "^def compute_record_hash" db/models.py` reports 0 and `grep -rc "^def compute_record_hash" db/hashing.py` reports 1
-- [ ] `wc -l db/models.py` reports fewer than 620 lines (down from 738); the ORM classes and the DDL strings are unchanged apart from imports and re-exports
-- [ ] `uv run pytest tests/test_audit_chain.py tests/test_approvals.py tests/test_payload_escrow.py -q` passes with no test-file edits
-- [ ] `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check .` and `uv run --no-sync mypy settings.py logging_setup.py db gateway agent scripts` are clean
-- [ ] `docs/adr/ADR-005.md` decision 2 names `db/hashing.py` as the definition site while the re-export keeps `db.models.compute_record_hash` importable
+- [x] `db/hashing.py` and `db/tokens.py` exist, and `python -c "from db.models import compute_record_hash, sign_approval_token, canonical_timestamp"` succeeds; `grep -c "^def compute_record_hash" db/models.py` reports 0 and `grep -rc "^def compute_record_hash" db/hashing.py` reports 1
+- [x] `wc -l db/models.py` reports fewer than 620 lines (down from 738); the ORM classes and the DDL strings are unchanged apart from imports and re-exports
+- [x] `uv run pytest tests/test_audit_chain.py tests/test_approvals.py tests/test_payload_escrow.py -q` passes with no test-file edits
+- [x] `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check .` and `uv run --no-sync mypy settings.py logging_setup.py db gateway agent scripts` are clean
+- [x] `docs/adr/ADR-005.md` decision 2 names `db/hashing.py` as the definition site while the re-export keeps `db.models.compute_record_hash` importable
 
 **Notes**
 
@@ -47,3 +47,4 @@ change.
 - `utcnow` is a clock rather than a hashing primitive and is kept where it is unless the worker's monkeypatching tests say otherwise; do not widen the move for symmetry.
 - `fingerprint_request` is included in `db/tokens.py` because it is `hash_payload` over the invocation dict and only the approval path uses it.
 - Deduplication: no open or done item covers module layout — IDEA-004 (export), IDEA-021 (WORM anchor), IDEA-016/029 (escrow) all change ledger behaviour, and IDEA-030/ADR-018 consume the approval token without moving it.
+- Implemented 2026-11-13: `db/models.py` is 615 lines. The re-export uses redundant aliases (`from db.hashing import hash_payload as hash_payload`) because mypy strict sets `no_implicit_reexport`; a scoped `pylint: disable=useless-import-alias,unused-import` covers the idiom. An `__all__` list also satisfies mypy and ruff but costs 26 lines and pushed the file to 641, over the 620 box. `_HASH_HEX_LENGTH` now aliases `db.hashing.HASH_HEX_LENGTH`, and `utcnow` kept its body under a `Clock` heading. `db/__init__.py` still imports the primitives from `db.models`, so the public surface is unchanged.
