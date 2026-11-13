@@ -36,6 +36,7 @@ jobs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
       evals: ${{ steps.filter.outputs.evals }}
       scan: ${{ steps.filter.outputs.scan }}
+      tests: ${{ steps.filter.outputs.tests }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -47,37 +48,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            printf 'docs_only=false\nevals=true\nscan=true\n' >> "$GITHUB_OUTPUT"
+            printf 'docs_only=false\nevals=true\nscan=true\ntests=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          # The rules live in scripts/ci_classify_changes.sh so a test can hold
+          # them; this step only fetches and pipes the diff into it.
           git fetch --no-tags --quiet origin "${{ github.base_ref }}"
-          changed=$(git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD)
-
-          # Docs only: every touched path is Markdown, an image, or under wiki/.
-          # docs/ is deliberately not included: docs/tools/v1.json is the tool
-          # catalogue the guards validate at startup.
-          if [ -n "$changed" ] && ! grep -qvE '(\.md$|^wiki/|\.(png|jpe?g|gif|svg)$)' <<<"$changed"; then
-            echo "docs_only=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Evals: the classifier, the two redaction stages it routes for, and the
-          # golden corpus are the only things those gates assert on.
-          if grep -qE '^(agent/(routing|dlp|egress)/|tests/data/|tests/test_(classifier|dlp|egress|eval)[^/]*\.py|scripts/(run_evals|check_classifier_dispatch)\.py|settings\.py|pyproject\.toml|models/)' <<<"$changed"; then
-            echo "evals=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "evals=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Scan: only when the scanner itself moves. Master and the weekly run
-          # always scan, so a pin bump is verified within a day (ADR-016).
-          if grep -qE '^(trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py)|\.github/workflows/ci\.yml)$' <<<"$changed"; then
-            echo "scan=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "scan=false" >> "$GITHUB_OUTPUT"
-          fi
+          git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD \
+            | ./scripts/ci_classify_changes.sh >> "$GITHUB_OUTPUT"
 
   quality:
     name: Lint, types, policy checks
@@ -153,7 +132,7 @@ jobs:
   tests:
     name: Tests (Python ${{ matrix.python-version }}, PostgreSQL 16)
     needs: changes
-    if: github.event_name != 'schedule' && needs.changes.outputs.docs_only != 'true'
+    if: github.event_name != 'schedule' && needs.changes.outputs.tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
