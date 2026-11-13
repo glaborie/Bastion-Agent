@@ -36,6 +36,7 @@ jobs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
       evals: ${{ steps.filter.outputs.evals }}
       scan: ${{ steps.filter.outputs.scan }}
+      tests: ${{ steps.filter.outputs.tests }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -47,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            printf 'docs_only=false\nevals=true\nscan=true\n' >> "$GITHUB_OUTPUT"
+            printf 'docs_only=false\nevals=true\nscan=true\ntests=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -61,6 +62,16 @@ jobs:
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           else
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Tests: a root-level shell script is not imported by a test and not
+          # executed by CI, so a diff that only deletes one cannot move the
+          # suite. scripts/ is not exempt: the audit-witness step runs
+          # scripts/init_audit_witness.sh, and the scanner runs the rest.
+          if [ -n "$changed" ] && ! grep -qvE '(\.md$|^wiki/|\.(png|jpe?g|gif|svg)$|^[^/]+\.sh$)' <<<"$changed"; then
+            echo "tests=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tests=true" >> "$GITHUB_OUTPUT"
           fi
 
           # Evals: the classifier, the two redaction stages it routes for, and the
@@ -153,7 +164,7 @@ jobs:
   tests:
     name: Tests (Python ${{ matrix.python-version }}, PostgreSQL 16)
     needs: changes
-    if: github.event_name != 'schedule' && needs.changes.outputs.docs_only != 'true'
+    if: github.event_name != 'schedule' && needs.changes.outputs.tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
