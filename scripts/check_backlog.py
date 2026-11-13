@@ -17,6 +17,7 @@ Usage:
     uv run python scripts/check_backlog.py --next      # items that are ready to start
     uv run python scripts/check_backlog.py --next --json
     uv run python scripts/check_backlog.py --list inbox   # triage: anything by status
+    uv run python scripts/check_backlog.py --set IDEA-042 ready   # promote or close
     uv run python scripts/check_backlog.py --next-id   # the id a capture should take
     uv run python scripts/check_backlog.py --new "<title>"   # create the item file
 
@@ -586,6 +587,12 @@ def main(argv: list[str] | None = None) -> int:
         help=f"list items with this status ({', '.join(STATUSES)})",
     )
     group.add_argument(
+        "--set",
+        nargs=2,
+        metavar=("IDEA-NNN", "STATUS"),
+        help=f"change one item's status and updated date ({', '.join(STATUSES)})",
+    )
+    group.add_argument(
         "--next-id", action="store_true", help="print the id the next capture should take"
     )
     group.add_argument(
@@ -630,6 +637,50 @@ def main(argv: list[str] | None = None) -> int:
             f"{Path(__file__).name} --check",
             file=sys.stderr,
         )
+        return 0
+
+    if args.set:
+        item_id, status = args.set
+        if status not in STATUSES:
+            print(
+                f"error: status '{status}' is not one of {', '.join(STATUSES)}",
+                file=sys.stderr,
+            )
+            return 1
+        if load_errors:
+            for error in load_errors:
+                print(f"error: {error}", file=sys.stderr)
+            return 2
+        target = next((item for item in items if item.id == item_id), None)
+        if target is None:
+            print(f"error: no {item_id} under {ITEMS_DIR}", file=sys.stderr)
+            return 1
+        text = target.path.read_text(encoding="utf-8")
+        if not re.search(r"^- status: .*$", text, re.MULTILINE):
+            print(f"error: {target.path.name} has no '- status:' line", file=sys.stderr)
+            return 1
+        # Refuse a transition that would leave the item invalid: 'done' with
+        # unticked boxes, or 'blocked' without a reason. Nothing is written then.
+        before, _ = validate(meta, items, load_errors)
+        previous = target.status
+        target.fields["status"] = status
+        target.fields["updated"] = date.today().isoformat()
+        after, _ = validate(meta, items, load_errors)
+        rejected = [error for error in after if error not in before]
+        if rejected:
+            for error in rejected:
+                print(f"error: {error}", file=sys.stderr)
+            return 1
+        text = re.sub(r"^- status: .*$", f"- status: {status}", text, count=1, flags=re.MULTILINE)
+        text = re.sub(
+            r"^- updated: .*$",
+            f"- updated: {target.fields['updated']}",
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        write_atomic(target.path, text)
+        print(f"{target.path.relative_to(root)}: {previous} -> {status}")
         return 0
 
     errors, warnings = validate(meta, items, load_errors)
