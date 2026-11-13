@@ -52,43 +52,11 @@ jobs:
             exit 0
           fi
 
+          # The rules live in scripts/ci_classify_changes.sh so a test can hold
+          # them; this step only fetches and pipes the diff into it.
           git fetch --no-tags --quiet origin "${{ github.base_ref }}"
-          changed=$(git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD)
-
-          # Docs only: every touched path is Markdown, an image, or under wiki/.
-          # docs/ is deliberately not included: docs/tools/v1.json is the tool
-          # catalogue the guards validate at startup.
-          if [ -n "$changed" ] && ! grep -qvE '(\.md$|^wiki/|\.(png|jpe?g|gif|svg)$)' <<<"$changed"; then
-            echo "docs_only=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Tests: a root-level shell script is not imported by a test and not
-          # executed by CI, so a diff that only deletes one cannot move the
-          # suite. scripts/ is not exempt: the audit-witness step runs
-          # scripts/init_audit_witness.sh, and the scanner runs the rest.
-          if [ -n "$changed" ] && ! grep -qvE '(\.md$|^wiki/|\.(png|jpe?g|gif|svg)$|^[^/]+\.sh$)' <<<"$changed"; then
-            echo "tests=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "tests=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Evals: the classifier, the two redaction stages it routes for, and the
-          # golden corpus are the only things those gates assert on.
-          if grep -qE '^(agent/(routing|dlp|egress)/|tests/data/|tests/test_(classifier|dlp|egress|eval)[^/]*\.py|scripts/(run_evals|check_classifier_dispatch)\.py|settings\.py|pyproject\.toml|models/)' <<<"$changed"; then
-            echo "evals=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "evals=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Scan: only when the scanner itself moves. Master and the weekly run
-          # always scan, so a pin bump is verified within a day (ADR-016).
-          if grep -qE '^(trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py)|\.github/workflows/ci\.yml)$' <<<"$changed"; then
-            echo "scan=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "scan=false" >> "$GITHUB_OUTPUT"
-          fi
+          git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD \
+            | ./scripts/ci_classify_changes.sh >> "$GITHUB_OUTPUT"
 
   quality:
     name: Lint, types, policy checks
