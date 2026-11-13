@@ -82,6 +82,7 @@ from agent.tools.execution import (
     resume_approved_tool,
 )
 from db.escrow import purge_expired_escrow
+from db.export import export_ledger
 from db.models import AuditEventType
 from db.redis import arq_redis_settings, get_redis
 from db.session import dispose_engine, init_models, session_scope
@@ -452,6 +453,23 @@ async def resume_approved_tickets_job(ctx: dict[str, Any]) -> dict[str, int]:
     return {"approved": len(ticket_ids), "executed": executed, "failed": failed}
 
 
+async def export_audit_ledger_job(ctx: dict[str, Any]) -> dict[str, int]:
+    """Page the ledger into signed, locked segments (ADR-005 decision 10).
+
+    Not on a cron timer: when a deployment runs it, and at what cadence, is an
+    operator decision, and the store is opt-in. An unreachable store raises, so
+    an enqueued export fails visibly instead of reporting a green no-op.
+    """
+    async with session_scope() as session:
+        segments = await export_ledger(session)
+    records = sum(segment.manifest.records for segment in segments)
+    logger.info(
+        "Audit ledger export complete",
+        extra={"segments": len(segments), "records": records},
+    )
+    return {"segments": len(segments), "records": records}
+
+
 async def run_demo_scenario_job(
     _ctx: dict[str, Any],
     *,
@@ -602,6 +620,7 @@ class WorkerSettings:
         expire_stale_approvals_job,
         resume_approved_tickets_job,
         purge_expired_payload_escrow_job,
+        export_audit_ledger_job,
         run_demo_scenario_job,
     ]
     cron_jobs: ClassVar[list[Any]] = [

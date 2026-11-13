@@ -115,7 +115,7 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 | **§4.2 Outsourcing** | ADR-001, ADR-004, `SECURITY.md` §Deployment Security | Single FastAPI ingress, deterministic DLP, local fallback, fail-closed design | ✅ Compliant |
 | **§4.3 Segregation of Duties** | ADR-003, ADR-009, `SECURITY.md` §Kill Switch Tiers | Four-eyes HITL approval, `approver_id != initiator_id`, time-bound operator roles | ✅ Compliant |
 | **§4.4 Monitoring** | ADR-007, ADR-017, `SECURITY.md` §Observability & Telemetry | Command Control dashboard, OTel spans, real-time approvals, opt-in Falco runtime alerts | ⚠️ Partial (opt-in) |
-| **§4.5 Audit Trail** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, signed head witness under 7-year WORM retention (opt-in `compliance` profile) | ⚠️ Partial (witness opt-in; ledger partitioning/export is IDEA-004) |
+| **§4.5 Audit Trail** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, signed tenant-partitioned export and head witness under 7-year WORM retention (opt-in `compliance` profile) | ⚠️ Partial (witness and export are opt-in; annual partitioning is not implemented) |
 | **§4.6 Change Management** | ADR-006, ADR-008, `SECURITY.md` §Secure Development Lifecycle | Golden regression suite, CI/CD gates, semantic versioning, 6-phase roadmap | ✅ Compliant |
 
 ---
@@ -135,7 +135,7 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 | Swiss Banking Act Article | Evidence Source | Bastion-Agent Implementation | Status |
 |---------------------------|-----------------|-------------------------------|--------|
 | **Art. 47 Banking Secrecy** | ADR-002, ADR-003, ADR-009, `SECURITY.md` §Data Protection & DLP | Presidio DLP, reversible tokenization, tool catalog allow-list, four-eyes approval | ✅ Compliant |
-| **Art. 48 Data Protection** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, signed head witness under 7-year WORM retention (opt-in `compliance` profile) | ⚠️ Partial (witness opt-in; ledger partitioning/export is IDEA-004) |
+| **Art. 48 Data Protection** | ADR-005, `SECURITY.md` §Audit & Non-Repudiation | Hash-chained audit logs, verification endpoint, signed tenant-partitioned export and head witness under 7-year WORM retention (opt-in `compliance` profile) | ⚠️ Partial (witness and export are opt-in; annual partitioning is not implemented) |
 
 ---
 
@@ -155,7 +155,12 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 
 ```bash
 # 1. Audit chain verification
-uv run python scripts/verify_audit_chain.py --range 2026-11-01:2026-11-09
+uv run python scripts/verify_audit_chain.py
+uv run python scripts/verify_audit_chain.py --witness
+
+# 1b. Export a tenant's ledger and verify the stored segment
+uv run python scripts/export_audit_ledger.py --tenant acme
+uv run python scripts/verify_audit_chain.py --segment export/acme/<first>-<last>.json
 
 # 2. DLP recall check (golden dataset)
 uv run pytest tests/test_dlp_evals.py -v
@@ -178,6 +183,16 @@ uv run python scripts/validate_rbac.py
 | **Data minimization** | Review DLP rules and OTel redaction allowlist | Quarterly |
 | **Change control** | Review golden regression suite and CI/CD gates | Quarterly |
 | **Incident response** | Review incident response procedures and logs | Quarterly |
+
+### Audit Ledger Export, Retention and Deletion
+
+Retention is split across three stores, and they are not interchangeable (ADR-005 decisions 5, 9 and 10).
+
+- **Ledger rows** stay in PostgreSQL. Nothing deletes them: the append-only trigger refuses `UPDATE` and `DELETE`, `TRUNCATE` is an explicit DDL reset, and break-glass maintenance opts out per transaction with `set_config('bastion.allow_audit_mutation', 'on', true)`. Annual partitioning of the table is **not implemented**, so rows are retained in place.
+- **Exported segments** are written by `scripts/export_audit_ledger.py` (or the `export_audit_ledger_job` worker job) into the `bastion-audit` bucket under `export/<tenant>/<first_id>-<last_id>.json`. Each segment is signed and carries the verifiable fields of every record, the segment bounds, the terminal hash and the global head at export time. The objects are written with `COMPLIANCE` object lock and the bucket's 7-year default, and the application credential is denied `DeleteObject`/`DeleteObjectVersion` and every retention or policy change. Running the export is manual; no schedule ships yet.
+- **Witness objects** live under `witness/<scope>/` in the same bucket with the same lock and default retention.
+
+**Deletion policy.** No mechanism removes a ledger row before the retention deadline. An exported segment or witness cannot be deleted before its lock expires, not even by the application credential; an overwrite creates a new version and the retained original still lists. After the lock expires, deletion is an operator action with the administrator credential and a recorded change, and the export can be rerun from the ledger meanwhile. There is no legal-hold UI: a hold is applied operationally by not deleting and by recording the reason, which is a limit rather than a control the repository enforces. Backups and replicas inherit the same deadline; a backup that expires earlier than the lock does not shorten retention of the locked object.
 
 ---
 

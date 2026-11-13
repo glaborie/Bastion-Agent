@@ -137,7 +137,7 @@ CREATE TABLE audit_logs (
 ### Verification
 - **Endpoint**: `/api/audit/verify`
 - **Mechanism**: Recompute hash chain for a given range
-- **Retention**: witness objects 7 years under `COMPLIANCE` object lock (opt-in `compliance` profile). Ledger rows are not yet partitioned or exported; IDEA-004 owns that path.
+- **Retention**: witness objects and exported segments 7 years under `COMPLIANCE` object lock (opt-in `compliance` profile). `scripts/export_audit_ledger.py` writes signed per-tenant segments to `export/<tenant>/`; ledger rows are copied, not moved, and annual partitioning is not implemented.
 - **External anchor**: `scripts/verify_audit_chain.py --witness` compares the live head with a signed witness in MinIO. An unreachable or absent witness is exit `2` ("could not verify"), never a pass.
 
 ### Evidence Ledger & Run Certificate

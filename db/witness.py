@@ -218,7 +218,8 @@ def _credentials(config: Settings) -> tuple[str, str]:
     return access.get_secret_value(), secret.get_secret_value()
 
 
-def _client(config: Settings) -> Any:
+def witness_client(config: Settings) -> Any:
+    """S3 client for the compliance store, shared by the witness and the export."""
     import boto3  # imported lazily so the rest of the ledger works without an S3 call
     from botocore.config import Config
 
@@ -243,7 +244,7 @@ def _unavailable(action: str, exc: Exception) -> NoReturn:
 
 def _put_sync(witness: AuditWitness, config: Settings) -> str:
     key = object_key(witness)
-    client = _client(config)
+    client = witness_client(config)
     try:
         client.put_object(
             Bucket=config.audit_witness_bucket,
@@ -261,7 +262,7 @@ def _put_sync(witness: AuditWitness, config: Settings) -> str:
 
 
 def _get_sync(config: Settings, scope: str) -> AuditWitness:
-    client = _client(config)
+    client = witness_client(config)
     prefix = f"{WITNESS_PREFIX}{scope}/"
     try:
         keys = [
@@ -362,5 +363,6 @@ __all__ = [
     "retention_until",
     "sign_witness",
     "verify_witness_signature",
+    "witness_client",
     "witness_matches",
 ]
