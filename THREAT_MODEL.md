@@ -278,7 +278,7 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
 - Attack: a vulnerable dependency, a swapped classifier model, a poisoned container image.
 - Controls:
   - LIVE: classifier ONNX graphs are digest-checked. A mismatch fails closed to CONFIDENTIAL.
-  - LIVE: `scripts/update_threat_intel.py` queries every package in `uv.lock` against OSV and exits non-zero on unignored findings. The `supply-chain` job runs it on every push and pull request.
+  - LIVE: `scripts/update_threat_intel.py` queries every package in `uv.lock` against OSV and exits non-zero on unignored findings. The `supply-chain` job runs it on master, weekly and manual runs, and on pull requests changing audit inputs or the CI gate; other PRs do not get a fresh advisory verdict.
   - LIVE: `scripts/scan_images.sh` exports every image the compose stack ships, scans the archives with the digest-pinned Trivy service (no Docker engine socket), writes a CycloneDX SBOM and a Trivy CVE report to `artifacts/compliance/<date>/`, and fails on an unsuppressed CRITICAL. `trivy.yaml` is the only suppression path: every entry names the image scope, a justification and an expiry date. The same command runs in the `supply-chain` job and its output is uploaded as the `compliance-reports` artifact (ADR-016).
   - LIVE: GitHub Actions are pinned by commit SHA.
   - PARTIAL: image signing and verification (cosign), and IaC or secret scanning. `OMNIROUTE_IMAGE` and `LLAMA_CPP_IMAGE` are digest-pinned by default but can be overridden with a tag-only reference from `.env`; the accepted CRITICALs for Postgres and RedisInsight are image-scoped and expiring in `trivy.yaml`.

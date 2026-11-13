@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Classify a pull-request diff for .github/workflows/ci.yml.
 #
-#   git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD \
+#   git diff --no-renames --name-only --diff-filter=ACDMT FETCH_HEAD...HEAD \
 #     | scripts/ci_classify_changes.sh >> "$GITHUB_OUTPUT"
 #
-# Prints docs_only, evals, scan and tests as key=value lines. A PR skips a suite
+# Prints docs_only, evals, osv, scan and tests as key=value lines. A PR skips a suite
 # only when no changed path can affect it, so every rule below is a statement
 # about what that suite observes, not about how important the file is.
 #
@@ -29,7 +29,10 @@ EVALS='^(agent/(routing|dlp|egress)/|tests/data/|tests/test_(classifier|dlp|egre
 
 # Only when the scanner itself moves. Master and the weekly run always scan, so
 # a pin bump is verified within a day (ADR-016).
-SCAN='^(trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py)|\.github/workflows/ci\.yml)$'
+SCAN='^(trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py|ci_classify_changes\.sh)|\.github/workflows/ci\.yml)$'
+
+# A PR changing the audited inputs or the gate must receive a fresh OSV verdict.
+OSV='^(uv\.lock|pyproject\.toml|scripts/(update_threat_intel\.py|ci_classify_changes\.sh)|tests/test_threat_intel\.py|\.github/workflows/ci\.yml)$'
 
 emit() { printf '%s=%s\n' "$1" "$2"; }
 
@@ -43,4 +46,5 @@ any() { grep -qE "$1" <<<"$changed"; }
 if every "$DOCS"; then emit docs_only true; else emit docs_only false; fi
 if every "$TESTS"; then emit tests false; else emit tests true; fi
 if any "$EVALS"; then emit evals true; else emit evals false; fi
+if [ -z "$changed" ] || any "$OSV"; then emit osv true; else emit osv false; fi
 if any "$SCAN"; then emit scan true; else emit scan false; fi

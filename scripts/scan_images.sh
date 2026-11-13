@@ -78,9 +78,7 @@ echo "scan-images: ${#IMAGES[@]} image reference(s)"
 
 # Fetch phase. Pulling eight registry images one after another is the single
 # slowest part of a CI run on a fresh runner, and a pull is network-bound rather
-# than CPU- or disk-bound, so they run concurrently. The local image is built
-# once and serialised because `docker compose build` already parallelises its
-# own stages.
+# than CPU- or disk-bound, so they run concurrently with the local image build.
 pulled=()
 missing=()
 for image in "${IMAGES[@]}"; do
@@ -96,32 +94,57 @@ if ((${#missing[@]})); then
         exit 2
     fi
     registry=()
+    build=0
     for image in "${missing[@]}"; do
         if [[ "$image" == bastion-agent:* ]]; then
-            echo "scan-images: building $image"
-            docker compose build gateway
+            build=1
         else
             registry+=("$image")
         fi
     done
+    build_pid=""
+    if [ "$build" -eq 1 ]; then
+        (
+            start=$SECONDS
+            echo "scan-images: building gateway"
+            docker compose build gateway || exit 1
+            echo "scan-images: gateway build took $((SECONDS - start))s"
+        ) &
+        build_pid=$!
+    fi
+    pull_failed=0
     if ((${#registry[@]})); then
+        start=$SECONDS
         echo "scan-images: pulling ${#registry[@]} image(s) with ${JOBS} workers"
         printf '%s\n' "${registry[@]}" |
-            xargs -r -P "$JOBS" -I{} sh -c 'echo "scan-images: pull $1"; docker pull "$1"' _ {}
+            xargs -r -P "$JOBS" -I{} sh -c 'echo "scan-images: pull $1"; docker pull "$1"' _ {} || pull_failed=1
+        echo "scan-images: pulls took $((SECONDS - start))s"
         pulled+=("${registry[@]}")
+    fi
+    build_failed=0
+    if [ -n "$build_pid" ]; then
+        wait "$build_pid" || build_failed=1
+    fi
+    if [ "$build_failed" -eq 1 ] || [ "$pull_failed" -eq 1 ]; then
+        echo "scan-images: image build or pull failed" >&2
+        exit 2
     fi
 fi
 
 for image in "${IMAGES[@]}"; do
     slug="$(uv run python scripts/image_inventory.py --slug "$image")"
+    start=$SECONDS
     echo "scan-images: export $slug"
     docker save "$image" -o "$WORK/images/$slug.tar"
+    echo "scan-images: export $slug took $((SECONDS - start))s"
     # `docker save` honours a restrictive umask; the scanner runs as root in a
     # container with cap_drop: ALL and only needs read access to the archive.
     chmod 0644 "$WORK/images/$slug.tar"
 
     echo "scan-images: scan $slug"
+    start=$SECONDS
     docker compose --profile compliance run --rm --no-deps trivy-scan
+    echo "scan-images: scan $slug took $((SECONDS - start))s"
 
     # One tarball at a time keeps peak disk bounded: the CUDA image alone is a
     # multi-gigabyte archive and a hosted runner does not have room for nine.

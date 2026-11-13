@@ -54,6 +54,79 @@ def run_script(
     )
 
 
+@pytest.mark.parametrize("failure", ["", "build", "pull"])
+def test_scan_overlaps_build_and_pulls_and_fails_closed(tmp_path: Path, failure: str) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    scan = scripts / "scan_images.sh"
+    scan.write_text((ROOT / "scripts/scan_images.sh").read_text(encoding="utf-8"), encoding="utf-8")
+    scan.chmod(0o755)
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    uv = binary / "uv"
+    uv.write_text(
+        """#!/bin/sh
+case "$*" in
+    *--required-vars*) ;;
+    *--compose*) printf '%s\\n' bastion-agent:local registry/image:tag ;;
+    *--slug*) printf '%s\\n' "${5//\\//-}" ;;
+esac
+""".replace("#!/bin/sh", "#!/bin/bash"),
+        encoding="utf-8",
+    )
+    docker = binary / "docker"
+    docker.write_text(
+        """#!/bin/sh
+case "$*" in
+    "image inspect "*) exit 1 ;;
+    "compose build gateway")
+        touch "$FAKE_STATE/build"
+        [ "$FAIL_STAGE" != build ] || exit 1
+        n=0
+        while [ ! -e "$FAKE_STATE/pull" ]; do
+            n=$((n + 1)); [ "$n" -lt 100 ] || exit 1; sleep 0.05
+        done ;;
+    "pull "*)
+        touch "$FAKE_STATE/pull"
+        [ "$FAIL_STAGE" != pull ] || exit 1
+        n=0
+        while [ ! -e "$FAKE_STATE/build" ]; do
+            n=$((n + 1)); [ "$n" -lt 100 ] || exit 1; sleep 0.05
+        done ;;
+    "save "*)
+        for last do :; done
+        touch "$last" ;;
+    "compose --profile"*) touch "$FAKE_STATE/scan" ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    for path in (uv, docker):
+        path.chmod(0o755)
+    result = subprocess.run(
+        [str(scan), "--build-missing"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "FAKE_STATE": str(tmp_path),
+            "FAIL_STAGE": failure,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert (tmp_path / "build").exists()
+    assert (tmp_path / "pull").exists()
+    if failure:
+        assert result.returncode == 2, result.stderr
+        assert not (tmp_path / "scan").exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / "scan").exists()
+
+
 def write_policy(tmp_path: Path, entries: list[dict[str, Any]]) -> Path:
     path = tmp_path / "trivy.yaml"
     path.write_text(yaml.safe_dump({"version": 1, "ignore": entries}), encoding="utf-8")

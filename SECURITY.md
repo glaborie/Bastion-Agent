@@ -275,7 +275,7 @@ CREATE TABLE audit_logs (
 | **OpenTelemetry Collector** | Latest contrib | OSV + Trivy | Observability |
 
 ### Vulnerability Management
-- **Scanning**: on every push and pull request, in the `supply-chain` CI job. `scripts/update_threat_intel.py` audits `uv.lock` against OSV; `scripts/scan_images.sh` exports every image the compose stack ships and scans it with the digest-pinned Trivy service (no Docker engine socket, `cap_drop: ALL`).
+- **Scanning**: `scripts/update_threat_intel.py` audits `uv.lock` against OSV on master, weekly and manual runs, and on pull requests changing audit inputs or the CI gate. `scripts/scan_images.sh` exports every image the compose stack ships and scans it with the digest-pinned Trivy service (no Docker engine socket, `cap_drop: ALL`); its pull-request cadence is documented in ADR-016.
 - **Gate**: an unignored OSV advisory, an unsuppressed CRITICAL image CVE, or an expired policy entry fails `supply-chain`, and `ci-ok` requires that job.
 - **Patching**: critical CVEs patched within 7 days. Accepting a finding means an entry in `trivy.yaml` with the Trivy id, the image scope, a written justification and an expiry date.
 - **SBOM**: CycloneDX written to `artifacts/compliance/<date>/sbom.cdx.json` alongside `cve.json` and `manifest.json` on every scan, and uploaded as the `compliance-reports` CI artifact. Artifacts are not committed.
