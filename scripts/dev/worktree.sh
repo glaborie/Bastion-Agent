@@ -67,9 +67,11 @@ command -v uv >/dev/null || die "uv is not on PATH"
 
 git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null || die "base ref '$BASE' not found (fetch it first)"
 
-# Title comes from the backlog so the branch name and the item cannot drift.
-TITLE="$(grep -m1 "^### ${ITEM_ID}: " "$ROOT/BACKLOG.md" | sed -E "s/^### ${ITEM_ID}: //")" ||
-    die "$ITEM_ID is not in BACKLOG.md"
+# Title comes from the item file so the branch name and the item cannot drift.
+ITEM_FILE="$(compgen -G "$ROOT/backlog/items/${ITEM_ID}-*.md" | head -n1)"
+[[ -n "$ITEM_FILE" ]] || die "$ITEM_ID has no file under backlog/items/"
+TITLE="$(grep -m1 "^### ${ITEM_ID}: " "$ITEM_FILE" | sed -E "s/^### ${ITEM_ID}: //")" ||
+    die "$ITEM_ID has no title line in $ITEM_FILE"
 [[ -n "$TITLE" ]] || die "$ITEM_ID has no title line"
 
 if [[ -z "$SLUG" ]]; then
@@ -100,26 +102,24 @@ if [[ -f "$DIR/pyproject.toml" ]]; then
     echo "worktree: dependencies installed"
 fi
 
-# Claim the item inside the worktree so the status change is part of its diff.
-if [[ -f "$DIR/BACKLOG.md" ]]; then
-    python3 - "$DIR/BACKLOG.md" "$ITEM_ID" <<'PY'
+# Claim the item inside the worktree so the status change travels with its
+# branch. Only the item's own file is touched, so parallel worktrees never edit
+# the same path; the rendered BACKLOG.md is generated and untracked.
+ITEM_FILE="$DIR/backlog/items/$(basename "$ITEM_FILE")"
+if [[ -f "$ITEM_FILE" ]]; then
+    python3 - "$ITEM_FILE" <<'PY'
 import datetime as dt
 import pathlib
 import re
 import sys
 
-path, item = pathlib.Path(sys.argv[1]), sys.argv[2]
+path = pathlib.Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 today = dt.date.today().isoformat()
-pattern = re.compile(rf"(### {re.escape(item)}:.*?)(?=\n### |\Z)", re.S)
-match = pattern.search(text)
-if match is None:
-    sys.exit(f"{item} disappeared from BACKLOG.md")
-block = match.group(1)
-block = re.sub(r"^- status: .*$", "- status: active", block, count=1, flags=re.M)
-block = re.sub(r"^- updated: .*$", f"- updated: {today}", block, count=1, flags=re.M)
-path.write_text(text[: match.start(1)] + block + text[match.end(1) :], encoding="utf-8")
-print(f"worktree: {item} marked active")
+text = re.sub(r"^- status: .*$", "- status: active", text, count=1, flags=re.M)
+text = re.sub(r"^- updated: .*$", f"- updated: {today}", text, count=1, flags=re.M)
+path.write_text(text, encoding="utf-8")
+print(f"worktree: {path.name} marked active")
 PY
     (cd "$DIR" && uv run --no-sync python scripts/check_backlog.py --write >/dev/null)
 fi

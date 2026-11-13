@@ -19,7 +19,7 @@ Instructions for working with the Architectural Decision Records in `docs/adr/`.
 
 Do **not** use an ADR for routine changes that do not alter a decision: bug
 fixes, refactors that preserve behaviour, dependency bumps, or roadmap wishes
-(those belong in `docs/backlog.md`).
+(those belong in `backlog/items/`).
 
 ---
 

@@ -30,14 +30,14 @@ Take the selected item (default: `items[0]`). Announce it in one line:
 
 ## 2. Read before claiming
 
-Read the item in `BACKLOG.md` and every ADR named in its `- spec:`. Read the
-files the `**Outcome**` and `**Acceptance**` sections point at; do not plan from
-the title alone.
+Read the item file `backlog/items/IDEA-NNN-*.md` and every ADR named in its
+`- spec:`. Read the files the `**Outcome**` and `**Acceptance**` sections point
+at; do not plan from the title alone.
 
 If the acceptance criteria are not verifiable as written, do not guess and do not
 implement a different task. Instead:
 
-- set `- status: blocked`
+- set `- status: blocked` on the item file
 - add `- blocked-by: acceptance criteria need clarification`
 - append a `**Notes**` bullet naming exactly what is missing
 - bump `- updated:` to today, run
@@ -45,7 +45,7 @@ implement a different task. Instead:
 
 ## 3. Claim it before touching code
 
-Set `- status: active` and `- updated: <today>` on the item, then run
+Set `- status: active` and `- updated: <today>` on the item file, then run
 `uv run python scripts/check_backlog.py --write`. This is what makes an
 interrupted loop safe: a claimed item never comes back from `--next`.
 
