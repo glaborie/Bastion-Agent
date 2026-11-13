@@ -11,12 +11,12 @@ must not be edited by hand.
 
 - current-phase: v0.3
 - wip-limit: 3
-- next-id: IDEA-034
+- next-id: IDEA-041
 
 ## Board
 
 <!-- BEGIN BOARD -->
-### Inbox (6)
+### Inbox (13)
 
 - `IDEA-018` P2 v0.4 agent - Detect user frustration and escalate the conversation to a human operator
 - `IDEA-020` P2 v0.5 security - Load production secrets from OpenBao instead of the process environment
@@ -24,6 +24,13 @@ must not be edited by hand.
 - `IDEA-028` P2 v0.4 agent - Route prompts to a model tier by classified complexity
 - `IDEA-027` P2 v0.5 agent - Cache semantically equivalent completions to avoid repeated model calls
 - `IDEA-031` P2 v0.3 tooling - Fail CI when the threat-model control table drifts from the tree
+- `IDEA-034` P2 v0.3 agent - Unify duplicated demo approval-ticket creation
+- `IDEA-035` P3 v0.3 db - Share session-scoped Redis key derivation between the vault and the egress sanitizer
+- `IDEA-036` P3 v0.3 gateway - Split the guarded chat handler into one function per lifecycle stage
+- `IDEA-037` P3 v0.3 agent - Replace the classifier's 24-keyword constructor with a guard configuration object
+- `IDEA-038` P3 v0.3 db - Move canonical hashing and approval-token primitives out of db/models.py
+- `IDEA-039` P2 v0.5 infra - Run Uptime Kuma as a profile-gated sidecar that watches container health
+- `IDEA-040` P2 v0.5 infra - Encrypt every hop: browser to gateway, gateway to services, egress to providers
 
 ### Ready (0)
 
@@ -107,6 +114,13 @@ _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 | IDEA-031 | inbox | P2 | v0.3 | tooling | Fail CI when the threat-model control table drifts from the tree |
 | IDEA-032 | done | P3 | v0.3 | gateway | Add a persisted theme control and fix dark-mode contrast on the dashboard |
 | IDEA-033 | done | P1 | v0.3 | gateway | Echo the approval WebSocket subprotocol so browsers keep the socket open |
+| IDEA-034 | inbox | P2 | v0.3 | agent | Unify duplicated demo approval-ticket creation |
+| IDEA-035 | inbox | P3 | v0.3 | db | Share session-scoped Redis key derivation between the vault and the egress sanitizer |
+| IDEA-036 | inbox | P3 | v0.3 | gateway | Split the guarded chat handler into one function per lifecycle stage |
+| IDEA-037 | inbox | P3 | v0.3 | agent | Replace the classifier's 24-keyword constructor with a guard configuration object |
+| IDEA-038 | inbox | P3 | v0.3 | db | Move canonical hashing and approval-token primitives out of db/models.py |
+| IDEA-039 | inbox | P2 | v0.5 | infra | Run Uptime Kuma as a profile-gated sidecar that watches container health |
+| IDEA-040 | inbox | P2 | v0.5 | infra | Encrypt every hop: browser to gateway, gateway to services, egress to providers |
 <!-- END INDEX -->
 
 ## Items
@@ -1892,3 +1906,304 @@ The handshake echoes the one offered `bastion.csrf.<token>` subprotocol, a brows
 - Base repair: `origin/master` (wiki + mTLS PRs) carried two repo-wide gate failures that arrived after the base I branched from — `ruff 0.17.4` reformats a Python block in `wiki/API-Reference.md`, and pylint flags `redis_tls_kwargs(settings) == {}` in `tests/test_db_tls.py`. Both are one-line, behaviour-free fixes kept in their own commit so this branch's gate is honest; they are unrelated to the socket.
 - Tests: `tests/test_approval_ws.py` now also proves that a client offering no protocol, and one offering only an unrelated protocol, still connect. Fan-out, tenant isolation, `readonly` and CSRF rejection tests are unchanged and green.
 - Limitation worth recording: the `websockets` library (17.4) returns `None` instead of failing when a server omits the echo, so only a real browser enforces RFC 6455 here. The ASGI-level assertion is the contract the browser checks; the raw upgrade above confirms uvicorn writes the header.
+
+### IDEA-034: Unify duplicated demo approval-ticket creation
+
+- status: inbox
+- priority: P2
+- phase: v0.3
+- area: agent
+- tags: approvals, duplication, four-eyes, demo
+- depends-on: -
+- spec: ADR-010
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: review of `agent/demo/scenarios.py` and `scripts/seed_demo_approval.py`, 2026-11-12
+
+**Problem**
+
+Two demo paths each hand-build a `PendingApproval`. `_run_seed_approval` (`agent/demo/scenarios.py:402-458`) computes the TTL with `PendingApproval.expiry_for(now, settings.approval_ttl_seconds)` at line 411, the fingerprint at 419, the HMAC capability token at 420-425, the row at 428-441, the `APPROVAL_REQUESTED` audit event at 443-451 and the Redis publish at 452-458; `create_ticket` (`scripts/seed_demo_approval.py:40-94`) repeats the same sequence at lines 51, 53, 54-59, 63-76, 78-86 and 87-93. Both sit outside the guarded suspension in `agent/tools/execution.py::_suspend` (lines 526-593), which is the only construction site that a change to the fingerprint, the token expiry or the audit fields is normally tested against. The demo audit rows already differ from `_suspend`'s: the demo payload is `{"ticket_id", "tool"}` with `{"required_role"}` metadata, while `_suspend` also records `request_fingerprint`, `initiator_id`, `expires_at` and `argument_keys`. Nothing makes those three sites drift together, so a security-relevant field can change in one demo path and not the other.
+
+**Outcome**
+
+One factory builds the demo ticket — TTL, fingerprint, capability token, token hash, row insert, `APPROVAL_REQUESTED` audit event and Redis publish — and both demo callers use it, so a later change to the suspension contract reaches them in one edit. Observable behaviour is unchanged: the same ticket fields, the same audit event and the same publish, and `_suspend` remains the guarded path rather than being folded into the demo helper.
+
+**Acceptance**
+
+- [ ] `grep -rn "PendingApproval" agent/demo/scenarios.py scripts/seed_demo_approval.py` returns nothing, and the ticket row, the token and the audit event are readable at one shared factory call site
+- [ ] A test calls the factory and asserts the row's fields from `settings.approval_ttl_seconds` (expiry), `fingerprint_request(tool, arguments)` (fingerprint), `hash_approval_token` of a token that `sign_approval_token` verifies, and the `APPROVAL_REQUESTED` payload and metadata that both demo paths publish today
+- [ ] `uv run pytest tests/test_dashboard_demo.py tests/test_approvals.py -q` passes with no assertion deleted, and the dashboard seed scenario still yields a pending ticket whose initiator cannot approve it
+- [ ] Nothing in `agent/tools/execution.py` changes: `_suspend` keeps its own construction and its audit fields, and the four-eyes behaviour for worker-suspended tickets is untouched
+
+**Notes**
+
+- Deduplication: grepped `BACKLOG.md`, `docs/adr/` and the tree for `PendingApproval`, `seed_demo_approval`, `_suspend` and `four-eyes`. IDEA-012 (done) built the demo console and its seed scenario, and its notes call the scenario "the dashboard equivalent of `scripts/seed_demo_approval.py`", which is the duplication this item removes rather than a second feature. IDEA-002 (done) is approval transport, IDEA-030 (done) is worker identity, IDEA-021 is ledger retention; no item or ADR records the duplicated construction.
+- `spec: ADR-010` because decision 4 owns the immutable request binding — fingerprint, HMAC token, token hash — and decision 8 owns the `APPROVAL_REQUESTED` fields; the factory must not weaken either. The ADR text needs no change unless the factory's audit fields are deliberately aligned with `_suspend`'s fuller set, in which case decision 8 records it.
+- Open question for triage: whether the shared factory also becomes `_suspend`'s constructor. This item deliberately does not, because moving the guarded path is a larger security change than de-duplicating two demo helpers, and the drift it would fix is the same one this factory makes visible.
+- Classification: `P2`/`v0.3`. No guardrail is broken today (the demo rows are valid and four-eyes is enforced downstream), so it is not `P0`/`P1`; the current phase is v0.3 and this is a duplicate-removal refactor with no new capability.
+
+### IDEA-035: Share session-scoped Redis key derivation between the vault and the egress sanitizer
+
+- status: inbox
+- priority: P3
+- phase: v0.3
+- area: db
+- tags: redis, multi-tenancy, duplication, vault, egress
+- depends-on: -
+- spec: ADR-015
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: review of agent/dlp/vault.py and agent/egress/sanitizer.py
+
+**Problem**
+
+Both Redis-key writers carry their own copy of the same session-id grammar.
+`agent/dlp/vault.py` declares `_MAX_SESSION_ID_LENGTH = 256` at line 46, validates
+in `_validate_session` (lines 230-234), and digests with
+`hashlib.sha256(session_id.encode("utf-8"))` in `_keys` (line 184);
+`agent/egress/sanitizer.py` declares the same 256 at line 48, repeats the same
+two error messages and the same digest in `_key` (lines 284-291). ADR-015
+decision 2 fixes both key shapes on one session digest, so the two copies must
+stay identical, yet nothing links them: changing the limit or the error text in
+one file silently changes the accepted session population of half the stack, and
+a test for the vault's 256 rule proves nothing about the sanitizer's.
+
+**Outcome**
+
+One shared function in `db/redis.py` validates a session id and returns its
+SHA-256 hex digest; `TokenVault._keys` and `EgressSanitizer._key` call it, so the
+length limit, the error text and the digest exist once. Both subsystems derive
+the identical digest for the same session id, 256 and 257 characters are
+accepted and rejected respectively by both, and ADR-015 decision 2 remains the
+single description of the key grammar.
+
+**Acceptance**
+
+- [ ] A unit test covers a 256-character and a 257-character session id and asserts the vault and the sanitizer accept the first, reject the second with the shared error text, and derive the same digest for the same session id
+- [ ] `uv run pytest tests/test_vault.py tests/test_egress_sanitizer.py -q` passes
+- [ ] `grep -rn "_MAX_SESSION_ID_LENGTH" --include=*.py agent/ db/ gateway/` returns exactly one definition, in the shared helper
+- [ ] `uv run mypy agent/dlp/vault.py agent/egress/sanitizer.py db/redis.py` is clean
+
+**Notes**
+
+- Tests recompute the digest too: `tests/test_egress_redis.py:48` builds the `egress:<tenant>:<kind>:<digest>` key by hand. Switching that helper to the shared function is enough and keeps the test independent of a private method.
+- Out of scope: `gateway/routers/chat.py:177` produces the *session id* (`chat:<digest>` of tenant, actor and conversation), which is then fed to both subsystems. This item only deduplicates what the two consumers do with an id they are handed.
+- `priority: P3` because nothing is broken today; the drift is a latent correctness risk rather than a current phase obligation.
+
+### IDEA-036: Split the guarded chat handler into one function per lifecycle stage
+
+- status: inbox
+- priority: P3
+- phase: v0.3
+- area: gateway
+- tags: chat, refactor, egress, dlp, audit
+- depends-on: -
+- spec: ADR-012
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: review of gateway/routers/chat.py, 2026-11-12
+
+**Problem**
+
+`chat()` in `gateway/routers/chat.py` runs from line 290 to line 658 (369 lines) and interleaves five stages — DLP redaction, routing/classification, the injection gate, egress inspection, and the delivered-response audit — with audit commits, span annotations and error branches inline. Two small redundancies ride along: the `except (DLPUnavailableError, VaultError)` branch at line 345 and the following `except Exception` branch at line 348 have identical bodies (same log line, same 503, same message), and `_blocked()` at line 275 is a one-line alias for `HTTPException` used only to shorten eight raise sites. The stage boundaries are marked by comments, so a reader must re-derive the state passed between stages from 369 lines of straight-line code, which makes any edit to one stage hard to review against commit order.
+
+**Outcome**
+
+`chat()` becomes a short orchestrator that calls one function per stage with explicit state (an intermediate carrying the request, auth context, session, redacted messages, classification, route decision, canary and completion). The redundant DLP branches collapse into one, and `_blocked()` is removed in favour of raising `HTTPException` directly. This is a pure move: control flow, audit commit order, audit fields, span attributes and response status codes are unchanged.
+
+**Acceptance**
+
+- [ ] `chat()` is at most 80 lines, and no stage body remains inline: each of the five stages is a named function called from the orchestrator, verified by reading the handler and by a line count of the `chat` function
+- [ ] `uv run pytest tests/test_chat.py tests/test_chat_contract.py -q` passes with no assertion added, removed or loosened
+- [ ] Every stage still writes its existing audit event and sets its span attributes in the same order as today: `INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION`, `RESPONSE_SENT`, `EGRESS_FILTERED` and `SECURITY_INCIDENT` appear in the same sequence and with the same metadata keys for a normal turn and for the blocked paths (circuit open, injection, canary leak)
+- [ ] `uv run mypy gateway/routers/chat.py` and `uv run ruff check gateway/routers/chat.py` pass
+
+**Notes**
+
+- Deduplication: no open or done item and no ADR decision covers the handler's structure. IDEA-018 (escalation), IDEA-027 (completion cache) and IDEA-028 (complexity routing) add behaviour at this endpoint, not a decomposition; ADR-012 governs the egress contract the stage must keep, which is why it is the spec.
+- The DLP generic branch carries an explanatory comment that the first branch does not; keeping that comment on the merged branch preserves the intent. Removing `_blocked()` touches eight raise sites, all inside this handler.
+
+### IDEA-037: Replace the classifier's 24-keyword constructor with a guard configuration object
+
+- status: inbox
+- priority: P3
+- phase: v0.3
+- area: agent
+- tags: classifier, config, refactor, onnx
+- depends-on: -
+- spec: ADR-011
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: review of `agent/routing/classifier.py` on 2026-11-12
+
+**Problem**
+
+`SensitivityClassifier.__init__` (`agent/routing/classifier.py:438-561`) is 124 lines with 24 keyword-only parameters. The injection-guard and safety-guard settings are mirror images — model path, tokenizer path, max tokens, CPU SHA-256, GPU path and GPU digest each exist twice — and `_graph_for_provider`, `_operating_unsafe_threshold`, `_validate_operating_points` and the two guard constructions are interleaved in one body, so reading the CUDA operating-point selection requires tracking locals across 40 lines. `get_classifier()` (`:895-921`) passes 21 of those settings values one by one, and four scripts plus two test modules call the constructor directly, so any signature change is a wide, error-prone edit.
+
+**Outcome**
+
+The constructor takes one frozen configuration object plus the two optional predictors and nothing else. That object holds the paths, digests, token and threshold values for both guards, the rules-floor flag and the require-models flag; a single `_build_guard` helper resolves the provider graph and constructs either an injection guard or a safety guard, so the constructor validates the config and builds the two guards instead of mixing selection, validation and loading. `get_classifier()` builds the config from settings. Behaviour, error messages and fail-closed semantics are unchanged, including the paired-guard rule and the `require_models` check.
+
+**Acceptance**
+
+- [ ] `SensitivityClassifier.__init__` takes at most 6 parameters excluding `self` (the config object, `injection_predictor`, `safety_predictor`, and any keyword-only validation switches that remain), asserted by a test using `inspect.signature` so the count cannot drift back
+- [ ] `uv run pytest tests/test_classifier.py tests/test_classifier_evals.py -q` passes after adapting only direct constructor calls; no assertion is deleted, loosened or skipped to make it pass
+- [ ] The existing configuration-error assertions keep their message text: `model not found`, `tokenizer not found`, `threshold`, `max_tokens`, `configured together`, `no classifier model`
+- [ ] Every direct call site is migrated (`tests/test_classifier.py`, `tests/test_classifier_evals.py`, `scripts/demo_classifier.py`, `scripts/tune_classifier.py`, `scripts/measure_classifier_latency.py`, `scripts/check_classifier_dispatch.py`), and `grep -rn "SensitivityClassifier(" --include=*.py agent tests scripts` shows no remaining argument-by-argument construction
+- [ ] `uv run mypy agent/routing/classifier.py` and `uv run ruff check agent/routing/classifier.py scripts tests` pass
+- [ ] A CUDA provider selection with no GPU graph configured still keeps the configured CPU graph and the configured `unsafe` default, proven by the existing GPU operating-point test
+
+**Notes**
+
+- Scope is simplification only: no new graph, threshold, recognizer or model feature; the rules floor, the ensemble decision table and the single-graph legacy path stay as they are.
+- The item's premise said `get_classifier()` passes 22 values; counting the call at `agent/routing/classifier.py:899-921` gives 21 (`safety_unsafe_threshold` and both predictors are not passed), which does not change the conclusion.
+- Open question for triage: whether the config object lives in `agent/routing/classifier.py` beside `EnsembleThresholds` or in a separate module; a second module is only worth it if the scripts need to build the config without importing the classifier.
+- ADR-011 decision 6 already fixes the graph-paths-from-settings contract and the provider selection rules, so this refactor must read that decision rather than redefine it.
+
+### IDEA-038: Move canonical hashing and approval-token primitives out of db/models.py
+
+- status: inbox
+- priority: P3
+- phase: v0.3
+- area: db
+- tags: audit, models, hashing, refactor
+- depends-on: -
+- spec: ADR-005
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: review of db/models.py size and import graph, 2026-11-12
+
+**Problem**
+
+`db/models.py` is 738 lines and carries four unrelated jobs: the SQLAlchemy ORM
+tables, canonical timestamp/payload serialisation, SHA-256 chain hashing plus
+approval-token HMAC signing and verification, and the migration DDL constants
+(`TENANT_SCOPE_DDL` and the `DDL` event listeners). Because the pure functions
+live among the table definitions, 30 modules import `db.models` for a helper
+rather than for a model, so the model file is the de-facto utility module: any
+edit to a column drags the whole import surface into review, and the primitives
+cannot be reused or tested without loading SQLAlchemy metadata.
+
+**Outcome**
+
+The pure primitives move to `db/hashing.py` (`canonical_timestamp`,
+`canonical_payload_bytes`, `hash_payload`, `compute_record_hash`) and
+`db/tokens.py` (`fingerprint_request`, `sign_approval_token`,
+`hash_approval_token`, `verify_approval_token`). `db/models.py` keeps the ORM
+models and DDL and re-exports the moved names, so every existing
+`from db.models import ...` keeps working and ADR-005's reference to
+`db.models.compute_record_hash` stays valid. No behaviour change and no schema
+change.
+
+**Acceptance**
+
+- [ ] `db/hashing.py` and `db/tokens.py` exist, and `python -c "from db.models import compute_record_hash, sign_approval_token, canonical_timestamp"` succeeds; `grep -c "^def compute_record_hash" db/models.py` reports 0 and `grep -rc "^def compute_record_hash" db/hashing.py` reports 1
+- [ ] `wc -l db/models.py` reports fewer than 620 lines (down from 738); the ORM classes and the DDL strings are unchanged apart from imports and re-exports
+- [ ] `uv run pytest tests/test_audit_chain.py tests/test_approvals.py tests/test_payload_escrow.py -q` passes with no test-file edits
+- [ ] `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check .` and `uv run --no-sync mypy settings.py logging_setup.py db gateway agent scripts` are clean
+- [ ] `docs/adr/ADR-005.md` decision 2 names `db/hashing.py` as the definition site while the re-export keeps `db.models.compute_record_hash` importable
+
+**Notes**
+
+- Measured, not assumed: the primitive blocks are lines 170-244 and 465-530, about 140 lines in total, so the 450-line target suggested at capture is not reachable by moving only pure functions — the remaining ORM plus enums plus DDL is roughly 600 lines. The box is set at 620 accordingly; if a reviewer wants a smaller file, that is a second item about splitting the ORM modules (approvals, escrow, ledger), not a reason to move more than primitives here.
+- `utcnow` is a clock rather than a hashing primitive and is kept where it is unless the worker's monkeypatching tests say otherwise; do not widen the move for symmetry.
+- `fingerprint_request` is included in `db/tokens.py` because it is `hash_payload` over the invocation dict and only the approval path uses it.
+- Deduplication: no open or done item covers module layout — IDEA-004 (export), IDEA-021 (WORM anchor), IDEA-016/029 (escrow) all change ledger behaviour, and IDEA-030/ADR-018 consume the approval token without moving it.
+
+### IDEA-039: Run Uptime Kuma as a profile-gated sidecar that watches container health
+
+- status: inbox
+- priority: P2
+- phase: v0.5
+- area: infra
+- tags: monitoring, docker, uptime, healthcheck, availability
+- depends-on: -
+- spec: ADR-001
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: session request on 2026-11-12 ("set up and deploy uptime kuma to monitor the health of the containers, configure it as a side car with profile infra")
+
+**Problem**
+
+Six of the eight default services declare a Compose healthcheck — `gateway` (`docker-compose.yml:166`), `db` (`:216`), `redis` (`:281`), `keycloak` (`:338`), `omniroute` (`:379`) and `llama-cpp` (`:430`) — while `worker` (`:183`) and `otel-collector` (`:459`) have none, the collector's omission being deliberate because the distroless image has no shell to probe (`:160-163`). Those states only gate `depends_on` at startup and colour `docker compose ps`: nothing records a transition, keeps a history or tells a person, so a container that dies overnight is invisible until someone types `docker compose ps` the next morning. The only runtime telemetry is the OTel trace pipeline (ADR-014), which carries payload-free request spans and no availability record, and `gateway/routers/health.py` serves `/health` and `/health/ready` (database only) that nothing consumes after boot. No monitoring service, profile or monitor definition exists: `uptime` and `kuma` have no hit in the tree, and the only `prometheus` hit is `wiki/API-Reference.md:36`, which documents a `/metrics` endpoint the gateway does not serve.
+
+**Outcome**
+
+`docker compose --profile infra up -d` starts one digest-pinned Uptime Kuma sidecar with a named volume and a loopback-only port, and a committed monitor file plus an idempotent seed step gives it one monitor per default service that actually exposes a probe: `gateway` `/health` and `/health/ready`, `db:5432` and `redis:6379` as TCP, Keycloak's management health endpoint on `:9000` (`KC_HEALTH_ENABLED` is already on, `docker-compose.yml:329`) or `/realms/bastion`, `omniroute` `/api/health`, and `llama-cpp` TCP `:8080` with a start period long enough for a model load. It never mounts the Docker socket and never reads engine health directly, so the monitors observe the same endpoints a client would; the worker's disposition is decided and recorded (a queue or Redis signal, or explicitly unmonitored) instead of left accidental. The default profile, every existing healthcheck and the `bastion-net` topology are unchanged, the new image enters the Trivy inventory, and the docs state what is watched, what is not, and that a monitor on the same host cannot report a host, daemon or monitor outage. Notification delivery is optional and configured from `.env`, never committed.
+
+**Acceptance**
+
+- [ ] `docker compose --profile infra config --services` lists the monitor service and nothing else new, `docker compose config` without the profile is unchanged (a diff touches no default-profile service), and the service declares a digest-pinned image, a named volume, a `127.0.0.1:<port>` mapping only, `cap_drop: [ALL]` and `no-new-privileges:true`
+- [ ] `grep -n "docker.sock" docker-compose.yml` returns nothing, the monitor service is not `privileged`, and a test asserts both so the compose healthchecks stay the engine's rather than being proxied through a socket
+- [ ] `scripts/seed_uptime_kuma.py` (or the named equivalent) applies `config/uptime-kuma/monitors.json` idempotently: a test runs it twice against a recording client and asserts the same monitor set, and the file names one monitor per probe listed in **Outcome** plus the worker's recorded disposition
+- [ ] A down transition is observable end to end: with the profile up, `docker compose stop redis` flips its monitor to DOWN within the configured interval and `docker compose start redis` returns it to UP, and the evidence is captured without any notification credential
+- [ ] Monitoring state survives `docker compose restart uptime-kuma`: the monitor set and its history are still present through the named volume
+- [ ] The initial admin credential is read from a required `.env` key like `POSTGRES_PASSWORD` (`${...:?set ... in .env}`) and appears in neither `.env.example`'s default nor any committed file, asserted by a test that fails on a literal
+- [ ] `uv run pytest tests/test_compliance_scan.py -q` passes with the image inventory updated for the new reference (precedent: IDEA-026), or the ADR records why it is excluded from the scan set
+- [ ] `README.md` and `docs/TROUBLESHOOTING.md` document the command, the URL, the seed step, the `infra` profile, what is and is not monitored (worker, host, Docker daemon, model quality), and that OTel traces remain the detailed runtime telemetry; a new ADR records the component, the profile convention and the socket-free rule, and `uv run python scripts/check_adrs.py` passes
+- [ ] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` stay green
+
+**Notes**
+
+- Deduplication: grepped `BACKLOG.md`, `docs/adr/`, `docker-compose.yml`, `README.md` and `THREAT_MODEL.md` for `uptime`, `kuma`, `monitor`, `availability`, `prometheus` and `grafana`. Nothing covers availability monitoring: IDEA-022 (done, ADR-017) is runtime *process* detection, IDEA-026/ADR-014 is trace export, IDEA-019/025 are image scanning, IDEA-031 is threat-model drift, and the `monitoring` tag on IDEA-022 names Falco alerts rather than uptime. No item was merged and no id was reused.
+- `spec: ADR-001` names the record the sidecar must fit rather than a decision that permits it: the Context fixes one compose stack per host (`docs/adr/ADR-001.md:11`) and decision 1 excludes "sidecar proxies" (`:15`); a monitoring sidecar is not a proxy, but that reading must be written down rather than assumed, which is why the new ADR is part of the acceptance. Nothing else in `docs/adr/` decides monitoring.
+- Classification: `P2`/`v0.5`/`infra`. New capability with nothing broken today — the stack runs, healthchecks exist and no stated invariant is at stake — so not `P0`/`P1`; ADR-008 decision 5 freezes features inside a phase and the current phase is v0.3. No ADR-008 line names monitoring; v0.5 "Production readiness" is the nearest home, and triage may move it to v0.3 alongside the other infrastructure work or reject it as unnecessary for a single-host demo. `area: infra` because every edited line lands in compose, `config/`, `.env.example`, a seed script and the docs.
+- Profile-name question for triage: the request says `infra`, but the existing profiles are `pgadmin`, `redis-ui`, `compliance` and `security`, and PKI is a separate `docker-compose.pki.yml` override (IDEA-023). Whether monitoring joins one of those, takes `infra`, or uses an `observability` name should be settled with the ADR that records the convention instead of growing a fourth naming style by accident.
+- The honest design constraint: Uptime Kuma speaks HTTP/TCP/ICMP, not Docker health states, so the monitors must target endpoints over `bastion-net` and the two services without a listener stay outside it unless a signal is invented. `llama-cpp` takes minutes to load on this host (`start_period: 180s`, `:436`), so its monitor needs a matching grace period or it reports DOWN on every restart, and `otel-collector` has no port to probe at all.
+- Deliberately out of scope, each a follow-up rather than bundled work: Prometheus/Grafana metrics scraping and the stale `/metrics` claim in `wiki/API-Reference.md:36`; paging or an external dead-man's-switch prober (a monitor on the same host cannot report its own host's failure); adding healthchecks to `worker` and `otel-collector`; per-service SLOs and alert routing; and any dashboard integration with the existing approval UI.
+- Intake only: no compose, `config/`, script, `.env.example`, document or ADR change is part of this capture, and the idea was not implemented in the turn that produced it.
+
+### IDEA-040: Encrypt every hop: browser to gateway, gateway to services, egress to providers
+
+- status: inbox
+- priority: P2
+- phase: v0.5
+- area: infra
+- tags: https, tls, pki, cookies, omniroute, otel
+- depends-on: -
+- spec: ADR-019
+- created: 2026-11-12
+- updated: 2026-11-12
+- source: session request on 2026-11-12 ("implement https"), same day the ADR-019 PKI profile landed; requester clarified on the same day that it means encryption between frontend and backend as well as against the outside world
+
+**Problem**
+
+The gateway is the only browser-facing process and it speaks plaintext HTTP. The container command is `uvicorn gateway.main:app --host 0.0.0.0 --port 8000 --proxy-headers` with no `--ssl-keyfile`/`--ssl-certfile` (`docker-compose.yml:134-137`), the published port is `127.0.0.1:${GATEWAY_PORT:-8000}:8000` (`:141-144`), and the healthcheck probes `http://127.0.0.1:8000/health` (`:166-173`). The only TLS in the tree is the opt-in east-west profile from IDEA-023: ADR-019 terminates TLS at PostgreSQL, Redis and Keycloak, and its gateway leaf `pki/gateway/tls.crt` is a *database client* identity whose CN is the role `bastion`, not a server certificate for `localhost`. So the OIDC login, the `bastion_session` cookie and the approval WebSocket that carry operator authority cross a plaintext connection: `SESSION_COOKIE_SECURE` defaults to `false` (`settings.py:113`, `docker-compose.yml:46`) and is only forced outside local development (`settings.py:508-509`), the Keycloak client registers `http://localhost:8000/auth/callback` (`config/keycloak/realm-export.json:72`), and the HSTS branch in `gateway/main.py:133-136` never fires because `request.url.scheme` is never `https`. `SECURITY.md:246`, `README.md:1144-1147` and the compose comment at `:142-143` defer the fix to "a TLS reverse proxy" that the repository does not ship.
+
+Scope was clarified by the requester on 2026-11-12: encryption is wanted **between frontend and backend as well as against the outside world**, not only on the browser-facing listener. "Frontend" here is the HTMX dashboard served by the same FastAPI process (ADR-007), so the frontend-to-backend hop *is* the browser-to-gateway hop; the clarification therefore adds the hops behind it. Those are all in-tree and provable: the gateway calls OmniRoute at `http://omniroute:20128` (`docker-compose.yml:93`), OmniRoute calls llama.cpp at `http://llama-cpp:8080/v1` (`config/omniroute/config.yaml:26,39`), the gateway exports spans to `http://otel-collector:4318` (`docker-compose.yml:101`), and PostgreSQL, Redis and Keycloak stay plaintext unless the IDEA-023 PKI profile is enabled. Egress beyond the host is already HTTPS by URL — `https://openrouter.ai/api/v1` (`config/omniroute/config.yaml:46`) and the Langfuse/Arize/Opik OTLP endpoints in `config/otel/` — but that rests on the upstream default trust store, and nothing in the repository asserts it stays so or forbids `verify=False` from creeping in.
+
+ADR-019 decision 11 explicitly leaves OmniRoute and the OTLP endpoint on plain HTTP, so this item now owns that named residual gap (`THREAT_MODEL.md` T8) rather than deferring to it. The honest constraint: OmniRoute's upstream image has no TLS listener, so the two candidate answers are (a) llama.cpp serves TLS and OmniRoute calls it over `https://`, with gateway-to-OmniRoute either staying an API-key-authenticated compose-network hop or being solved upstream, or (b) the hop is accepted as plaintext with the rationale recorded. A request-path proxy in front of OmniRoute is not a candidate — it contradicts ADR-001 decision 1.
+
+**Outcome**
+
+Three tiers, one item until triage splits it:
+
+1. **Ingress.** An opt-in HTTPS delivery of the existing FastAPI process: uvicorn terminates TLS with a server leaf issued by the internal Step-CA (SAN `localhost`/`127.0.0.1`) through `scripts/pki/`, so `https://localhost:8000/health`, the dashboard, `/v1/chat`, `/auth/callback` and `wss://localhost:8000/ws/approvals` work against the trusted CA. Under that profile the plaintext listener is closed rather than kept as a second port, the session cookie is `Secure`, HSTS is emitted on real HTTPS responses, and the realm accepts the https redirect URI. TLS terminates inside the ingress process, so ADR-001's "single FastAPI ingress, no sidecar proxies" holds.
+2. **East-west.** Every hop that carries prompt text, tool output, operator identity or audit records is TLS-encrypted in the deployment the docs recommend: the IDEA-023/ADR-019 profile already covers PostgreSQL, Redis and Keycloak; this item adds OmniRoute-to-llama.cpp and gateway-to-collector, or records the accepted-plaintext decision where an upstream image cannot serve TLS, with the same server-leaf identity rule ADR-019 uses (one identity per process, SANs that match the compose service name).
+3. **Egress.** Outbound provider calls stay HTTPS with the default verifying trust store — no `verify=False`, no plain-`http://` provider URL — and a test pins the configured provider endpoints to `https://` so a local config edit cannot silently downgrade OpenRouter, Langfuse, Arize or Opik traffic.
+
+The default `docker compose up -d` stays plaintext and loopback-only, and the docs state which profile does what and which hops remain plaintext by decision.
+
+**Acceptance**
+
+- [ ] With the HTTPS profile up, `curl --cacert pki/trust/ca.crt https://localhost:8000/health` returns `200`, `curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health` does not return `200` (no plaintext listener, or a redirect to https, whichever the ADR chooses), the gateway healthcheck probes the https URL with the CA trusted so `docker compose ps` still reports healthy, and both commands are recorded in `docs/PKI.md`
+- [ ] The server leaf is issued by `scripts/pki/issue-certs.sh` (or its named successor) with SANs `localhost` and `127.0.0.1`, stored next to the existing leaves with an owner-only key and the same ignore rules, and `scripts/pki/check.sh` still passes; a missing or unreadable certificate stops gateway startup instead of falling back to plaintext
+- [ ] The `Set-Cookie` for `bastion_session` carries `Secure` on the HTTPS profile (default or profile-set `SESSION_COOKIE_SECURE=true`), a test asserts the flag on the login callback response, and `.env.example`/README no longer present `SESSION_COOKIE_SECURE=false` as the normal setting for a TLS deployment
+- [ ] A response over https carries `Strict-Transport-Security`, proven by a test that drives the ASGI app with `https` in the request URL, so the `gateway/main.py:133` branch is no longer unreachable
+- [ ] `grep -n "redirectUris" -A3 config/keycloak/realm-export.json` lists `https://localhost:8000/auth/callback`, the logout redirect URIs include `https://localhost:8000/*`, and `uv run pytest tests/test_auth_routes.py tests/test_auth_oidc.py -q` stays green
+- [ ] `/ws/approvals` completes an RFC 6455 upgrade over `wss://localhost:8000` with the CSRF subprotocol, using the same raw-upgrade check IDEA-033 recorded, and the result is captured as evidence
+- [ ] OmniRoute calls llama.cpp over TLS (`config/omniroute/config.yaml` provider URLs are `https://llama-cpp:...` with the internal CA trusted by the image, or the file carries the recorded reason it cannot) and a compose-level request from the gateway to OmniRoute is either TLS or documented as an accepted API-key-authenticated compose-network hop; `docker compose config` shows which
+- [ ] The gateway exports spans over a TLS OTLP endpoint, or `SECURITY.md`/`docs/PKI.md` name the plaintext collector hop as accepted with the reason ADR-019 decision 11 gives; the exporter config never sets `insecure: true` without that recorded decision
+- [ ] Every external provider endpoint in the tree (`config/omniroute/config.yaml`, `config/otel/`) is `https://` and a test fails if one becomes `http://`; no client path passes `verify=False` to an outbound request
+- [ ] `docker compose config` without the profile is unchanged and `docker compose up -d` still starts a plaintext loopback stack; `README.md` §Container hardening notes, `SECURITY.md` §Deployment Security and `docs/PKI.md` state which profile is HTTPS, that the browser must trust the internal CA, and that the certificate expires on the profile's lifetime
+- [ ] `docs/adr/ADR-019.md` (or a successor ADR) records TLS termination in the ingress process, the server-leaf identity, the closed plaintext port, the OmniRoute/OTLP resolution that replaces decision 11, and the honest limits (a CA on the host it protects, one hostname per process); `uv run python scripts/check_adrs.py` passes
+- [ ] `uv run pytest -q`, `ruff check .`, `ruff format --check .`, `mypy`, `pylint`, `check_backlog.py --check`, `validate_tool_catalog.py --check`, `validate_rbac.py` and `recalculate_dread.py --check` stay green
+
+**Notes**
+
+- Scope: "implement https" named no surface, so the first capture read it as the browser-facing gateway and left the rest as separate decisions. The requester resolved that on 2026-11-12: encryption between frontend and backend **as well as** against the outside world. Since the dashboard is server-rendered by the same FastAPI process (ADR-007), there is no separate frontend-to-backend hop to add; the clarification widens the item to the hops behind the gateway and to the provider egress, which are the three tiers in **Outcome**. Triage may split it per tier if one worktree cannot finish all three; the ingress tier alone is still the shippable slice, and the east-west and egress tiers must not be dropped silently when it is split.
+- Deduplication: grepped `BACKLOG.md` and `docs/adr/` for `https`, `tls`, `ssl`, `hsts`, `wss`, `reverse proxy`, `secure cookie`, `ssl-certfile`. The hits are IDEA-023/ADR-019 (east-west data plane and Keycloak back channel), IDEA-033 (WebSocket subprotocol echo, done), IDEA-022 (Falco runtime detection) and IDEA-039 (availability monitoring, which probes `http://` health endpoints). No item covers the gateway's own listener or the browser session's transport, so nothing was merged and no id was reused.
+- Classification: `P2`/`v0.5`/`infra`. Nothing stated is broken today — the gateway is loopback-only and `SECURITY.md` documents the TLS-proxy deferral — so this is new capability rather than a P0/P1 defect, and ADR-008 decision 5 freezes features inside a phase while the current phase is v0.3. No ADR-008 line names edge TLS: v0.5 "Production readiness" is the nearest home, v0.6 "edge deployment" is the alternative reading, and triage may move it. `area: infra` follows IDEA-023 because the change is compose, `scripts/pki/`, settings and docs, with `security` a fair alternative (the invariant is "operator credentials never cross plaintext") and `gateway` rejected because the app code barely moves.
+- Design constraint to settle before code: uvicorn's TLS flags keep the certificate in the same process, which preserves ADR-001 decision 1, but one process then serves one hostname and scheme — the Keycloak redirect URI, the cookie `Secure` flag and the CSRF origin check all key off the scheme, so the profile has to set them together or the login loop breaks. The alternative (a Caddy/nginx sidecar) reverses ADR-001 decision 1 and needs its own ADR; it is not assumed here.
+- `depends-on: -` deliberately: the CA, the compose profile and the leaf-issuance scripts already exist (IDEA-023 is done), so this is the same profile extended rather than work blocked on a new capability.
+- Intake only: no compose, `scripts/pki/`, code, test, `.env.example`, document or ADR change is part of this capture, and the idea was not implemented in the turn that produced it, nor in the clarification turn that widened its scope.
