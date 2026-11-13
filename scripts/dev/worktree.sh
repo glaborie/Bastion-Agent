@@ -7,9 +7,10 @@
 #
 # The worktree is created from the base with a fresh branch, the repository
 # .env is symlinked in (so compose and the test suite work without --env-file),
-# locked dependencies are installed, and the item is marked `active` with the
-# Board regenerated inside that worktree. The item therefore travels with its
-# own branch instead of dirtying the checkout you are standing in.
+# locked dependencies are installed, and the item is marked `active` in a commit
+# that is pushed before any work starts. That push is the claim: it is atomic on
+# the remote and visible to every other agent, and this script refuses an id
+# that is already claimed or not yet on the base.
 #
 # Prints the worktree path as the last line: move the session there next.
 set -euo pipefail
@@ -68,8 +69,9 @@ command -v uv >/dev/null || die "uv is not on PATH"
 git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null || die "base ref '$BASE' not found (fetch it first)"
 
 # Title comes from the item file so the branch name and the item cannot drift.
-ITEM_FILE="$(compgen -G "$ROOT/backlog/items/${ITEM_ID}-*.md" | head -n1)"
-[[ -n "$ITEM_FILE" ]] || die "$ITEM_ID has no file under backlog/items/"
+mapfile -t ITEM_FILES < <(compgen -G "$ROOT/backlog/items/${ITEM_ID}-*.md")
+[[ ${#ITEM_FILES[@]} -gt 0 ]] || die "$ITEM_ID has no file under backlog/items/"
+ITEM_FILE="${ITEM_FILES[0]}"
 TITLE="$(grep -m1 "^### ${ITEM_ID}: " "$ITEM_FILE" | sed -E "s/^### ${ITEM_ID}: //")" ||
     die "$ITEM_ID has no title line in $ITEM_FILE"
 [[ -n "$TITLE" ]] || die "$ITEM_ID has no title line"
@@ -85,6 +87,23 @@ DIR="$WORKTREE_ROOT/$BRANCH"
 git -C "$ROOT" fetch --quiet origin
 git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && die "branch $BRANCH already exists"
 [[ -e "$DIR" ]] && die "$DIR already exists"
+
+# One item, one owner. A claim is a branch named after the item, so it is
+# atomic on the remote (a second push of the same name is rejected) and visible
+# to every agent without waiting for a merge. Refuse before creating anything.
+CLAIMED="$(git -C "$ROOT" ls-remote --heads origin "refs/heads/${ITEM_ID,,}-*" | head -n1)"
+[[ -n "$CLAIMED" ]] && die "$ITEM_ID is already claimed on origin by ${CLAIMED##*/}"
+for existing in "$WORKTREE_ROOT/${ITEM_ID,,}-"*; do
+    if [[ -e "$existing" ]]; then
+        die "$ITEM_ID already has a worktree at $existing"
+    fi
+done
+
+# The claim commit and the branch have to start from an item that is on the
+# base, otherwise the worktree has no item file to mark and the board cannot
+# show the claim. Capturing is not starting: commit and merge the item first.
+git -C "$ROOT" cat-file -e "$BASE:backlog/items/$(basename "$ITEM_FILE")" 2>/dev/null ||
+    die "$ITEM_ID is not on $BASE; commit and merge the capture before starting it"
 
 mkdir -p "$WORKTREE_ROOT"
 git -C "$ROOT" worktree add --quiet -b "$BRANCH" "$DIR" "$BASE"
@@ -102,12 +121,12 @@ if [[ -f "$DIR/pyproject.toml" ]]; then
     echo "worktree: dependencies installed"
 fi
 
-# Claim the item inside the worktree so the status change travels with its
-# branch. Only the item's own file is touched, so parallel worktrees never edit
-# the same path; the rendered BACKLOG.md is generated and untracked.
+# Claim it: `status: active` becomes a commit on the branch, and the branch is
+# pushed immediately so every other agent and the GitHub UI see the claim
+# before a line of code exists. Only this item's file is touched, so parallel
+# worktrees never edit the same path.
 ITEM_FILE="$DIR/backlog/items/$(basename "$ITEM_FILE")"
-if [[ -f "$ITEM_FILE" ]]; then
-    python3 - "$ITEM_FILE" <<'PY'
+python3 - "$ITEM_FILE" <<'PY'
 import datetime as dt
 import pathlib
 import re
@@ -121,7 +140,13 @@ text = re.sub(r"^- updated: .*$", f"- updated: {today}", text, count=1, flags=re
 path.write_text(text, encoding="utf-8")
 print(f"worktree: {path.name} marked active")
 PY
-    (cd "$DIR" && uv run --no-sync python scripts/check_backlog.py --write >/dev/null)
+if ! git -C "$DIR" diff --quiet -- "$ITEM_FILE"; then
+    git -C "$DIR" add "$ITEM_FILE"
+    git -C "$DIR" commit --quiet -m "chore(backlog): claim $ITEM_ID as active"
 fi
+git -C "$DIR" push --quiet -u origin "$BRANCH" ||
+    die "could not push $BRANCH; the claim is local only, push it before working"
+echo "worktree: claimed $BRANCH on origin"
+(cd "$DIR" && uv run --no-sync python scripts/check_backlog.py --write >/dev/null)
 
 echo "$DIR"

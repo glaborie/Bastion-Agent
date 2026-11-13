@@ -28,6 +28,10 @@ If `items` is empty, print the current phase and `no ready items`, then stop.
 Take the selected item (default: `items[0]`). Announce it in one line:
 `IDEA-NNN  P?  area  title`.
 
+Before claiming, confirm nobody else has it: `--list active` covers claims that
+have merged, and `git ls-remote --heads origin 'refs/heads/idea-*'` covers the
+ones still on a branch. If it is claimed, take the next ready item instead.
+
 ## 2. Read before claiming
 
 Read the item file `backlog/items/IDEA-NNN-*.md` and every ADR named in its
@@ -45,9 +49,14 @@ implement a different task. Instead:
 
 ## 3. Claim it before touching code
 
-Set `- status: active` and `- updated: <today>` on the item file, then run
-`uv run python scripts/check_backlog.py --write`. This is what makes an
-interrupted loop safe: a claimed item never comes back from `--next`.
+The claim happened when the worktree started: `scripts/dev/worktree.sh start
+IDEA-NNN` commits `status: active` on the branch and pushes it, which is what
+stops another agent starting the same item. Verify it before working — the item
+file says `active` and `git log -1` is the `chore(backlog): claim IDEA-NNN as
+active` commit. If the worktree was created another way, make the claim
+yourself: set `status: active` and `updated`, commit, and push the branch. This
+is what makes an interrupted loop safe: a claimed item never comes back from
+`--next`, and a pushed claim is visible to every other agent.
 
 ## 4. Implement only the outcome
 

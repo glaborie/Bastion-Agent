@@ -16,6 +16,7 @@ Usage:
     uv run python scripts/check_backlog.py --write     # validate, then render BACKLOG.md
     uv run python scripts/check_backlog.py --next      # items that are ready to start
     uv run python scripts/check_backlog.py --next --json
+    uv run python scripts/check_backlog.py --list inbox   # triage: anything by status
     uv run python scripts/check_backlog.py --next-id   # the id a capture should take
     uv run python scripts/check_backlog.py --new "<title>"   # create the item file
 
@@ -516,6 +517,30 @@ def create_item(root: Path, meta: dict[str, str], items: list[Item], title: str)
     return path
 
 
+def priority_key(item: Item) -> tuple[int, str]:
+    """Sort by priority, then id; an unclassified item sorts last."""
+    rank = PRIORITIES.index(item.priority) if item.priority in PRIORITIES else len(PRIORITIES)
+    return (rank, item.id)
+
+
+def item_payload(item: Item) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "title": item.title,
+        "priority": item.priority,
+        "phase": item.phase,
+        "area": item.fields.get("area"),
+        "depends_on": item.deps,
+    }
+
+
+def format_item(item: Item) -> str:
+    deps = ", ".join(item.deps) if item.deps else "-"
+    area = item.fields.get("area", "?")
+    columns = (item.id, item.priority, item.phase, f"{area:<8}", item.title)
+    return "  ".join(columns) + f"  [deps: {deps}]"
+
+
 def ready_items(meta: dict[str, str], items: list[Item]) -> list[Item]:
     current_phase = meta.get("current-phase", "")
     by_id = {item.id: item for item in items}
@@ -530,7 +555,7 @@ def ready_items(meta: dict[str, str], items: list[Item]) -> list[Item]:
         if current_phase and item.phase > current_phase:
             continue
         ready.append(item)
-    return sorted(ready, key=lambda item: (PRIORITIES.index(item.priority), item.id))
+    return sorted(ready, key=priority_key)
 
 
 def print_summary(meta: dict[str, str], items: list[Item]) -> None:
@@ -555,12 +580,20 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--write", action="store_true", help="validate, then render BACKLOG.md")
     group.add_argument("--next", dest="list_next", action="store_true", help="list ready items")
     group.add_argument(
+        "--list",
+        metavar="STATUS",
+        choices=STATUSES,
+        help=f"list items with this status ({', '.join(STATUSES)})",
+    )
+    group.add_argument(
         "--next-id", action="store_true", help="print the id the next capture should take"
     )
     group.add_argument(
         "--new", metavar="TITLE", help="create the next item file and print its path"
     )
-    parser.add_argument("--json", action="store_true", help="machine-readable output for --next")
+    parser.add_argument(
+        "--json", action="store_true", help="machine-readable output for --next and --list"
+    )
     parser.add_argument("--quiet", action="store_true", help="suppress warnings")
     args = parser.parse_args(argv)
 
@@ -606,39 +639,33 @@ def main(argv: list[str] | None = None) -> int:
     for error in errors:
         print(f"error: {error}", file=sys.stderr)
 
-    if args.list_next:
+    if args.list_next or args.list:
         if errors:
-            print("error: fix validation errors before asking for ready work", file=sys.stderr)
+            print("error: fix validation errors before listing items", file=sys.stderr)
             return 1
-        ready = ready_items(meta, items)
+        if args.list_next:
+            listed = ready_items(meta, items)
+            label = "ready"
+        else:
+            listed = sorted((item for item in items if item.status == args.list), key=priority_key)
+            label = args.list
         if args.json:
             print(
                 json.dumps(
                     {
-                        "phase": meta.get("current-phase"),
-                        "items": [
-                            {
-                                "id": item.id,
-                                "title": item.title,
-                                "priority": item.priority,
-                                "phase": item.phase,
-                                "area": item.fields.get("area"),
-                                "depends_on": item.deps,
-                            }
-                            for item in ready
-                        ],
+                        ("phase" if args.list_next else "status"): (
+                            meta.get("current-phase") if args.list_next else label
+                        ),
+                        "items": [item_payload(item) for item in listed],
                     },
                     indent=2,
                 )
             )
         else:
-            if not ready:
-                print("no ready items")
-            for item in ready:
-                deps = ", ".join(item.deps) if item.deps else "-"
-                area = item.fields.get("area", "?")
-                columns = (item.id, item.priority, item.phase, f"{area:<8}", item.title)
-                print("  ".join(columns) + f"  [deps: {deps}]")
+            if not listed:
+                print(f"no {label} items")
+            for item in listed:
+                print(format_item(item))
         return 0
 
     if errors:
