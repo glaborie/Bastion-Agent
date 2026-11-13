@@ -14,6 +14,7 @@ from redis.asyncio import Redis
 from gateway.auth.oidc import (
     OIDCTokenClient,
     Principal,
+    TokenSet,
     TokenValidationError,
     TokenValidator,
 )
@@ -245,6 +246,38 @@ async def test_logout_deletes_the_session_and_requires_csrf(harness: Any) -> Non
     assert replay.status_code == 200
     assert "Signed out" in replay.text
     assert 'http-equiv="refresh"' not in replay.text
+
+
+async def test_logout_revokes_the_operator_s_other_sessions(harness: Any) -> None:
+    login = await harness["client"].get("/auth/login")
+    state = urllib.parse.parse_qs(urllib.parse.urlsplit(login.headers["location"]).query)["state"][
+        0
+    ]
+    await harness["client"].get("/auth/callback", params={"code": "good-code", "state": state})
+    session_id = harness["client"].cookies.get("bastion_session")
+    raw = await harness["redis"].get(SESSION_KEY_PREFIX + session_id)
+    csrf = json.loads(raw)["csrf_token"]
+
+    # A second sign-in replaces the shared cookie but leaves the first session
+    # live for its full TTL; the operator's "Sign out" has to end both.
+    other = await harness["manager"].create(
+        TokenSet(
+            access_token="access-2",
+            token_type="Bearer",
+            expires_in=300,
+            refresh_token="refresh-2",
+            id_token="id-2",
+        )
+    )
+    assert other.session_id != session_id
+
+    response = await harness["client"].post(
+        "/auth/logout", headers={"X-CSRF-Token": csrf, "Origin": "null"}
+    )
+
+    assert response.status_code == 303
+    assert await harness["redis"].exists(SESSION_KEY_PREFIX + session_id) == 0
+    assert await harness["redis"].exists(SESSION_KEY_PREFIX + other.session_id) == 0
 
 
 async def test_login_forces_credentials_while_a_logout_is_in_flight(harness: Any) -> None:

@@ -4,6 +4,29 @@ Symptoms that cost real time before they were diagnosed. Add to this file when a
 failure takes more than a few minutes to explain; a note here is cheaper than
 re-deriving it in the next session.
 
+## The gateway logs `CSRF check failed` and a form does nothing
+
+**Symptom.** `{"logger": "gateway.auth.rbac", "message": "CSRF check failed",
+"subject": "…", "path": "…", "token_presented": true}` after a sign-in, and the
+click that produced it answers `403 CSRF token missing or invalid` (an htmx
+caller now receives `HX-Redirect: /dashboard` instead and reloads).
+
+**Cause.** `token_presented: true` with the right subject is a stale document:
+CSRF tokens are per session, a sign-in replaces the single `bastion_session`
+cookie, and a tab rendered before that re-login keeps the old token while the
+browser sends the new cookie. `token_presented: false` is a client that never
+sent one — a script with a session cookie, which is meant to be refused.
+
+**Fix.** Reload the tab; the page re-renders with the current session's token.
+Sign-out now revokes every session of the operator (`delete_all_for_subject`),
+so a second browser cannot outlive it, but sessions created before this change
+still expire only by TTL. List what is tracked:
+
+```bash
+docker compose exec redis sh -c \
+  'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "auth:subject-sessions:*"'
+```
+
 ## Host processes get `Connection reset by peer` from Postgres or Redis
 
 **Symptom.** After a `docker compose restart`, a `docker compose up -d` or a

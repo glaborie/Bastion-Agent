@@ -17,9 +17,10 @@ import asyncio
 import json
 import logging
 import secrets
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from redis.asyncio import Redis
 
@@ -36,6 +37,10 @@ from gateway.auth.roles import normalise_roles
 logger = logging.getLogger(__name__)
 
 SESSION_KEY_PREFIX: Final[str] = "auth:session:"
+#: Set of live session ids per subject, so sign-out can revoke the sessions a
+#: replaced cookie no longer reaches. Membership is advisory: a session id is
+#: only a session if its own key still exists.
+SUBJECT_SESSIONS_KEY_PREFIX: Final[str] = "auth:subject-sessions:"
 LOGIN_STATE_KEY_PREFIX: Final[str] = "auth:oidc-state:"
 #: One-time hand-off of the Keycloak end-session URL from POST /auth/logout to
 #: the GET landing page (PRG), so the old dashboard document is unloaded before
@@ -265,7 +270,34 @@ class SessionManager:
 
     async def delete(self, session_id: str) -> None:
         if session_id:
-            await self._redis.delete(SESSION_KEY_PREFIX + session_id)
+            key = SESSION_KEY_PREFIX + session_id
+            subject = _indexed_subject(await self._redis.get(key))
+            await cast(Awaitable[int], self._redis.delete(key))
+            if subject is not None:
+                await cast(
+                    Awaitable[int],
+                    self._redis.srem(SUBJECT_SESSIONS_KEY_PREFIX + subject, session_id),
+                )
+
+    async def delete_all_for_subject(self, subject: str) -> int:
+        """Revoke every live session of one subject; return how many were live.
+
+        Sign-in replaces the shared cookie without retiring the session it used
+        to point at, so sessions accumulate for a subject. Sign-out is where the
+        operator expects them all to end. The per-subject set is the only index;
+        an id whose session key has expired is deleted as a no-op and pruned
+        with the rest of the set.
+        """
+        if not subject:
+            return 0
+        index = SUBJECT_SESSIONS_KEY_PREFIX + subject
+        # redis-py types an unparameterised client's coroutine methods as
+        # ``T | Awaitable[T]``; the Redis client here is always async.
+        members = await cast(Awaitable[set[str]], self._redis.smembers(index))
+        keys = [SESSION_KEY_PREFIX + str(member) for member in members]
+        deleted = int(await cast(Awaitable[int], self._redis.delete(*keys))) if keys else 0
+        await self._redis.delete(index)
+        return deleted
 
     async def _save(self, record: SessionRecord) -> None:
         await self._redis.set(
@@ -273,6 +305,11 @@ class SessionManager:
             record.to_json(),
             ex=self._ttl,
         )
+        index = SUBJECT_SESSIONS_KEY_PREFIX + record.principal.subject
+        async with self._redis.pipeline(transaction=False) as pipe:
+            pipe.sadd(index, record.session_id)
+            pipe.expire(index, self._ttl)
+            await pipe.execute()
 
     # -- login state ------------------------------------------------------
     async def store_login_state(self, state: str, value: LoginState) -> None:
@@ -348,6 +385,18 @@ def safe_next_path(value: str | None, *, default: str = "/dashboard") -> str:
     if "://" in candidate:
         return default
     return candidate
+
+
+def _indexed_subject(payload: str | None) -> str | None:
+    """Best-effort subject of a stored session record, for index cleanup."""
+    if not payload:
+        return None
+    try:
+        principal = json.loads(payload)["principal"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    subject = principal.get("subject") if isinstance(principal, dict) else None
+    return subject if isinstance(subject, str) and subject else None
 
 
 def _require_str(raw: dict[str, Any], key: str) -> str:

@@ -257,6 +257,24 @@ async def test_the_theme_form_requires_csrf(
     assert response.status_code == 204
 
 
+async def test_a_stale_htmx_form_is_told_to_reload(
+    client: tuple[httpx.AsyncClient, dict[str, Any]],
+) -> None:
+    """A document older than a re-login: 403, and htmx reloads the page."""
+    http, _state = client
+
+    # htmx would otherwise swap the 403 error page into the target element and
+    # leave every later click on the same stale form failing.
+    response = await http.post(
+        "/dashboard/theme",
+        data={"theme": "dark", "csrf_token": "token-from-a-replaced-session"},
+        headers={"HX-Request": "true"},
+    )
+
+    assert response.status_code == 403
+    assert response.headers["HX-Redirect"] == "/dashboard"
+
+
 async def test_a_principal_without_dashboard_access_cannot_set_a_theme(
     client: tuple[httpx.AsyncClient, dict[str, Any]],
 ) -> None:
