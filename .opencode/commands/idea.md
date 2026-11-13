@@ -1,15 +1,17 @@
 ---
-description: Capture an idea in BACKLOG.md without implementing it
+description: Capture an idea as a new backlog item file without implementing it
 agent: backlog
 subagent: true
 ---
 
-Capture this idea in `BACKLOG.md` following the `backlog-intake` skill:
+Capture this idea as a new item under `backlog/items/` following the
+`backlog-intake` skill:
 
 $ARGUMENTS
 
-Load the `backlog-intake` skill first. Deduplicate before writing, append exactly
-one item with the next free IDEA-NNN id, classify it, then run
-`uv run python scripts/check_backlog.py --write` and report the id,
-classification, duplicate handling and validator result. Do not implement the
-idea and do not touch any file except `BACKLOG.md`.
+Load the `backlog-intake` skill first. Deduplicate before writing, then create
+exactly one item with `uv run python scripts/check_backlog.py --new "<title>"`
+(which allocates the next free IDEA-NNN id), fill it in, classify it, and run
+`uv run python scripts/check_backlog.py --check`. Report the id, classification,
+duplicate handling and validator result. Do not implement the idea, and do not
+touch any file except the new item file.
