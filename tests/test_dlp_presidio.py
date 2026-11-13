@@ -228,6 +228,33 @@ def test_overlapping_results_prefer_the_highest_score() -> None:
     assert [result.entity_type for result in selected] == ["EMAIL_ADDRESS"]
 
 
+@pytest.mark.parametrize(
+    ("long_score", "short_score", "expected_type"),
+    [(0.8, 0.85, "PERSON"), (0.95, 0.6, "ADDRESS")],
+)
+def test_same_start_spans_merge_into_the_longer_one(
+    long_score: float, short_score: float, expected_type: str
+) -> None:
+    """IDEA-046: the longer span survives whether or not it scores higher."""
+    short = RecognizerResult(entity_type="PERSON", start=15, end=43, score=short_score)
+    long = RecognizerResult(entity_type="ADDRESS", start=15, end=59, score=long_score)
+    selected = _select_non_overlapping([short, long], text_length=59)
+    assert [(result.entity_type, result.start, result.end) for result in selected] == [
+        (expected_type, 15, 59)
+    ]
+
+
+async def test_name_running_into_an_address_leaves_no_uncovered_tail(
+    dlp: tuple[PresidioDLP, TokenVault, FakeAsyncRedis],
+) -> None:
+    """IDEA-046: ``PERSON`` and ``ADDRESS`` start together on a Swiss record."""
+    engine, _vault, _redis = dlp
+    text = "Please ship to Alice Mueller Bahnhofstrasse 12, 8001 Zurich today"
+    result = await engine.redact(text, "session-address-tail", tenant_id="acme")
+    assert "8001" not in result.text
+    assert await engine.restore(result.text, "session-address-tail", tenant_id="acme") == text
+
+
 def test_results_outside_the_text_are_ignored() -> None:
     valid = RecognizerResult(entity_type="PERSON", start=0, end=5, score=0.8)
     invalid = RecognizerResult(entity_type="EMAIL_ADDRESS", start=4, end=99, score=0.9)
