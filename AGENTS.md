@@ -1,62 +1,53 @@
-# AGENTS.md — Implementation Instructions for OpenCode (DeepSeek V4)
+# AGENTS.md — Working Instructions for OpenCode
 
-## Role & Mission
-You are the Lead Systems Architect and Core Implementation Agent for **Bastion-Agent**.
-Your task is to build out the entire repository from scratch according to `HANDOVER_SPEC.md`.
+## What this repository is
+
+Bastion-Agent is a maintained control plane, not a scaffold. The build plan in
+`HANDOVER_SPEC.md` is delivered and every guardrail it names has tests, so do not
+rebuild an existing component and do not restate a decision `docs/adr/` already
+records. Change one thing at a time, through the backlog, and prove it with the
+gate.
+
+Where things live: `HANDOVER_SPEC.md` is the design, `docs/adr/` the decisions,
+`backlog/items/` the work queue, `THREAT_MODEL.md` and `COMPLIANCE.md` the claims
+the policy checks enforce, `docs/TROUBLESHOOTING.md` the local failure modes.
 
 ## Technology Stack & Constraints
+
 - **Python**: 3.11+ using `uv` for package management (`pyproject.toml`).
 - **Frameworks**: FastAPI, ARQ (asyncio Redis worker), SQLAlchemy 2.0 (asyncpg), Pydantic v2.
 - **Security & DLP**: Microsoft Presidio (`presidio-analyzer`, `presidio-anonymizer`), `cryptography` (AES-256-GCM), `onnxruntime` for distilled local classification.
 - **Inference & Routing**: OmniRoute client (OpenAI-compatible) routing to local `llama.cpp` container (RTX 3060 Ti CUDA) or OpenRouter API.
 - **Observability**: OpenTelemetry Python SDK exporting to `otel-collector-contrib` (dispatches to Langfuse/Arize).
 - **Evaluation**: DeepEval (`deepeval`) + Pytest for deterministic golden dataset gating (zero-tolerance threshold).
-- **Containerization**: `docker-compose.yml` defining `gateway`, `worker`, `db` (Postgres 16), `redis` (Redis 7), `keycloak`, `omniroute`, `llama-cpp`, and `otel-collector`.
+- **Containerization**: `docker-compose.yml` with 14 services — `gateway`, `worker`, `db` (Postgres 16), `pgadmin`, `redis` (Redis 7), `redis-ui`, `keycloak`, `omniroute`, `llama-cpp`, `otel-collector`, `minio` and `minio-init` (the audit witness), `trivy-scan`, `falco` — plus the `docker-compose.gpu.yml` and `docker-compose.pki.yml` overlays. `pgadmin`, `redis-ui` and the witness/scanner sit behind profiles, so the default stack stays small.
 
-## Milestones & Execution Plan
+## What moves with a change
 
-### Milestone 1: Project Scaffold, Compose & DB Models
-1. Initialize `pyproject.toml` with `uv` dependencies.
-2. Create `docker-compose.yml` and `.env.example` defining all 8 services and volumes.
-3. Write `db/models.py` with `AuditLog` (SHA-256 hash chaining) and `PendingApproval`.
-4. Create async database connection manager in `db/session.py`.
+Each row is a merge-blocking check in `scripts/gate.sh`: a change that lands
+without its document fails CI, not review.
 
-### Milestone 2: Auth, RBAC & Command Control Dashboard
-1. Implement `gateway/auth/oidc.py` (JWKS caching, JWT RS256 validation) and `gateway/auth/rbac.py` (`require_roles`).
-2. Provide a pre-seeded Keycloak realm configuration (`config/keycloak/realm-export.json`).
-3. Build the HTMX Command Control dashboard in `gateway/dashboard/` with `/dashboard`, polling `/api/approvals`, and four-eyes enforcement UI.
-
-### Milestone 3: Two-Stage DLP & Reversible Token Vault
-1. Implement `agent/dlp/vault.py` managing AES-256-GCM encrypted Redis mappings (`{{ENTITY:TYPE_INDEX}}` <-> plaintext) with 30-min TTL.
-2. Implement `agent/dlp/presidio.py` wrapping Presidio Analyzer & Anonymizer with reversible replacement.
-3. Implement `agent/routing/classifier.py` using ONNX Runtime (or semantic rule classifier fallback) to tag prompts as `CONFIDENTIAL` vs `PUBLIC`.
-4. Implement `agent/routing/client.py` routing requests to OmniRoute with appropriate model alias (`local-llama` vs `cloud-primary`).
-
-### Milestone 4: Tool Guard, Four-Eyes HITL & ARQ Worker
-1. Implement `agent/tools/decorator.py` defining `@tool(name, read_only, required_role)`.
-2. Implement built-in tools in `agent/tools/builtin.py` (e.g. read_system_status, execute_file_write).
-3. Implement `agent/runtime.py` ARQ worker:
-   - Evaluates caller role against tool requirement.
-   - If `read_only=False`: suspends execution, inserts `PendingApproval`, returns ticket.
-   - On approval callback: verifies `approver_id != initiator_id`, resumes execution.
-
-### Milestone 5: Egress Sanitizer, Canary Tripwires & Audit Logger
-1. Implement `agent/egress/sanitizer.py`:
-   - Injects session-unique `BASTION-CANARY-<uuid>` into system prompts.
-   - Wraps external/tool outputs in `<untrusted_content>` isolation boundaries.
-   - Scans output for canary string; trips circuit breaker if leaked.
-   - Restores reversible entity tokens for authorized recipient.
-2. Wire synchronous audit logging into every step of the request lifecycle.
-
-### Milestone 6: Golden Dataset & DeepEval Test Harness
-1. Populate `tests/data/goldens.jsonl` with 25+ synthetic benchmark test cases (PII variants, corporate confidential prompts, prompt extraction/canaries, jailbreak probes).
-2. Implement `tests/test_dlp_evals.py` using DeepEval metrics (`DLPRedactionMetric`, `EgressCanaryMetric`) asserting score == 1.0.
-3. Ensure `pytest` passes cleanly.
+| Change | Must move with it |
+|---|---|
+| A tool or its role | `docs/tools/v1.json`, `config/keycloak/realm-export.json` — `validate_tool_catalog.py`, `validate_rbac.py` |
+| A control or a threat | `THREAT_MODEL.md` — `check_threat_model.py`, `recalculate_dread.py` |
+| A decision | the ADR that records it, new or superseding — `check_adrs.py`, the `adr` skill |
+| A service, image pin or scanner | `docker-compose.yml`, `trivy.yaml`, `COMPLIANCE.md` (ADR-016) |
+| DLP, routing or egress behaviour | the golden corpus and eval gates — the `dlp-invariants` skill, `scripts/run_evals.py` |
+| A backlog item | its own file under `backlog/items/` — `check_backlog.py` |
 
 ## Quality Standards
-- Strict type hints (`mypy` compatible).
+
+- Strict type hints: `mypy strict` is set in `pyproject.toml`.
 - Clean logging with structured context.
-- Zero mock shortcuts in core security validation—every guardrail must be active and tested.
+- Zero mock shortcuts in core security validation — every guardrail must be active and tested. The enforceable form of this rule is the gate.
+
+## Entry points
+
+- `/next` works one ready item end to end; `/idea <text>` captures one without
+  implementing it; `/gate` runs the gates; `/handoff` summarises the session.
+- Skills: `adr`, `backlog-intake`, `dlp-invariants`, `stack`, `secrets`,
+  `fake-name-generator-ch`.
 
 ## Backlog & Idea Intake
 
