@@ -35,6 +35,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
       evals: ${{ steps.filter.outputs.evals }}
+      osv: ${{ steps.filter.outputs.osv }}
       scan: ${{ steps.filter.outputs.scan }}
       tests: ${{ steps.filter.outputs.tests }}
     steps:
@@ -48,14 +49,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            printf 'docs_only=false\nevals=true\nscan=true\ntests=true\n' >> "$GITHUB_OUTPUT"
+            printf 'docs_only=false\nevals=true\nosv=true\nscan=true\ntests=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           # The rules live in scripts/ci_classify_changes.sh so a test can hold
           # them; this step only fetches and pipes the diff into it.
           git fetch --no-tags --quiet origin "${{ github.base_ref }}"
-          git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD \
+          git diff --no-renames --name-only --diff-filter=ACDMT FETCH_HEAD...HEAD \
             | ./scripts/ci_classify_changes.sh >> "$GITHUB_OUTPUT"
 
   quality:
@@ -130,7 +131,7 @@ jobs:
           uv run --no-sync python scripts/check_threat_model.py --check
 
   tests:
-    name: Tests (Python ${{ matrix.python-version }}, PostgreSQL 16)
+    name: Tests (Python ${{ matrix.python-version }}, shard ${{ matrix.shard }}/2)
     needs: changes
     if: github.event_name != 'schedule' && needs.changes.outputs.tests == 'true'
     runs-on: ubuntu-latest
@@ -139,6 +140,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11"]
+        shard: [1, 2]
     services:
       postgres:
         image: postgres:16-alpine
@@ -219,7 +221,7 @@ jobs:
             { docker logs audit-witness; exit 1; }
 
       - name: Run tests
-        run: uv run --no-sync pytest -ra --junitxml=pytest-report.xml
+        run: uv run --no-sync python -m pytest -p scripts.pytest_ci_shard --ci-shard=${{ matrix.shard }}/2 -ra --durations=10 --junitxml=pytest-report.xml
 
       # Database and Redis tests skip silently when their URLs are missing. This job runs
       # with both, so the only acceptable skips are the ones below -- an external service
@@ -337,8 +339,7 @@ jobs:
   supply-chain:
     name: Supply chain (OSV + image SBOM)
     needs: changes
-    # The OSV audit reads uv.lock; a documentation-only diff cannot move it.
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.osv == 'true' || needs.changes.outputs.scan == 'true'
     runs-on: ubuntu-latest
     # A full scan saves every image, including the CUDA llama.cpp image, so the
     # job is disk- and network-heavy. See ADR-016 for the cadence trade-off.
@@ -358,10 +359,11 @@ jobs:
 
       # Exit 1: unignored advisories. Exit 2: the audit could not run.
       - name: Audit uv.lock against OSV
+        if: needs.changes.outputs.osv == 'true'
         run: uv run --no-sync python scripts/update_threat_intel.py
 
       - name: Upload advisory report
-        if: always()
+        if: always() && needs.changes.outputs.osv == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: threat-intel-report
