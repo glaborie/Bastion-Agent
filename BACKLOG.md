@@ -31,17 +31,17 @@ must not be edited by hand.
 - `IDEA-039` P2 v0.5 infra - Run Uptime Kuma as a profile-gated sidecar that watches container health
 - `IDEA-040` P2 v0.5 infra - Encrypt every hop: browser to gateway, gateway to services, egress to providers
 
-### Ready (0)
+### Ready (1)
 
-_none_
+- `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
 
 ### Active (0)
 
 _none_
 
-### Blocked (1)
+### Blocked (0)
 
-- `IDEA-004` P2 v0.3 db - Export the audit ledger asynchronously for retention (waiting on IDEA-001)
+_none_
 
 ### Done (27)
 
@@ -84,7 +84,7 @@ _Phase gate: v0.3 - items at or below it may start; later phases stay parked._
 | IDEA-001 | done | P2 | v0.3 | agent | Tenant isolation for Redis keys and Postgres rows |
 | IDEA-002 | done | P1 | v0.3 | gateway | Push approval decisions over WebSocket instead of 3 s polling |
 | IDEA-003 | done | P1 | v0.2 | agent | Route the ONNX ensemble to GPU to meet the 50 ms classify budget |
-| IDEA-004 | blocked | P2 | v0.3 | db | Export the audit ledger asynchronously for retention |
+| IDEA-004 | ready | P2 | v0.3 | db | Export the audit ledger asynchronously for retention |
 | IDEA-005 | done | P1 | v0.2 | security | Reject canary prefixes shorter than eight characters at startup |
 | IDEA-006 | done | P3 | v0.2 | docs | Add a deterministic egress canary demo |
 | IDEA-007 | done | P1 | v0.2 | agent | Route corporate-confidential documents without explicit markers to the local model |
@@ -244,13 +244,12 @@ GPU is present.
 
 ### IDEA-004: Export the audit ledger asynchronously for retention
 
-- status: blocked
+- status: ready
 - priority: P2
 - phase: v0.3
 - area: db
 - tags: audit, export, compliance, retention
 - depends-on: IDEA-001
-- blocked-by: tenant scoping decides the partition key of the export
 - spec: ADR-008
 - created: 2026-11-09
 - updated: 2026-11-09
