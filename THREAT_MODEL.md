@@ -83,24 +83,29 @@ Two facts shape the model:
 
 | Control | Status | Where |
 |---|---|---|
-| OIDC JWT validation, declarative RBAC, CSRF for sessions | LIVE | `gateway/auth/` |
-| Two-stage DLP, reversible AES-256-GCM vault | LIVE | `agent/dlp/` |
-| Classifier ensemble, fail-closed to CONFIDENTIAL | LIVE (needs ONNX graphs) | `agent/routing/classifier.py` |
-| Canary tripwire, quarantine, untrusted-content fencing | LIVE | `agent/egress/sanitizer.py` |
-| Hash-chained audit ledger and verification | LIVE | `db/audit.py`, `/api/audit/verify` |
-| Four-eyes approval state machine | LIVE | `agent/tools/execution.py` |
-| Tool catalog allow-list (`docs/tools/v1.json`) | LIVE | runtime filtering, startup drift check, `-32003` |
-| Dependency audit against OSV and Trivy image scan with SBOM | LIVE | `supply-chain` job, ADR-016 |
+| OIDC JWT validation, declarative RBAC, CSRF for sessions | LIVE | `gateway/auth/`, `tests/test_auth_oidc.py`, `tests/test_rbac.py` |
+| Two-stage DLP, reversible AES-256-GCM vault | LIVE | `agent/dlp/`, `tests/test_dlp_presidio.py`, `tests/test_dlp_evals.py` |
+| Classifier ensemble, fail-closed to CONFIDENTIAL | LIVE (needs ONNX graphs) | `agent/routing/classifier.py`, `tests/test_classifier.py` |
+| Canary tripwire, quarantine, untrusted-content fencing | LIVE | `agent/egress/sanitizer.py`, `tests/test_egress_sanitizer.py`, `tests/test_egress_evals.py` |
+| Hash-chained audit ledger and verification | LIVE | `db/audit.py`, `gateway/routers/audit.py`, `tests/test_audit_chain.py` |
+| Four-eyes approval state machine | LIVE | `agent/tools/execution.py`, `tests/test_tool_execution.py` |
+| Tool catalog allow-list (`docs/tools/v1.json`) | LIVE | `agent/tools/catalog.py`, `agent/tools/decorator.py`, `tests/test_tool_catalog.py`, `-32003` |
+| Dependency audit against OSV and Trivy image scan with SBOM | LIVE | `.github/workflows/ci.yml`, `tests/test_compliance_scan.py`, ADR-016 |
 | Runtime syscall detection (Falco, opt-in `security` profile) | PARTIAL | `config/falco/`, ADR-017 |
-| Test and eval gate in CI | PLANNED | CI runs pylint with `--exit-zero` only |
+| Test and eval gate in CI | LIVE | `.github/workflows/ci.yml`, `tests/test_dlp_evals.py`, `tests/test_egress_evals.py` |
 | Kill-switch tiers | PLANNED | ADR-009 only |
-| Per-principal request rate limits (`dashboard` 60/min, `chat` 120/min) | LIVE | `gateway/rate_limit.py`, ADR-013 |
-| Runtime syscall detection (Falco, opt-in `security` profile) | PARTIAL | `config/falco/`, ADR-017 |
+| Per-principal request rate limits (`dashboard` 60/min, `chat` 120/min) | LIVE | `gateway/rate_limit.py`, `tests/test_rate_limit.py`, ADR-013 |
 | Per-principal token and cost budgets | PLANNED | none found |
-| Signed job payloads for every identity-bearing enqueue (`execute_tool_job`, `run_demo_scenario_job`, `resume_tool_job`) | LIVE (host key access is still admin) | `agent/job_auth.py`, `agent/runtime.py`, ADR-018 |
-| East-west mTLS for PostgreSQL, Redis and Keycloak (opt-in `pki` profile) | LIVE (profile-scoped; host root still wins) | `docker-compose.pki.yml`, `docs/PKI.md`, ADR-019 |
-| External anchoring of the audit chain (opt-in `compliance` profile) | LIVE (profile-scoped; not off-host) | `db/witness.py`, `scripts/write_audit_witness.py`, ADR-005 |
+| Signed job payloads for every identity-bearing enqueue (`execute_tool_job`, `run_demo_scenario_job`, `resume_tool_job`) | LIVE (host key access is still admin) | `agent/job_auth.py`, `agent/runtime.py`, `tests/test_job_auth.py`, ADR-018 |
+| East-west mTLS for PostgreSQL, Redis and Keycloak (opt-in `pki` profile) | LIVE (profile-scoped; host root still wins) | `docker-compose.pki.yml`, `docs/PKI.md`, `tests/test_db_tls.py`, ADR-019 |
+| External anchoring of the audit chain (opt-in `compliance` profile) | LIVE (profile-scoped; not off-host) | `db/witness.py`, `scripts/write_audit_witness.py`, `tests/test_audit_witness.py`, ADR-005 |
 | Langfuse and Phoenix exporters | PLANNED | collector ships with the `debug` exporter |
+
+Keeping this table green is mechanical: `uv run python scripts/check_threat_model.py --check`
+runs in the CI `quality` job and in `scripts/gate.sh`. Duplicate control names fail, every
+path in `backticks` must exist, a LIVE row must name at least one existing `tests/` file, and
+a PLANNED row must not name a path that already exists — so a shipped control cannot stay
+PLANNED once its implementing path is written down.
 
 Runtime detection is the only control in this table that is not started by the default
 `docker compose up`: Falco runs privileged, so it is opt-in and confined to the `security`

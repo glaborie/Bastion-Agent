@@ -73,6 +73,7 @@ uv run python scripts/check_adrs.py
 uv run python scripts/validate_tool_catalog.py --check
 uv run python scripts/validate_rbac.py
 uv run python scripts/recalculate_dread.py --check
+uv run python scripts/check_threat_model.py --check
 uv run python scripts/check_backlog.py --check
 ```
 

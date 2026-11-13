@@ -753,6 +753,7 @@ check runs at startup.
 | `scripts/seed_demo_approval.py` | Seed a suspended ticket without a worker |
 | `scripts/omniroute_bootstrap.py` | Register OmniRoute provider aliases and the gateway key |
 | `scripts/check_adrs.py` | Validate the ADR set and index |
+| `scripts/check_threat_model.py` | Fail when the `THREAT_MODEL.md` control table drifts from the tree |
 
 The validators are deterministic and offline; run them in CI before deployment.
 `verify_audit_chain.py` needs a reachable database and is therefore a
@@ -856,6 +857,7 @@ uv run python scripts/run_evals.py
 uv run python scripts/validate_tool_catalog.py --check
 uv run python scripts/validate_rbac.py
 uv run python scripts/recalculate_dread.py --check
+uv run python scripts/check_threat_model.py --check
 uv run pytest -m "not integration"   # unit tests (no database required)
 ```
 
