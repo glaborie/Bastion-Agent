@@ -1,0 +1,85 @@
+# =============================================================================
+# Vault overlay - Bastion-Agent
+# -----------------------------------------------------------------------------
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.vault.yml up -d
+#
+# This file ADDS a HashiCorp Vault service + a one-shot bootstrap container.
+# It does NOT modify any existing service: the existing docker-compose.yml
+# stays byte-for-byte identical, so this is a pure additive overlay.
+#
+# Secrets flow (hybrid, dev):
+#   1. vault-bootstrap seeds Vault with randomised dev secrets.
+#   2. Run `make vault-export` to materialise infra creds into a gitignored
+#      .env.vault file (replaces the hand-typed .env).
+#   3. App services (gateway/worker/omniroute) read JWT/HMAC/OAuth/API secrets
+#      from Vault at runtime via VAULT_ADDR + VAULT_TOKEN.
+#
+# Production: swap the dev token for AppRole/K8s auth, use a real cert, and
+# point the raft cluster at multiple nodes. See README-Vault.md.
+# =============================================================================
+
+services:
+  vault:
+    build:
+      context: .
+      dockerfile: vault/Dockerfile
+    container_name: bastion-vault
+    user: vault               # non-root; the image entrypoint then skips su-exec (needs CAP_SETGID)
+    command: server -config=/etc/vault.d/config.hcl
+    environment:
+      VAULT_ADDR: https://vault:8200
+      VAULT_TOKEN: dev-root-token-bastion
+      VAULT_SKIP_VERIFY: "true"   # self-signed dev cert
+      SKIP_SETCAP: "1"            # runtime setcap needs CAP_SETFCAP (cap_drop removes it); IPC_LOCK comes from cap_add
+    cap_add:
+      - IPC_LOCK          # prevent memory swapping
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    volumes:
+      - vault-data:/vault/data
+    ports:
+      - 127.0.0.1:8200:8200
+    healthcheck:
+      # Sealed but reachable counts as alive: `vault status` exits 2 when sealed,
+      # 1 when it cannot reach the API. Bootstrap needs this to run at all.
+      test: ["CMD-SHELL", "vault status >/dev/null 2>&1; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 2 ]"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - bastion-net
+
+  vault-bootstrap:
+    build:
+      context: .
+      dockerfile: vault/Dockerfile
+    container_name: bastion-vault-bootstrap
+    user: vault               # owns /vault/data, where the dev unseal key is written
+    depends_on:
+      vault:
+        condition: service_healthy
+    environment:
+      VAULT_ADDR: https://vault:8200
+      VAULT_TOKEN: dev-root-token-bastion
+    volumes:
+      - vault-data:/vault/data          # rw: bootstrap stores the unseal key here
+      - ./vault:/opt/vault:ro
+    entrypoint: ["python3", "/opt/vault/bootstrap.py"]
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - bastion-net
+
+volumes:
+  vault-data:
