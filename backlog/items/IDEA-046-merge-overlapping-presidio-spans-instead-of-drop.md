@@ -1,6 +1,6 @@
 ### IDEA-046: Merge overlapping Presidio spans instead of dropping the longer one
 
-- status: ready
+- status: done
 - priority: P0
 - phase: v0.3
 - area: agent
@@ -29,6 +29,6 @@ Every character of a detected entity is replaced, and the recorded types match w
 
 **Acceptance**
 
-- [ ] A test asserts `"8001" not in redact("Please ship to Alice Mueller Bahnhofstrasse 12, 8001 Zurich today").text`
-- [ ] A test covers two overlapping spans with the same start and opposite score/length ordering
-- [ ] The `_select_non_overlapping` docstring matches the behaviour
+- [x] A test asserts `"8001" not in redact("Please ship to Alice Mueller Bahnhofstrasse 12, 8001 Zurich today").text`
+- [x] A test covers two overlapping spans with the same start and opposite score/length ordering
+- [x] The `_select_non_overlapping` docstring matches the behaviour

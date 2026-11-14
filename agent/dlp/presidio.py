@@ -492,15 +492,29 @@ class PresidioDLP:
 def _select_non_overlapping(
     results: Sequence[RecognizerResult], *, text_length: int
 ) -> list[RecognizerResult]:
-    """Keep the highest-scoring, longest span when Presidio results overlap."""
+    """Merge overlapping spans so no detected character is left uncovered.
+
+    A result that starts inside the previous span extends it instead of being
+    dropped, and the merged span carries the highest-scoring contributor's
+    entity type and score, so the recorded type describes what was removed.
+    """
     valid = [result for result in results if 0 <= result.start < result.end <= text_length]
     ordered = sorted(valid, key=lambda result: (result.start, -result.score, -result.end))
+    from presidio_analyzer import RecognizerResult
+
     selected: list[RecognizerResult] = []
-    last_end = 0
     for result in ordered:
-        if result.start >= last_end:
+        previous = selected[-1] if selected else None
+        if previous is None or result.start >= previous.end:
             selected.append(result)
-            last_end = result.end
+            continue
+        winner = previous if previous.score >= result.score else result
+        selected[-1] = RecognizerResult(
+            entity_type=winner.entity_type,
+            start=previous.start,
+            end=max(previous.end, result.end),
+            score=winner.score,
+        )
     return selected
 
 
