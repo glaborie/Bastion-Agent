@@ -11,6 +11,7 @@
 # generated per host by scripts/pki/bootstrap.sh and must never be committed.
 pki/
 secrets/
+vault/certs/
 
 # --- Python ------------------------------------------------------------------
 __pycache__/
