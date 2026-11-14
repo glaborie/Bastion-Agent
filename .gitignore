@@ -11,6 +11,11 @@
 # generated per host by scripts/pki/bootstrap.sh and must never be committed.
 pki/
 secrets/
+vault/certs/
+
+# --- Vault overlay TLS material ----------------------------------------------
+# Self-signed dev cert/key, generated per host; never committed.
+vault/certs/
 
 # --- Python ------------------------------------------------------------------
 __pycache__/
