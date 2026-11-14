@@ -12,6 +12,10 @@
 pki/
 secrets/
 
+# --- Vault overlay TLS material ----------------------------------------------
+# Self-signed dev cert/key, generated per host; never committed.
+vault/certs/
+
 # --- Python ------------------------------------------------------------------
 __pycache__/
 *.py[cod]
