@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-11
-- updated: 2026-11-11
+- updated: 2026-11-14
 - source: session request on 2026-11-11 ("capture OpenBao as a compliance improvement")
 
 **Problem**
@@ -42,3 +42,4 @@ OpenBao runs as a digest-pinned compose service behind a `secrets` (or `complian
 - Deliberately out of scope, each a follow-up rather than bundled work: mTLS between services (Step-CA, a separate item), dynamic Postgres/Redis credentials via a database secrets engine, OpenBao PKI issuance, and any cloud KMS as an alternative transit backend. Also out: patching `_reject_dev_secrets` to cover `omniroute_api_key`, `database_url` and `redis_url` ahead of the provider design — the gap is named in **Problem**, and its final shape should be decided together with the provider rather than guessed at now.
 - Open questions for triage: whether `OMNIROUTE_API_KEY` (today `sk-local-dev`, with no production guard at all) belongs in the first slice or is deferred with the connection strings; and whether the two URL-embedded passwords are in scope for slice one at all, since moving them requires a `str` → `SecretStr` migration of `database_url`/`redis_url` plus URL re-assembly in `db/session.py` and the ARQ bridge, which is a larger change than the four KV reads and may deserve its own item.
 - Scope: intake only. No implementation, no compose, `settings.py`, `.env.example`, document or ADR edit is part of this capture.
+- 2026-11-14: the dev overlay on branch `vault-secrets-overlay` (PR #42) ships HashiCorp Vault, a fixed root token and an on-disk unseal key with KV v2 at `bastion/`; its decision is still unrecorded (IDEA-057) and the dev stack reaches those values through `.env.vault` in the environment rather than this provider (IDEA-056), so read both before implementing this item.
