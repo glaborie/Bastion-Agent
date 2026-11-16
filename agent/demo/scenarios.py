@@ -14,7 +14,6 @@ it for the operator who started it.
 from __future__ import annotations
 
 import os
-import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -23,6 +22,7 @@ from typing import Final
 from redis.asyncio import Redis
 
 from agent.approvals_events import publish_approval_event
+from agent.demo.tickets import create_demo_ticket
 from agent.dlp.vault import TokenVault, get_vault
 from agent.egress.sanitizer import (
     EgressCircuitOpenError,
@@ -33,16 +33,7 @@ from agent.routing.classifier import Classification, get_classifier
 from agent.routing.client import ChatMessage, OmniRouteClient
 from agent.tools.decorator import AgentContext, ToolError, ToolStatus
 from agent.tools.execution import request_tool_execution
-from db.audit import append_audit_event
-from db.models import (
-    ApprovalStatus,
-    AuditEventType,
-    PendingApproval,
-    fingerprint_request,
-    hash_approval_token,
-    sign_approval_token,
-    utcnow,
-)
+from db.models import AuditEventType
 from db.redis import get_redis
 from db.session import session_scope
 from settings import get_settings
@@ -406,64 +397,27 @@ async def _run_seed_approval(context: ScenarioContext) -> ScenarioOutcome:
     tool is called, so the card is about the four-eyes queue rather than the
     guard. The initiator is the signed-in principal.
     """
-    settings = get_settings()
-    now = utcnow()
-    expires_at = PendingApproval.expiry_for(now, settings.approval_ttl_seconds)
-    ticket_id = uuid.uuid4()
     tool_name = "execute_file_write"
     required_role = "operator"
-    arguments = {
-        "path": f"demo/seed-{context.run_id}.txt",
-        "content": "Seeded by the dashboard demo console.\n",
-    }
-    fingerprint = fingerprint_request(tool_name, arguments)
-    token = sign_approval_token(
-        ticket_id=ticket_id,
-        request_fingerprint=fingerprint,
-        expires_at=expires_at,
-        secret=settings.approval_hmac_secret.get_secret_value(),
-    )
-    async with session_scope() as session:
-        session.add(
-            PendingApproval(
-                ticket_id=ticket_id,
-                session_id=context.session_id,
-                tenant_id=context.tenant_id,
-                initiator_id=context.actor_id,
-                tool_name=tool_name,
-                tool_arguments=arguments,
-                required_role=required_role,
-                request_fingerprint=fingerprint,
-                approval_token_hash=hash_approval_token(token),
-                token_expires_at=expires_at,
-                status=ApprovalStatus.PENDING,
-                created_at=now,
-            )
-        )
-        await append_audit_event(
-            session,
-            actor_id=context.actor_id,
-            tenant_id=context.tenant_id,
-            event_type=AuditEventType.APPROVAL_REQUESTED,
-            session_id=context.session_id,
-            payload={"ticket_id": str(ticket_id), "tool": tool_name},
-            metadata_json={"required_role": required_role},
-        )
-    await publish_approval_event(
-        get_redis(settings.redis_url),
+    ticket = await create_demo_ticket(
+        initiator_id=context.actor_id,
         tenant_id=context.tenant_id,
-        event_type=AuditEventType.APPROVAL_REQUESTED,
-        ticket_id=str(ticket_id),
+        session_id=context.session_id,
         tool_name=tool_name,
+        arguments={
+            "path": f"demo/seed-{context.run_id}.txt",
+            "content": "Seeded by the dashboard demo console.\n",
+        },
+        required_role=required_role,
     )
     return ScenarioOutcome(
         summary="A pending ticket is in the approval queue with you as its initiator.",
         facts=(
-            ("ticket_id", str(ticket_id)),
+            ("ticket_id", str(ticket.ticket_id)),
             ("tool", tool_name),
             ("initiator", context.actor_id),
             ("required_role", required_role),
-            ("expires_at", expires_at.isoformat()),
+            ("expires_at", ticket.expires_at.isoformat()),
         ),
         lines=(
             "The queue updates live and falls back to 3s polling; "

@@ -1,6 +1,6 @@
 ### IDEA-034: Unify duplicated demo approval-ticket creation
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.3
 - area: agent
@@ -21,10 +21,10 @@ One factory builds the demo ticket — TTL, fingerprint, capability token, token
 
 **Acceptance**
 
-- [ ] `grep -rn "PendingApproval" agent/demo/scenarios.py scripts/seed_demo_approval.py` returns nothing, and the ticket row, the token and the audit event are readable at one shared factory call site
-- [ ] A test calls the factory and asserts the row's fields from `settings.approval_ttl_seconds` (expiry), `fingerprint_request(tool, arguments)` (fingerprint), `hash_approval_token` of a token that `sign_approval_token` verifies, and the `APPROVAL_REQUESTED` payload and metadata that both demo paths publish today
-- [ ] `uv run pytest tests/test_dashboard_demo.py tests/test_approvals.py -q` passes with no assertion deleted, and the dashboard seed scenario still yields a pending ticket whose initiator cannot approve it
-- [ ] Nothing in `agent/tools/execution.py` changes: `_suspend` keeps its own construction and its audit fields, and the four-eyes behaviour for worker-suspended tickets is untouched
+- [x] `grep -rn "PendingApproval" agent/demo/scenarios.py scripts/seed_demo_approval.py` returns nothing, and the ticket row, the token and the audit event are readable at one shared factory call site
+- [x] A test calls the factory and asserts the row's fields from `settings.approval_ttl_seconds` (expiry), `fingerprint_request(tool, arguments)` (fingerprint), `hash_approval_token` of a token that `sign_approval_token` verifies, and the `APPROVAL_REQUESTED` payload and metadata that both demo paths publish today
+- [x] `uv run pytest tests/test_dashboard_demo.py tests/test_approvals.py -q` passes with no assertion deleted, and the dashboard seed scenario still yields a pending ticket whose initiator cannot approve it
+- [x] Nothing in `agent/tools/execution.py` changes: `_suspend` keeps its own construction and its audit fields, and the four-eyes behaviour for worker-suspended tickets is untouched
 
 **Notes**
 
@@ -32,3 +32,11 @@ One factory builds the demo ticket — TTL, fingerprint, capability token, token
 - `spec: ADR-010` because decision 4 owns the immutable request binding — fingerprint, HMAC token, token hash — and decision 8 owns the `APPROVAL_REQUESTED` fields; the factory must not weaken either. The ADR text needs no change unless the factory's audit fields are deliberately aligned with `_suspend`'s fuller set, in which case decision 8 records it.
 - Open question for triage: whether the shared factory also becomes `_suspend`'s constructor. This item deliberately does not, because moving the guarded path is a larger security change than de-duplicating two demo helpers, and the drift it would fix is the same one this factory makes visible.
 - Classification: `P2`/`v0.3`. No guardrail is broken today (the demo rows are valid and four-eyes is enforced downstream), so it is not `P0`/`P1`; the current phase is v0.3 and this is a duplicate-removal refactor with no new capability.
+- 2026-11-16: the factory lives in `agent/demo/tickets.py` and returns a `DemoApproval`
+  record (`ticket_id`, `expires_at`) because the dashboard scenario exposes the expiry in its
+  facts; the token stays inside the factory and the test re-signs it from the row. Audit fields
+  are unchanged, so ADR-010 needs no edit.
+- 2026-11-16, out of scope: `scripts/gate.sh` exits 2 with `--pytest-workers must be 'auto' or a
+  positive integer` whenever `TEST_DATABASE_URL` is set, because the database branch sets
+  `PYTEST_WORKERS=0` and the validator rejects `0`. `--pytest-workers 1` works around it; the
+  validator should accept `0`.

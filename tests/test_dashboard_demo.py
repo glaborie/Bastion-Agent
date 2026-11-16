@@ -20,6 +20,7 @@ import pytest
 import pytest_asyncio
 from fakeredis import FakeAsyncRedis
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from agent.demo.runs import STATUS_QUEUED, load_run
@@ -29,14 +30,25 @@ from agent.demo.scenarios import (
     get_scenario,
     run_egress_demo,
 )
+from agent.demo.tickets import create_demo_ticket
 from agent.dlp.vault import TokenVault
-from db.models import ApprovalStatus, PendingApproval
+from db.hashing import hash_payload
+from db.models import (
+    ApprovalStatus,
+    AuditEventType,
+    AuditLog,
+    PendingApproval,
+    fingerprint_request,
+    hash_approval_token,
+    sign_approval_token,
+    verify_approval_token,
+)
 from gateway.approvals import ApprovalDecisionError, decide_ticket
 from gateway.auth.oidc import Principal
 from gateway.auth.rbac import AuthContext, get_auth_context
 from gateway.dashboard.demo import get_demo_redis
 from gateway.main import create_app
-from settings import reset_settings_cache
+from settings import get_settings, reset_settings_cache
 from tests.conftest import requires_database
 
 BOB = Principal(subject="bob-sub", tenant_id="acme", username="bob", roles=frozenset({"operator"}))
@@ -287,5 +299,136 @@ async def test_the_tool_scenario_uses_the_signed_in_principal_and_keeps_four_eye
             )
             assert decided.status is ApprovalStatus.APPROVED
             assert decided.approver_id == "bob-sub"
+    finally:
+        reset_settings_cache()
+
+
+@pytest.mark.integration
+@requires_database
+async def test_the_demo_ticket_factory_owns_the_row_token_and_audit_event(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One factory binds the row, the capability token and the audit event (IDEA-034)."""
+    from db import session as db_session
+
+    monkeypatch.setattr(db_session, "_engine", db_engine)
+    monkeypatch.setattr(db_session, "_session_factory", None)
+    monkeypatch.setattr(
+        "agent.demo.tickets.get_redis",
+        lambda *_args, **_kwargs: FakeAsyncRedis(decode_responses=True),
+    )
+    reset_settings_cache()
+    settings = get_settings()
+    arguments = {"path": "reports/q3.csv", "content": "quarterly revenue"}
+    try:
+        ticket = await create_demo_ticket(
+            initiator_id="alice-sub",
+            tenant_id="acme",
+            session_id="demo-factory",
+            tool_name="execute_file_write",
+            arguments=arguments,
+            required_role="operator",
+        )
+
+        factory = async_sessionmaker(db_engine, expire_on_commit=False)
+        async with factory() as session:
+            row = await session.get(PendingApproval, ticket.ticket_id)
+            assert row is not None
+            assert row.token_expires_at == PendingApproval.expiry_for(
+                row.created_at, settings.approval_ttl_seconds
+            )
+            assert ticket.expires_at == row.token_expires_at
+            assert row.request_fingerprint == fingerprint_request("execute_file_write", arguments)
+
+            secret = settings.approval_hmac_secret.get_secret_value()
+            token = sign_approval_token(
+                ticket_id=row.ticket_id,
+                request_fingerprint=row.request_fingerprint,
+                expires_at=row.token_expires_at,
+                secret=secret,
+            )
+            assert verify_approval_token(
+                token=token,
+                ticket_id=row.ticket_id,
+                request_fingerprint=row.request_fingerprint,
+                expires_at=row.token_expires_at,
+                secret=secret,
+            )
+            assert row.approval_token_hash == hash_approval_token(token)
+
+            audit = (
+                await session.execute(select(AuditLog).where(AuditLog.session_id == "demo-factory"))
+            ).scalar_one()
+            assert audit.event_type is AuditEventType.APPROVAL_REQUESTED
+            assert audit.payload_hash == hash_payload(
+                {"ticket_id": str(row.ticket_id), "tool": "execute_file_write"}
+            )
+            assert audit.metadata_json == {"required_role": "operator"}
+    finally:
+        reset_settings_cache()
+
+
+@pytest.mark.integration
+@requires_database
+async def test_the_seed_scenario_leaves_a_ticket_its_initiator_cannot_approve(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The queue-only scenario keeps four-eyes: a second operator must decide."""
+    from db import session as db_session
+
+    monkeypatch.setattr(db_session, "_engine", db_engine)
+    monkeypatch.setattr(db_session, "_session_factory", None)
+    monkeypatch.setattr(
+        "agent.demo.tickets.get_redis",
+        lambda *_args, **_kwargs: FakeAsyncRedis(decode_responses=True),
+    )
+    reset_settings_cache()
+    try:
+        handler = get_scenario("seed_demo_approval").handler
+        assert handler is not None
+        outcome = await handler(
+            ScenarioContext(
+                run_id=uuid.uuid4().hex,
+                actor_id="alice-sub",
+                tenant_id="acme",
+                actor_roles=frozenset({"operator"}),
+                session_id="demo-seed-queue",
+            )
+        )
+
+        facts = dict(outcome.facts)
+        assert facts["initiator"] == "alice-sub"
+        assert facts["required_role"] == "operator"
+        assert facts["expires_at"]
+        ticket_id = uuid.UUID(facts["ticket_id"])
+
+        factory = async_sessionmaker(db_engine, expire_on_commit=False)
+        async with factory() as session:
+            ticket = await session.get(PendingApproval, ticket_id)
+            assert ticket is not None
+            assert ticket.status is ApprovalStatus.PENDING
+            assert ticket.initiator_id == "alice-sub"
+
+            with pytest.raises(ApprovalDecisionError):
+                await decide_ticket(
+                    session,
+                    ticket_id=ticket_id,
+                    actor_id="alice-sub",
+                    tenant_id="acme",
+                    actor_roles=frozenset({"operator"}),
+                    action="approve",
+                )
+
+            decided = await decide_ticket(
+                session,
+                ticket_id=ticket_id,
+                actor_id="bob-sub",
+                tenant_id="acme",
+                actor_roles=frozenset({"operator"}),
+                action="approve",
+            )
+            assert decided.status is ApprovalStatus.APPROVED
     finally:
         reset_settings_cache()
