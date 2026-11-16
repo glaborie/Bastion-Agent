@@ -9,7 +9,8 @@
 #   * a merged pull request for it -> removed (covers squash merges);
 #   * otherwise it must be fully merged into origin/master -> removed;
 #   * anything else (unmerged, no PR) -> reported and left alone.
-# The current branch and master are never removed.
+# The main worktree, the current branch and master are never removed, whichever
+# directory the script is run from.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -34,14 +35,29 @@ git fetch --quiet --prune origin
 current="$(git rev-parse --abbrev-ref HEAD)"
 [[ "$current" != "HEAD" ]] || die "detached HEAD; check out master first"
 
-# branch -> worktree path (empty when the branch is not checked out anywhere)
+canon() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"; }
+
+# The main worktree is the first entry of `git worktree list`; it owns the shared
+# .git, so deleting it destroys every linked worktree. Never derive it from the
+# script's own directory: an agent runs this from a linked worktree.
+main_worktree=""
 declare -A worktree_of=()
 while IFS= read -r line; do
     case "$line" in
-        "worktree "*) wt_path="${line#worktree }" ;;
+        "worktree "*) wt_path="${line#worktree }"; [[ -n "$main_worktree" ]] || main_worktree="$wt_path" ;;
         "branch refs/heads/"*) worktree_of["${line#branch refs/heads/}"]="$wt_path" ;;
     esac
 done < <(git worktree list --porcelain)
+[[ -n "$main_worktree" ]] || die "cannot identify the main worktree"
+main_worktree="$(canon "$main_worktree")"
+
+# A worktree is deletable only when it is a linked one: a linked worktree has a
+# .git file, the main checkout has a .git directory.
+removable() {
+    local path="$1"
+    [[ -n "$path" ]] || return 0
+    [[ "$(canon "$path")" != "$main_worktree" && ! -d "$path/.git" ]]
+}
 
 pr_state() {
     # empty = no pull request, otherwise OPEN / MERGED / CLOSED
@@ -50,7 +66,8 @@ pr_state() {
 
 remove_worktree() {
     local path="$1"
-    [[ -n "$path" && "$path" != "$ROOT" ]] || return 0
+    [[ -n "$path" ]] || return 0
+    removable "$path" || return 1
     if git worktree remove --force "$path" 2>/dev/null; then
         return 0
     fi
@@ -65,6 +82,7 @@ remove_worktree() {
 
 removed=0
 skipped=()
+((DRY_RUN)) && echo "main worktree (never removed): $main_worktree"
 
 for branch in $(git for-each-ref --format='%(refname:short)' refs/heads/); do
     [[ "$branch" == "master" || "$branch" == "$current" ]] && continue
@@ -95,6 +113,11 @@ for branch in $(git for-each-ref --format='%(refname:short)' refs/heads/); do
         else
             skipped+=("$branch (unmerged, no merged pull request)")
         fi
+        continue
+    fi
+
+    if ! removable "$path"; then
+        skipped+=("$branch (main worktree $path is never removed)")
         continue
     fi
 

@@ -54,7 +54,9 @@ scripts/dev/cleanup.sh
 Removes worktrees and deletes local and remote branches only where a pull
 request is merged or the branch is fully merged into `origin/master`. It leaves
 alone anything with an open PR, uncommitted work, commits beyond the base with
-no merged PR, and the branch you are standing on. Certificate material owned by
+no merged PR, and the branch you are standing on. The main worktree is never
+removed, whichever directory the script is run from: it owns the shared `.git`,
+so deleting it would destroy every linked worktree. Certificate material owned by
 container uids is cleared through a throwaway container instead of escalating
 the script.
 
