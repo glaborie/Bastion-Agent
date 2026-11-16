@@ -100,7 +100,8 @@ class Result:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = __doc__ or ("Measure classifier latency and GPU memory per execution provider.")
+    parser = argparse.ArgumentParser(description=description.splitlines()[0])
     parser.add_argument(
         "--provider",
         choices=("auto", "cpu", "cuda"),

@@ -1,6 +1,6 @@
 ### IDEA-043: Scope pyright to the shipped packages and fix the __doc__ indexing sites
 
-- status: active
+- status: done
 - priority: P3
 - phase: v0.3
 - area: tooling
@@ -46,11 +46,11 @@ packages it covers so a future module outside them is a deliberate decision.
 
 **Acceptance**
 
-- [ ] `uvx --from pyright pyright` exits 0 with no errors and no warnings on the tree, with `[tool.pyright] include` naming `db`, `gateway`, `agent` and `scripts` and `exclude` naming `tests` (and `.venv`)
-- [ ] the same invocation on `tests/` is not part of the default run, and the config comment says why: the doubles are duck-typed and mypy, not pyright, is the gate
-- [ ] `python -OO scripts/check_classifier_dispatch.py --help`, `python -OO scripts/demo_classifier.py --help` and `python -OO scripts/benchmark_classifier_goldens.py --help` exit 0 and print a usage line instead of raising on `__doc__`
-- [ ] a test or script-level assertion covers the `-OO` case for one of the three, so a fourth `__doc__` site cannot come back unnoticed
-- [ ] `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check .` and `uv run --no-sync mypy settings.py logging_setup.py db gateway agent scripts` stay clean, and `scripts/gate.sh` stays 12/12
+- [x] `uvx --from pyright pyright` exits 0 with no errors and no warnings on the tree, with `[tool.pyright] include` naming `db`, `gateway`, `agent` and `scripts` and `exclude` naming `tests` (and `.venv`)
+- [x] the same invocation on `tests/` is not part of the default run, and the config comment says why: the doubles are duck-typed and mypy, not pyright, is the gate
+- [x] `python -OO scripts/check_classifier_dispatch.py --help`, `python -OO scripts/demo_classifier.py --help` and `python -OO scripts/benchmark_classifier_goldens.py --help` exit 0 and print a usage line instead of raising on `__doc__`
+- [x] a test or script-level assertion covers the `-OO` case for one of the three, so a fourth `__doc__` site cannot come back unnoticed
+- [x] `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check .` and `uv run --no-sync mypy settings.py logging_setup.py db gateway agent scripts` stay clean, and `scripts/gate.sh` stays 12/12
 
 **Notes**
 
@@ -58,3 +58,13 @@ packages it covers so a future module outside them is a deliberate decision.
 - pyright is not a step in `scripts/gate.sh` and this item does not add it. CI and the gate stay on mypy; pyright is the editor's second opinion, and the acceptance is checked by hand.
 - Measured, not assumed: 51 errors with pyright 1.1.414 on `origin/master` after `53ab5e5`, broken down by rule as `reportGeneralTypeIssues` 15, `reportCallIssue` 13, `reportOptionalMemberAccess` 12, `reportArgumentType` 4, `reportReturnType` 2, `reportIncompatibleMethodOverride` 2, `reportOptionalSubscript` 2, `reportOperatorIssue` 1.
 - `spec` is `-`: no ADR governs type-checker configuration or editor tooling. If that changes, ADR-016 (supply chain and scanning) is the nearest neighbour but does not cover it.
+- 2026-11-16: the tree had eight `__doc__.splitlines()[0]` sites, not three — `run_evals.py`,
+  `demo_traffic.py`, `demo_tool_request.py`, `tune_classifier.py` and
+  `measure_classifier_latency.py` joined the three named here. All eight now fall back to a
+  literal description, so every script in `scripts/` starts under `python -OO`
+  (`tests/test_script_entry_points.py` runs three of them and scans the rest).
+- 2026-11-16: the last shipped-package error was not a docstring: pyright cannot see
+  `_env_file` in `pydantic-settings`' `BaseSettings.__init__`
+  (`scripts/check_classifier_dispatch.py:59`), so that one call carries
+  `# pyright: ignore[reportCallIssue]` with the reason on the line above. With the tests
+  excluded by config, no other suppression was needed.

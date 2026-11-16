@@ -217,7 +217,10 @@ def _pytest_args(extra: Iterable[str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = __doc__ or (
+        "Run the zero-tolerance evaluation gates and publish the run summary."
+    )
+    parser = argparse.ArgumentParser(description=description.splitlines()[0])
     parser.add_argument(
         "--report",
         default=os.getenv("EVAL_REPORT_PATH", str(DEFAULT_REPORT)),

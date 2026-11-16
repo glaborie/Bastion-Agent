@@ -140,6 +140,13 @@ ignore_missing_imports = true
 # `uv sync` creates `.venv` in each checkout and worktree.
 venvPath = "."
 venv = ".venv"
+# Pyright covers the shipped packages, so its default run is signal about code
+# that ships. tests/ is excluded on purpose: its doubles are duck-typed
+# (SimpleNamespace where a protocol is declared, FakeBroker where Redis is),
+# and mypy — not pyright — is the gate for tests. A module outside these four
+# packages needs a deliberate decision, not a silent omission (IDEA-043).
+include = ["db", "gateway", "agent", "scripts"]
+exclude = [".venv", "**/__pycache__", "tests"]
 
 [tool.ruff]
 target-version = "py311"

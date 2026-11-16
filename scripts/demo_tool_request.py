@@ -33,7 +33,8 @@ from settings import get_settings
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = __doc__ or ("Originate a guarded tool call for a live demo.")
+    parser = argparse.ArgumentParser(description=description.splitlines()[0])
     parser.add_argument("--tool", required=True, help="registered tool name")
     parser.add_argument("--actor-sub", required=True, help="initiator OIDC subject (JWT sub)")
     parser.add_argument(
