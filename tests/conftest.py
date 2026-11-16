@@ -28,7 +28,13 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from db.models import AUDIT_EVENT_VOCABULARY_DDL, ESCROW_KIND_DDL, TENANT_SCOPE_DDL, Base
+from db.models import (
+    AUDIT_EVENT_VOCABULARY_DDL,
+    AUDIT_HASH_VERSION_DDL,
+    ESCROW_KIND_DDL,
+    TENANT_SCOPE_DDL,
+    Base,
+)
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "")
 
@@ -66,6 +72,9 @@ async def db_engine() -> AsyncIterator[AsyncEngine]:
             await connection.execute(text(statement))
         # ...or predates the egress_delivered escrow kind.
         for statement in ESCROW_KIND_DDL:
+            await connection.execute(text(statement))
+        # ...or predates the versioned audit hash columns.
+        for statement in AUDIT_HASH_VERSION_DDL:
             await connection.execute(text(statement))
         await connection.execute(
             text(

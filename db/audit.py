@@ -25,6 +25,7 @@ from db.escrow import record_payload_escrow
 from db.models import (
     AUDIT_CHAIN_LOCK_ID,
     AUDIT_LOG_ID_SEQUENCE,
+    CURRENT_HASH_VERSION,
     GENESIS_HASH,
     AuditEventType,
     AuditLog,
@@ -127,6 +128,8 @@ async def append_audit_event(
         actor_id=actor_id,
         event_type=event_type,
         payload_hash=resolved_payload_hash,
+        hash_version=CURRENT_HASH_VERSION,
+        metadata_hash=hash_payload(dict(metadata_json or {})),
         metadata_json=dict(metadata_json or {}),
         previous_hash=previous_hash,
         record_hash="",
@@ -138,6 +141,8 @@ async def append_audit_event(
         event_type=str(record.event_type),
         payload_hash=record.payload_hash,
         previous_hash=record.previous_hash,
+        hash_version=record.hash_version,
+        metadata_hash=record.metadata_hash,
     )
 
     session.add(record)

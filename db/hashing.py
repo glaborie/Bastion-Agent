@@ -15,6 +15,11 @@ from typing import Any, Final
 #: Hex digest length for SHA-256 / HMAC-SHA256 material.
 HASH_HEX_LENGTH: Final[int] = 64
 
+#: Current record-hash preimage version. v1 covers six fields; v2 also covers
+#: ``hash_version`` and the canonical ``metadata_json`` digest (ADR-005
+#: decision 2), so four-eyes keys cannot be edited without breaking the chain.
+CURRENT_HASH_VERSION: Final[int] = 2
+
 
 def canonical_timestamp(value: datetime) -> str:
     """Render a timestamp so Python and PostgreSQL agree on the exact string."""
@@ -61,11 +66,15 @@ def compute_record_hash(
     event_type: str,
     payload_hash: str,
     previous_hash: str,
+    hash_version: int = 1,
+    metadata_hash: str | None = None,
 ) -> str:
     """Compute ``record_hash`` exactly as specified in HANDOVER_SPEC §3.5.
 
-    ``SHA256(id + timestamp + actor_id + event_type + payload_hash + previous_hash)``
-    with fields joined by ``|`` after canonicalisation.
+    v1 (pre-2026-11-16) hashes the original six fields. v2 appends the version
+    and the SHA-256 of the canonical ``metadata_json`` bytes, so editing an
+    approver, initiator or outcome breaks verification while v1 rows keep
+    verifying with their original preimage (ADR-005 decision 2).
     """
     for label, digest in (("payload_hash", payload_hash), ("previous_hash", previous_hash)):
         if len(digest) != HASH_HEX_LENGTH:
@@ -80,4 +89,13 @@ def compute_record_hash(
             previous_hash,
         )
     )
+    if hash_version == 1:
+        if metadata_hash is not None:
+            raise ValueError("v1 records carry no metadata_hash")
+    elif hash_version == CURRENT_HASH_VERSION:
+        if metadata_hash is None or len(metadata_hash) != HASH_HEX_LENGTH:
+            raise ValueError(f"v2 records require a {HASH_HEX_LENGTH}-character metadata_hash")
+        material = "|".join((material, str(hash_version), metadata_hash))
+    else:
+        raise ValueError(f"unsupported record hash version {hash_version}")
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
