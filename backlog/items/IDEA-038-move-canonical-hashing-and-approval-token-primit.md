@@ -1,6 +1,6 @@
 ### IDEA-038: Move canonical hashing and approval-token primitives out of db/models.py
 
-- status: ready
+- status: done
 - priority: P3
 - phase: v0.3
 - area: db
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-005
 - created: 2026-11-12
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: review of db/models.py size and import graph, 2026-11-12
 
 **Problem**
@@ -35,11 +35,11 @@ change.
 
 **Acceptance**
 
-- [ ] `db/hashing.py` and `db/tokens.py` exist, and `python -c "from db.models import compute_record_hash, sign_approval_token, canonical_timestamp"` succeeds; `grep -c "^def compute_record_hash" db/models.py` reports 0 and `grep -rc "^def compute_record_hash" db/hashing.py` reports 1
-- [ ] `wc -l db/models.py` reports fewer than 620 lines (down from 738); the ORM classes and the DDL strings are unchanged apart from imports and re-exports
-- [ ] `uv run pytest tests/test_audit_chain.py tests/test_approvals.py tests/test_payload_escrow.py -q` passes with no test-file edits
-- [ ] `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check .` and `uv run --no-sync mypy settings.py logging_setup.py db gateway agent scripts` are clean
-- [ ] `docs/adr/ADR-005.md` decision 2 names `db/hashing.py` as the definition site while the re-export keeps `db.models.compute_record_hash` importable
+- [x] `db/hashing.py` and `db/tokens.py` exist, and `python -c "from db.models import compute_record_hash, sign_approval_token, canonical_timestamp"` succeeds; `grep -c "^def compute_record_hash" db/models.py` reports 0 and `grep -rc "^def compute_record_hash" db/hashing.py` reports 1
+- [x] `wc -l db/models.py` reports fewer than 620 lines (down from 738); the ORM classes and the DDL strings are unchanged apart from imports and re-exports
+- [x] `uv run pytest tests/test_audit_chain.py tests/test_approvals.py tests/test_payload_escrow.py -q` passes with no test-file edits
+- [x] `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check .` and `uv run --no-sync mypy settings.py logging_setup.py db gateway agent scripts` are clean
+- [x] `docs/adr/ADR-005.md` decision 2 names `db/hashing.py` as the definition site while the re-export keeps `db.models.compute_record_hash` importable
 
 **Notes**
 
