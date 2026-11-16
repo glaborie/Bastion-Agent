@@ -33,14 +33,19 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("TOOL_MAX_WRITE_BYTES", "64")
     reset_settings_cache()
     try:
-        yield root
+        yield root / "acme"
     finally:
         reset_settings_cache()
 
 
-def context(actor: str = "alice", roles: tuple[str, ...] = ("operator",)) -> AgentContext:
+def context(
+    actor: str = "alice", roles: tuple[str, ...] = ("operator",), tenant: str = "acme"
+) -> AgentContext:
     return AgentContext(
-        actor_id=actor, tenant_id="acme", roles=frozenset(roles), session_id="sess-tools"
+        actor_id=actor,
+        tenant_id=tenant,
+        roles=frozenset(roles),
+        session_id="sess-tools",
     )
 
 
@@ -217,11 +222,11 @@ def test_result_payload_is_json_shaped() -> None:
 
 def test_absolute_and_traversing_paths_are_rejected(workspace) -> None:
     with pytest.raises(WorkspaceViolation, match="absolute"):
-        resolve_workspace_path("/etc/passwd")
+        resolve_workspace_path("/etc/passwd", "acme")
     with pytest.raises(WorkspaceViolation, match="escapes"):
-        resolve_workspace_path("../escape.txt")
+        resolve_workspace_path("../escape.txt", "acme")
     with pytest.raises(WorkspaceViolation, match="non-empty"):
-        resolve_workspace_path("  ")
+        resolve_workspace_path("  ", "acme")
 
 
 def test_symlink_escape_is_rejected(workspace, tmp_path) -> None:
@@ -231,7 +236,7 @@ def test_symlink_escape_is_rejected(workspace, tmp_path) -> None:
     link = workspace / "link.txt"
     link.symlink_to(outside)
     with pytest.raises(WorkspaceViolation, match="escapes"):
-        resolve_workspace_path("link.txt")
+        resolve_workspace_path("link.txt", "acme")
 
 
 async def test_write_then_read_round_trip(workspace) -> None:
@@ -245,6 +250,24 @@ async def test_write_then_read_round_trip(workspace) -> None:
     assert read["content"] == "hello"
     assert read["bytes"] == 5
     assert read["sha256"] == written["sha256"]
+
+
+async def test_tenant_workspaces_are_isolated(workspace) -> None:
+    acme = context()
+    globex = context(tenant="globex")
+
+    written = await execute_file_write("shared/report.txt", "acme-only", acme)
+    assert written["path"] == "shared/report.txt"
+
+    # Tenant B neither reads the file nor overwrites it under the same path.
+    with pytest.raises(WorkspaceViolation, match="does not exist"):
+        await read_file("shared/report.txt", globex)
+    await execute_file_write("shared/report.txt", "globex-only", globex)
+
+    kept = await read_file("shared/report.txt", acme)
+    assert kept["content"] == "acme-only"
+    assert kept["sha256"] == written["sha256"]
+    assert (await read_file("shared/report.txt", globex))["content"] == "globex-only"
 
 
 async def test_read_of_a_missing_file_is_refused(workspace) -> None:

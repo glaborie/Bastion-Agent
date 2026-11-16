@@ -1,8 +1,9 @@
 """Built-in guarded tools (HANDOVER_SPEC §3.2).
 
-The file tools are confined to ``TOOL_WORKSPACE_ROOT``: absolute paths,
-``..`` traversal and symlinks that resolve outside the root are rejected before
-any IO happens. Writes are atomic (temp file + ``os.replace``) and capped by
+The file tools are confined to ``TOOL_WORKSPACE_ROOT/<tenant>``: absolute
+paths, ``..`` traversal and symlinks that resolve outside the tenant's root are
+rejected before any IO happens, so one tenant cannot read or overwrite another
+tenant's files. Writes are atomic (temp file + ``os.replace``) and capped by
 ``TOOL_MAX_WRITE_BYTES``; reads are capped by ``TOOL_MAX_READ_BYTES``.
 
 Blocking filesystem work runs in a worker thread (``anyio.to_thread``) so a
@@ -24,6 +25,7 @@ from typing import Any
 from anyio import to_thread
 
 from agent.tools.decorator import AgentContext, ToolError, tool
+from db.tenancy import TenantIdError, normalise_tenant_id
 from settings import get_settings
 
 _WORKSPACE_MODE = 0o700
@@ -34,10 +36,18 @@ class WorkspaceViolation(ToolError):
     """The requested path is outside the tool workspace or otherwise unsafe."""
 
 
-def _workspace_root() -> Path:
-    """Return the resolved workspace root, creating it with owner-only access."""
+def _workspace_root(tenant_id: str) -> Path:
+    """Return the calling tenant's workspace root, creating it owner-only.
+
+    The tenant segment comes from the validated context (ADR-015), so one
+    tenant's files are unreachable from another's resolved root.
+    """
     settings = get_settings()
-    root = Path(settings.tool_workspace_root).expanduser()
+    try:
+        tenant = normalise_tenant_id(tenant_id)
+    except TenantIdError as exc:
+        raise WorkspaceViolation("tenant id is not a usable workspace segment") from exc
+    root = Path(settings.tool_workspace_root).expanduser() / tenant
     try:
         root.mkdir(parents=True, exist_ok=True, mode=_WORKSPACE_MODE)
     except OSError as exc:
@@ -45,23 +55,23 @@ def _workspace_root() -> Path:
     return root.resolve()
 
 
-def resolve_workspace_path(raw_path: str) -> Path:
-    """Resolve ``raw_path`` inside the workspace or raise :class:`WorkspaceViolation`."""
+def resolve_workspace_path(raw_path: str, tenant_id: str) -> Path:
+    """Resolve ``raw_path`` inside the tenant's workspace or raise."""
     if not isinstance(raw_path, str) or not raw_path.strip():
         raise WorkspaceViolation("path must be a non-empty string")
     candidate = Path(raw_path)
     if candidate.is_absolute():
         raise WorkspaceViolation("absolute paths are not allowed")
-    root = _workspace_root()
+    root = _workspace_root(tenant_id)
     resolved = (root / candidate).resolve()
     if not resolved.is_relative_to(root):
         raise WorkspaceViolation("path escapes the tool workspace")
     return resolved
 
 
-def _display_path(path: Path) -> str:
-    """Workspace-relative POSIX path for results (never an absolute host path)."""
-    return path.relative_to(_workspace_root()).as_posix()
+def _display_path(path: Path, tenant_id: str) -> str:
+    """Tenant-relative POSIX path for results (never an absolute host path)."""
+    return path.relative_to(_workspace_root(tenant_id)).as_posix()
 
 
 @tool(
@@ -74,34 +84,38 @@ def _display_path(path: Path) -> str:
 )
 async def read_system_status(context: AgentContext) -> dict[str, Any]:
     """Return non-sensitive runtime status for the calling principal."""
-    return await to_thread.run_sync(_status_sync, context.actor_id)
+    return await to_thread.run_sync(_status_sync, context.actor_id, context.tenant_id)
 
 
 @tool(
     name="read_file",
     description=(
-        "Read a UTF-8 text file from the tool workspace. Paths are relative to the "
-        "workspace root; traversal outside it is rejected. Read-only."
+        "Read a UTF-8 text file from the calling tenant's workspace. Paths are "
+        "relative to that tenant's workspace root; traversal outside it is "
+        "rejected, so one tenant cannot read another's files. Read-only."
     ),
     read_only=True,
 )
 async def read_file(path: str, context: AgentContext) -> dict[str, Any]:
-    """Read a workspace file, capped at ``TOOL_MAX_READ_BYTES``."""
-    return await to_thread.run_sync(_read_file_sync, path)
+    """Read a file from the tenant's workspace, capped at ``TOOL_MAX_READ_BYTES``."""
+    return await to_thread.run_sync(_read_file_sync, path, context.tenant_id)
 
 
 @tool(
     name="execute_file_write",
     description=(
-        "Write UTF-8 text to a file in the tool workspace, creating parent "
-        "directories as needed. Mutating: suspends until a second operator approves."
+        "Write UTF-8 text to a file in the calling tenant's workspace, creating "
+        "parent directories as needed. Paths are namespaced per tenant. Mutating: "
+        "suspends until a second operator approves."
     ),
     read_only=False,
     required_role="operator",
 )
 async def execute_file_write(path: str, content: str, context: AgentContext) -> dict[str, Any]:
-    """Atomically write ``content`` to ``path`` inside the workspace."""
-    return await to_thread.run_sync(_write_file_sync, path, content, context.actor_id)
+    """Atomically write ``content`` to ``path`` inside the tenant's workspace."""
+    return await to_thread.run_sync(
+        _write_file_sync, path, content, context.actor_id, context.tenant_id
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -109,8 +123,8 @@ async def execute_file_write(path: str, content: str, context: AgentContext) -> 
 # ---------------------------------------------------------------------------
 
 
-def _status_sync(actor_id: str) -> dict[str, Any]:
-    root = _workspace_root()
+def _status_sync(actor_id: str, tenant_id: str) -> dict[str, Any]:
+    root = _workspace_root(tenant_id)
     return {
         "requested_by": actor_id,
         "platform": platform.platform(),
@@ -121,9 +135,9 @@ def _status_sync(actor_id: str) -> dict[str, Any]:
     }
 
 
-def _read_file_sync(path: str) -> dict[str, Any]:
+def _read_file_sync(path: str, tenant_id: str) -> dict[str, Any]:
     settings = get_settings()
-    target = resolve_workspace_path(path)
+    target = resolve_workspace_path(path, tenant_id)
     if not target.exists():
         raise WorkspaceViolation("file does not exist")
     if not target.is_file():
@@ -137,14 +151,14 @@ def _read_file_sync(path: str) -> dict[str, Any]:
         # The file grew between stat and read; refuse rather than truncate.
         raise WorkspaceViolation(f"file exceeds the {settings.tool_max_read_bytes}-byte read limit")
     return {
-        "path": _display_path(target),
+        "path": _display_path(target, tenant_id),
         "bytes": len(data),
         "content": data.decode("utf-8", errors="replace"),
         "sha256": hashlib.sha256(data).hexdigest(),
     }
 
 
-def _write_file_sync(path: str, content: str, actor_id: str) -> dict[str, Any]:
+def _write_file_sync(path: str, content: str, actor_id: str, tenant_id: str) -> dict[str, Any]:
     settings = get_settings()
     encoded = content.encode("utf-8")
     if len(encoded) > settings.tool_max_write_bytes:
@@ -152,7 +166,7 @@ def _write_file_sync(path: str, content: str, actor_id: str) -> dict[str, Any]:
             f"content exceeds the {settings.tool_max_write_bytes}-byte write limit"
         )
 
-    target = resolve_workspace_path(path)
+    target = resolve_workspace_path(path, tenant_id)
     try:
         target.parent.mkdir(parents=True, exist_ok=True, mode=_WORKSPACE_MODE)
     except OSError as exc:
@@ -160,7 +174,7 @@ def _write_file_sync(path: str, content: str, actor_id: str) -> dict[str, Any]:
 
     # Re-resolve after creating the parent: a symlink introduced between the
     # first check and the write must not be able to redirect us outside the root.
-    root = _workspace_root()
+    root = _workspace_root(tenant_id)
     final_target = (target.parent.resolve() / target.name).resolve()
     if not final_target.is_relative_to(root):
         raise WorkspaceViolation("path escapes the tool workspace")
@@ -181,7 +195,7 @@ def _write_file_sync(path: str, content: str, actor_id: str) -> dict[str, Any]:
         raise WorkspaceViolation("the file could not be written") from exc
 
     return {
-        "path": _display_path(final_target),
+        "path": _display_path(final_target, tenant_id),
         "bytes_written": len(encoded),
         "sha256": hashlib.sha256(encoded).hexdigest(),
         "written_by": actor_id,
