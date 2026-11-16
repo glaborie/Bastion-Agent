@@ -1,6 +1,6 @@
 ### IDEA-049: Record malformed and failed tool calls in the audit ledger
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.3
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-010
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
@@ -31,6 +31,6 @@ invalid arguments and handler failures, and never two.
 
 **Acceptance**
 
-- [ ] A malformed `execute_file_write` leaves one audit row for the actor
-- [ ] A failing `read_file` leaves one audit row for the actor
-- [ ] A test asserts the ledger holds one row, not two, after a refusal
+- [x] A malformed `execute_file_write` leaves one audit row for the actor
+- [x] A failing `read_file` leaves one audit row for the actor
+- [x] A test asserts the ledger holds one row, not two, after a refusal

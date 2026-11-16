@@ -292,6 +292,7 @@ async def _run_tool_job(
         await _persist_refusal(tool_name, context, exc, arguments)
         return {"status": "denied", "tool": tool_name, "error": str(exc)}
     except ToolArgumentError as exc:
+        await _persist_refusal(tool_name, context, exc, arguments)
         return {"status": "invalid_arguments", "tool": tool_name, "error": str(exc)}
     except ToolNotInCatalogError as exc:
         # ADR-009 Gate 1: the same -32003 code as a name that does not exist.
@@ -314,6 +315,7 @@ async def _run_tool_job(
         await _persist_refusal(tool_name, context, exc, arguments)
         return {"status": "error", "tool": tool_name, "error": str(exc)}
     except ToolError as exc:
+        await _persist_refusal(tool_name, context, exc, arguments)
         return {"status": "error", "tool": tool_name, "error": str(exc)}
 
     if result.status is ToolStatus.APPROVAL_PENDING and result.ticket_id:
