@@ -1,6 +1,6 @@
 ### IDEA-050: Audit both approval expiry paths and mark the ticket decided
 
-- status: ready
+- status: active
 - priority: P1
 - phase: v0.3
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-010
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
