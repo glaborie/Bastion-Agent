@@ -1,6 +1,6 @@
 ### IDEA-044: Scan the whole prompt for injection and confidentiality, not the first 8192 tokens
 
-- status: inbox
+- status: ready
 - priority: P0
 - phase: v0.3
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-011
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**

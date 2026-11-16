@@ -1,6 +1,6 @@
 ### IDEA-045: Redact the conversation, not each message, before the PII routing decision
 
-- status: inbox
+- status: ready
 - priority: P0
 - phase: v0.3
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-002
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
