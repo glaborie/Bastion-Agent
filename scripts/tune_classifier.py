@@ -273,7 +273,8 @@ def _joint(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = __doc__ or ("Sweep the ADR-011 classifier thresholds against the golden corpus.")
+    parser = argparse.ArgumentParser(description=description.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="emit the full report as JSON")
     args = parser.parse_args(argv)
 

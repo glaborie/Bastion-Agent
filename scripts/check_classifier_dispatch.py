@@ -56,7 +56,8 @@ def host_facts(cpuinfo: Path = Path("/proc/cpuinfo")) -> tuple[str, str]:
 
 def build_classifier(injection: Path, safety: Path) -> SensitivityClassifier:
     """Construct the ensemble the way the eval gate does (coded defaults)."""
-    settings = Settings(_env_file=None)
+    # pydantic-settings accepts _env_file at runtime; its declared __init__ omits it.
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
     return SensitivityClassifier(
         injection_model_path=str(injection),
         safety_model_path=str(safety),
@@ -141,7 +142,10 @@ def _emit(report: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = __doc__ or (
+        "Record the host and decide whether the int8 graphs reproduce calibration."
+    )
+    parser = argparse.ArgumentParser(description=description.splitlines()[0])
     parser.add_argument("--injection-model", type=Path, default=INJECTION_GRAPH)
     parser.add_argument("--safety-model", type=Path, default=SAFETY_GRAPH)
     parser.add_argument("--json", action="store_true", help="print the verdict as JSON")

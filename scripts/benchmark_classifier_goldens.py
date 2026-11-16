@@ -67,7 +67,8 @@ class Result:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = __doc__ or ("Benchmark the ADR-011 ensemble over the golden corpus.")
+    parser = argparse.ArgumentParser(description=description.splitlines()[0])
     parser.add_argument(
         "--goldens",
         type=Path,

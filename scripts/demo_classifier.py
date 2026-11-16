@@ -63,7 +63,10 @@ class _Row:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = __doc__ or (
+        "Classify prompts with the live classifier and show the routing decision."
+    )
+    parser = argparse.ArgumentParser(description=description.splitlines()[0])
     parser.add_argument(
         "prompts",
         nargs="*",

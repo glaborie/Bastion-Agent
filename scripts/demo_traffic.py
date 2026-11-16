@@ -120,7 +120,8 @@ class Demo:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = __doc__ or ("Drive realistic traffic through the guarded chat endpoint.")
+    parser = argparse.ArgumentParser(description=description.splitlines()[0])
     parser.add_argument(
         "--base-url",
         default=os.getenv("BASTION_BASE_URL", "http://localhost:8000"),
