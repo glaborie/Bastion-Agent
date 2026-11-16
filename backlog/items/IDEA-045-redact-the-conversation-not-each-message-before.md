@@ -1,6 +1,6 @@
 ### IDEA-045: Redact the conversation, not each message, before the PII routing decision
 
-- status: ready
+- status: active
 - priority: P0
 - phase: v0.3
 - area: agent
