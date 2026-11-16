@@ -1,6 +1,6 @@
 ### IDEA-053: Scope /api/audit/verify to the caller's tenant and bound its limit
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.3
 - area: gateway
@@ -29,6 +29,6 @@ more than a bounded number of rows.
 
 **Acceptance**
 
-- [ ] `limit` is capped at a documented maximum below the ledger size
-- [ ] `checked` and `first_bad_id` are tenant-scoped, or replaced by a per-tenant view
-- [ ] A test shows an operator of tenant A cannot learn the global record count
+- [x] `limit` is capped at a documented maximum below the ledger size
+- [x] `checked` and `first_bad_id` are tenant-scoped, or replaced by a per-tenant view
+- [x] A test shows an operator of tenant A cannot learn the global record count

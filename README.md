@@ -182,7 +182,7 @@ transaction, with a hash of the free-text reason (never the text itself).
 | GET | `/api/incidents` | operator or admin (HTML panel: 10 most recent `SECURITY_INCIDENT` rows) |
 | POST | `/api/approvals/{id}/action` | operator or admin + CSRF (cookie auth) |
 | GET | `/api/audit` | operator or admin (JSON/HTML, cursor paging) |
-| POST | `/api/audit/verify` | operator or admin + CSRF; full chain verification |
+| POST | `/api/audit/verify` | operator or admin + CSRF; bounded tenant-scoped verification (max 1,000 rows) |
 | POST | `/api/audit/{id}/escrow` | admin + CSRF; decrypt one pre-production escrow row and audit the read |
 | GET | `/api/sessions/{id}/timeline` | operator or admin |
 | GET | `/api/evals/latest` | operator or admin |

@@ -234,6 +234,42 @@ async def test_second_operator_approval_is_audited(
     assert verification.json()["checked"] == 1
 
 
+async def test_verify_chain_is_tenant_scoped_and_bounded(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    """An operator of tenant A cannot read the global ledger volume (ADR-015)."""
+    client, state = api
+    state["context"] = AuthContext(principal=BOB, method="bearer")
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as session:
+        for _ in range(2):
+            await append_audit_event(
+                session,
+                actor_id=ALICE.subject,
+                tenant_id="acme",
+                event_type=AuditEventType.INPUT_RECEIVED,
+            )
+        for _ in range(5):
+            await append_audit_event(
+                session,
+                actor_id="gina-sub",
+                tenant_id="globex",
+                event_type=AuditEventType.INPUT_RECEIVED,
+            )
+        await session.commit()
+
+    response = await client.post("/api/audit/verify")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["checked"] == 2  # not the seven-row global ledger
+    assert payload["first_bad_id"] is None
+
+    # One request cannot materialise more than the documented maximum.
+    too_large = await client.post("/api/audit/verify", params={"limit": 1_000_001})
+    assert too_large.status_code == 422
+
+
 async def test_expired_ticket_cannot_be_decided(
     api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
 ) -> None:

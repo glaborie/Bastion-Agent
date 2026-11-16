@@ -12,7 +12,12 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.audit import ChainVerification, append_audit_event, verify_audit_chain
+from db.audit import (
+    MAX_VERIFY_RECORDS,
+    ChainVerification,
+    append_audit_event,
+    verify_tenant_audit_chain,
+)
 from db.escrow import (
     EscrowDecryptionError,
     EscrowExpiredError,
@@ -108,17 +113,21 @@ async def list_audit(
     }
 
 
-@router.post("/api/audit/verify", summary="Verify the hash chain")
+@router.post("/api/audit/verify", summary="Verify the caller's hash chain window")
 async def verify_chain(
     request: Request,
-    limit: int | None = Query(default=None, ge=1, le=1_000_000),
+    limit: int = Query(default=MAX_VERIFY_RECORDS, ge=1, le=MAX_VERIFY_RECORDS),
     context: AuthContext = Depends(require_csrf),
     _authorized: AuthContext = Depends(require_roles("operator", "admin")),
     session: AsyncSession = Depends(get_db_session),
 ) -> Any:
-    """Recompute every record hash and link (or the most recent ``limit``)."""
+    """Verify the caller's tenant records in a bounded window (ADR-015).
+
+    The global chain pass remains a script/operator operation; this endpoint
+    never scans or counts another tenant's rows.
+    """
     try:
-        result = await verify_audit_chain(session, limit=limit)
+        result = await verify_tenant_audit_chain(session, tenant_id=context.tenant_id, limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -267,7 +276,7 @@ def _verification_fragment(result: ChainVerification) -> str:
     if result.ok:
         return (
             '<p><span class="badge badge-ok">intact</span> '
-            f"{result.checked} record(s) verified.</p>"
+            f"{result.checked} record(s) in this tenant verified.</p>"
         )
     return (
         '<p><span class="badge badge-bad">tampered</span> '
