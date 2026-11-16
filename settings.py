@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     session_refresh_leeway_seconds: int = 60
     session_cookie_secure: bool = False  # local stack is plain HTTP on loopback
     login_state_ttl_seconds: int = 600
+    #: HttpOnly cookie binding the authorization response to the browser that
+    #: started the flow; a callback whose state lacks it is refused (ADR-001).
+    login_state_cookie_name: str = "bastion_oidc_state"
     #: Cookie set while a logout is in flight. `/auth/login` sees it and adds
     #: `prompt=login`, so a racing dashboard poll cannot silently re-use the
     #: Keycloak SSO session before RP-initiated logout completes.

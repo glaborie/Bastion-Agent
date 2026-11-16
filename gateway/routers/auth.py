@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import secrets
 import urllib.parse
-from typing import Any
+from typing import Any, Final
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -39,6 +39,11 @@ from settings import get_settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+#: The cookie carries the state it was issued for, so a callback link opened in
+#: another browser has no matching value (ADR-001). Scoped to ``/auth``: only
+#: the login and callback routes need it.
+LOGIN_STATE_COOKIE_PATH: Final[str] = "/auth"
 
 _ERROR_DETAILS: dict[str, str] = {
     "access_denied": "Keycloak declined the sign-in request.",
@@ -82,12 +87,22 @@ async def login(
         ),
         status_code=status.HTTP_303_SEE_OTHER,
     )
+    response.set_cookie(
+        settings.login_state_cookie_name,
+        state,
+        max_age=settings.login_state_ttl_seconds,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+        path=LOGIN_STATE_COOKIE_PATH,
+    )
     response.headers["Cache-Control"] = "no-store"
     return response
 
 
 @router.get("/callback", include_in_schema=False)
 async def callback(
+    request: Request,
     code: str | None = Query(default=None, max_length=4096),
     state: str | None = Query(default=None, max_length=256),
     error: str | None = Query(default=None, max_length=128),
@@ -105,6 +120,11 @@ async def callback(
     login_state = await sessions.pop_login_state(state)
     if login_state is None:
         logger.info("Unknown or replayed login state")
+        return _error_redirect("state_expired")
+
+    settings = get_settings()
+    if not secrets.compare_digest(request.cookies.get(settings.login_state_cookie_name, ""), state):
+        logger.info("Login state cookie missing or mismatched")
         return _error_redirect("state_expired")
 
     try:
@@ -129,7 +149,6 @@ async def callback(
         logger.warning("Access token rejected at login", extra={"reason": exc.code})
         return _error_redirect("access_token_invalid")
 
-    settings = get_settings()
     response = RedirectResponse(
         safe_next_path(login_state.next_path),
         status_code=status.HTTP_303_SEE_OTHER,
@@ -143,6 +162,7 @@ async def callback(
         samesite="lax",
         path="/",
     )
+    response.delete_cookie(settings.login_state_cookie_name, path=LOGIN_STATE_COOKIE_PATH)
     response.delete_cookie(settings.logout_marker_cookie_name, path="/")
     response.headers["Cache-Control"] = "no-store"
     logger.info("Operator signed in", extra={"subject": record.principal.subject})
@@ -237,10 +257,12 @@ async def me(context: AuthContext = Depends(get_auth_context)) -> dict[str, Any]
 
 
 def _error_redirect(reason: str) -> RedirectResponse:
-    return RedirectResponse(
+    response = RedirectResponse(
         f"/auth/error?reason={urllib.parse.quote(reason)}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+    response.delete_cookie(get_settings().login_state_cookie_name, path=LOGIN_STATE_COOKIE_PATH)
+    return response
 
 
 def _end_session_url(id_token: str | None) -> str:
