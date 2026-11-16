@@ -151,6 +151,19 @@ services:
   # ---------------------------------------------------------------------------
   # Application tier: present the client certificate, verify the server.
   # ---------------------------------------------------------------------------
+  migrate:
+    environment:
+      DATABASE_SSL_MODE: verify-full
+      PKI_CA_CERT_PATH: /pki/ca/ca.crt
+      PKI_CLIENT_CERT_PATH: /pki/client/tls.crt
+      PKI_CLIENT_KEY_PATH: /pki/client/tls.key
+    volumes:
+      - ./pki/trust:/pki/ca:ro
+      - ./pki/gateway:/pki/client:ro
+    depends_on:
+      pki-issue:
+        condition: service_completed_successfully
+
   gateway:
     environment:
       DATABASE_SSL_MODE: verify-full

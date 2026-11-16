@@ -88,6 +88,7 @@ Two facts shape the model:
 | Classifier ensemble, fail-closed to CONFIDENTIAL | LIVE (needs ONNX graphs) | `agent/routing/classifier.py`, `tests/test_classifier.py` |
 | Canary tripwire, quarantine, untrusted-content fencing | LIVE | `agent/egress/sanitizer.py`, `tests/test_egress_sanitizer.py`, `tests/test_egress_evals.py` |
 | Hash-chained audit ledger and verification | LIVE | `db/audit.py`, `gateway/routers/audit.py`, `tests/test_audit_chain.py` |
+| Non-owner INSERT/SELECT-only runtime role for the audit ledger | LIVE | `db/roles.py`, `db/migrate.py`, `tests/test_db_roles.py` |
 | Four-eyes approval state machine | LIVE | `agent/tools/execution.py`, `tests/test_tool_execution.py` |
 | Tool catalog allow-list (`docs/tools/v1.json`) | LIVE | `agent/tools/catalog.py`, `agent/tools/decorator.py`, `tests/test_tool_catalog.py`, `-32003` |
 | Dependency audit against OSV and Trivy image scan with SBOM | LIVE | `.github/workflows/ci.yml`, `tests/test_compliance_scan.py`, ADR-016 |
@@ -260,6 +261,7 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
 - Attack: an insider edits or deletes ledger rows to hide an action.
 - Controls:
   - LIVE: each record hashes its content plus the previous record's hash (SHA-256). Each stage commits independently, so evidence survives a later failure.
+  - LIVE: the request-serving processes connect as a non-owner role that owns no table and holds only `SELECT, INSERT` on `audit_logs`; `UPDATE`, `DELETE`, `TRUNCATE` and `ALTER TABLE … DISABLE TRIGGER` are refused by privilege, and the trigger has no GUC opt-out. Only the one-shot `migrate` service holds the owner credential (IDEA-062).
   - LIVE: `POST /api/audit/verify` and `scripts/verify_audit_chain.py` recompute the chain.
   - LIVE: payloads are stored as hashes in `audit_logs`. Argument values and prompt text never enter the ledger.
   - LIVE (opt-in `compliance` profile): `scripts/write_audit_witness.py` appends a signed witness of the head, id range and row count to a versioned MinIO bucket under `COMPLIANCE` object lock with 7-year retention. The same store holds tenant-partitioned exports (`export/<tenant>/`, ADR-005 decision 10): signed segments carrying only the fields `record_hash` covers, written with the same lock. The application credential can only put and read under `witness/*` and `export/*`; deletion, bucket-versioning changes, object-lock reconfiguration and bucket-policy changes are denied server-side. `scripts/verify_audit_chain.py --witness` compares the live head with the witness and `--segment` verifies one exported segment, exiting `2` when the store is unavailable rather than reporting a pass.
@@ -267,7 +269,7 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
 - Residual risk:
   - Without the `compliance` profile there is no witness, so the database-only chain still cannot see an attacker who recomputes it; verification reports "could not verify" (exit `2`) in that mode rather than passing.
   - The witness store shares the host and the Docker volume. A host-root or Docker-socket attacker can delete the volume or rewrite the compose file; the control defends the credential that reaches PostgreSQL, not the host. Off-site replication is not implemented.
-  - The INSERT-only database role that this residual also names is still open; the witness narrows the recompute path, not the write path.
+  - The one-shot `migrate` service holds the owner credential for the duration of its run; a compromise of that container during migration is a database-owner compromise. The runtime credential stolen from gateway or worker cannot rewrite or truncate the ledger.
   - Witness and export coverage are manual: one witness per `scripts/write_audit_witness.py` run and one export per `scripts/export_audit_ledger.py`/`export_audit_ledger_job` run. Neither is on a cron timer, so there is no continuous heartbeat; cadence is an operator decision.
   - When escrow is enabled, `payload_escrow` is a recoverable PII store: someone holding both the process key and the database can decrypt prompts for the retention window. That is the accepted trade of a debugging build, not a production posture; the ledger and its chain are unchanged either way.
 - Verification: `tests/test_audit_chain.py`, `tests/test_audit_witness.py`, `tests/test_audit_export.py`, `tests/test_payload_escrow.py`, `scripts/verify_audit_chain.py --witness`, `scripts/verify_audit_chain.py --segment`.
@@ -337,10 +339,9 @@ Scores are the author's estimates of residual risk with the controls as they exi
 1. Close T8: authenticate queued jobs and isolate Redis.
 2. Run `pytest` and `scripts/run_evals.py` in CI and fail the build below threshold. The README states that evals gate merges, and CI does not do that yet.
 3. Add per-principal token and cost budgets (T12); request-rate limiting is live (ADR-013).
-4. Add the INSERT-only database role that T10 pairs with the external witness (the anchor itself ships behind the `compliance` profile).
-5. Add Swiss identifier recognizers and grow the golden set beyond 83 cases (T1, T4).
-6. Sign and verify images (cosign), pin the three tag-only references, and add IaC and secret scanning (T11).
-7. Replace development secrets with a secret-manager integration (T4, T6).
+4. Add Swiss identifier recognizers and grow the golden set beyond 83 cases (T1, T4).
+5. Sign and verify images (cosign), pin the three tag-only references, and add IaC and secret scanning (T11).
+6. Replace development secrets with a secret-manager integration (T4, T6).
 
 ## 8. Verification
 

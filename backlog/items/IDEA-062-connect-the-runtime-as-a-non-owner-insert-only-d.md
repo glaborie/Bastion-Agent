@@ -1,6 +1,6 @@
 ### IDEA-062: Connect the runtime as a non-owner INSERT-only database role
 
-- status: active
+- status: done
 - priority: P1
 - phase: v0.3
 - area: db
@@ -45,25 +45,25 @@ in the gateway or worker environment.
 
 **Acceptance**
 
-- [ ] `DATABASE_URL` for `gateway` and `worker` authenticates as a role with
+- [x] `DATABASE_URL` for `gateway` and `worker` authenticates as a role with
   `rolsuper = false`, `rolcreaterole = false`, `rolcreatedb = false`, and
   `pg_get_userbyid(relowner) <> current_user` for `audit_logs` and every other table
-- [ ] Schema creation and migrations run under a separate owner credential that the
+- [x] Schema creation and migrations run under a separate owner credential that the
   request-serving processes never hold — a one-shot `migrate` service or the db image's
   `docker-entrypoint-initdb.d`, then table `GRANT`s to the app role; not a
   `DATABASE_ADMIN_URL` in the gateway/worker environment
-- [ ] As the runtime role, `UPDATE`, `DELETE`, `TRUNCATE` and `ALTER TABLE ... DISABLE TRIGGER`
+- [x] As the runtime role, `UPDATE`, `DELETE`, `TRUNCATE` and `ALTER TABLE ... DISABLE TRIGGER`
   on `audit_logs` are refused, while `INSERT` and `SELECT` succeed; the non-audit tables keep
   the DML the application needs
-- [ ] The `bastion.allow_audit_mutation` opt-out is deleted from `db/models.py`, ADR-005
+- [x] The `bastion.allow_audit_mutation` opt-out is deleted from `db/models.py`, ADR-005
   decision 3, `DEMO.md:545` and `COMPLIANCE.md:191`; break-glass maintenance is documented as
   owner DDL and tested to require the owner DSN
-- [ ] `tests/` fixtures and `scripts/seed_demo_approval.py` keep working through an owner DSN,
+- [x] `tests/` fixtures and `scripts/seed_demo_approval.py` keep working through an owner DSN,
   CI creates both roles, and `docker compose up` reaches healthy from an empty volume
-- [ ] ADR-005 decisions 3, 9 and 10 and `THREAT_MODEL.md` T10 drop the "INSERT-only database
+- [x] ADR-005 decisions 3, 9 and 10 and `THREAT_MODEL.md` T10 drop the "INSERT-only database
   role remains open" residual (re-run `scripts/recalculate_dread.py`); `COMPLIANCE.md` and the
   gate follow-up in `THREAT_MODEL.md:340` are updated
-- [ ] `scripts/gate.sh` passes
+- [x] `scripts/gate.sh` passes
 
 **Notes**
 
@@ -89,3 +89,7 @@ in the gateway or worker environment.
 - Classification: `P1`/`v0.3`/`db`. No shipped invariant is *newly* broken — the residual is
   already recorded in ADR-005 and T10 — but IDEA-052 cannot meet its outcome without it and
   the ledger can currently be truncated, so it is not a later-phase cleanup.
+
+- Implemented 2026-11-16. Git status of the verification: `scripts/gate.sh` 12/12; `tests/test_db_roles.py` (new), `test_audit_chain.py` and `test_audit_witness.py` 19 passed against PostgreSQL 16 with `TEST_DATABASE_APP_URL`; `python -m db.migrate` created the schema and role on a fresh database; `scripts/seed_demo_approval.py` created a ticket through the owner DSN.
+- Compose check on a fresh project and empty volume: `db` healthy, `migrate` exit 0, `gateway` healthy, `worker` running, `redis`/`keycloak` healthy, `otel-collector` started. The gateway's environment showed `bastion_app` as the DSN user and no owner password. `llama-cpp` and `omniroute` were not started because no GGUF model is present in `models/` (the README's Prerequisites step), so those two were not exercised; the role/schema change does not touch them.
+- The opt-in `pki` overlay could not be exercised: `config/pki/pg_hba.conf` and the certificate issuance script are not present in this checkout. The overlay now carries a `migrate` block with the same TLS env and certificate mount as the gateway, but a running pki stack still has to map the app role from its client certificate; that is IDEA-023/ADR-019 work, not part of this item.

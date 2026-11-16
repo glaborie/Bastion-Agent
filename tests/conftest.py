@@ -43,6 +43,19 @@ requires_database = pytest.mark.skipif(
     reason="TEST_DATABASE_URL is not set",
 )
 
+#: The append-only trigger. Break-glass maintenance is owner DDL: disable it,
+#: mutate, re-enable. The runtime role can do none of those (IDEA-062).
+AUDIT_TRIGGER = "trg_audit_logs_append_only"
+
+
+async def disable_audit_guard(session: AsyncSession) -> None:
+    """Owner-only break-glass: let a test rewrite the ledger deliberately."""
+    await session.execute(text(f"ALTER TABLE audit_logs DISABLE TRIGGER {AUDIT_TRIGGER}"))
+
+
+async def enable_audit_guard(session: AsyncSession) -> None:
+    await session.execute(text(f"ALTER TABLE audit_logs ENABLE TRIGGER {AUDIT_TRIGGER}"))
+
 
 def _assert_safe_target() -> str:
     if not TEST_DATABASE_URL:

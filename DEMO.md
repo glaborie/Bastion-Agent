@@ -540,9 +540,10 @@ HINT:  blocked operation: UPDATE
 `POSTGRES_USER` / `POSTGRES_DB` if you changed them.)
 
 Each record commits the hash of the previous record, so deleting or mutating
-one entry would break verification for every later entry. The trigger blocks
-`UPDATE`/`DELETE` unless a transaction explicitly opts in
-(`bastion.allow_audit_mutation = on`, used only by integrity tests).
+one entry would break verification for every later entry. The runtime role
+cannot rewrite the ledger: it holds only `SELECT, INSERT`, and the trigger
+refuses `UPDATE`/`DELETE`; break-glass maintenance is owner DDL that disables
+the trigger, mutates and re-enables it with the owner credential.
 
 To show the external anchor, start the opt-in store and compare the head:
 
@@ -552,11 +553,11 @@ uv run python scripts/write_audit_witness.py
 uv run python scripts/verify_audit_chain.py --witness
 ```
 
-Then delete the last ledger row with the documented opt-out and re-run the
-verification. The chain still verifies (every surviving link is intact), but the
-witness comparison fails: the head moved after the witness was written. Without
-`--profile compliance`, `--witness` exits `2` instead of pretending the ledger
-is anchored.
+Then delete the last ledger row with owner break-glass DDL (disable the
+trigger, delete, re-enable) and re-run the verification. The chain still
+verifies (every surviving link is intact), but the witness comparison fails:
+the head moved after the witness was written. Without `--profile compliance`,
+`--witness` exits `2` instead of pretending the ledger is anchored.
 
 ---
 

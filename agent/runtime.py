@@ -85,7 +85,7 @@ from db.escrow import purge_expired_escrow
 from db.export import export_ledger
 from db.models import AuditEventType
 from db.redis import arq_redis_settings, get_redis
-from db.session import dispose_engine, init_models, session_scope
+from db.session import dispose_engine, session_scope
 from logging_setup import configure_logging
 from settings import get_settings
 from telemetry import configure_tracing, shutdown_tracing, span_attributes
@@ -104,7 +104,6 @@ async def startup(ctx: dict[str, Any]) -> None:
     configure_tracing(settings)
     # Gate 1: refuse to run with a registered tool the catalog has not approved.
     verify_registry()
-    await init_models()
     logger.info(
         "Bastion-Agent worker ready",
         extra={

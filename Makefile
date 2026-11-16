@@ -48,6 +48,8 @@ vault-export: ## Materialise infra creds from Vault into a gitignored .env.vault
 	  '# App secrets (JWT signing, HMAC, DLP master key, OAuth client secret,' \
 	  '# API keys) are read from Vault at runtime and never appear here.' \
 	  "POSTGRES_PASSWORD=$$($(VAULT_CLI) kv get -field=POSTGRES_PASSWORD bastion/db/postgres)" \
+	  "POSTGRES_APP_USER=$$($(VAULT_CLI) kv get -field=POSTGRES_APP_USER bastion/db/postgres)" \
+	  "POSTGRES_APP_PASSWORD=$$($(VAULT_CLI) kv get -field=POSTGRES_APP_PASSWORD bastion/db/postgres)" \
 	  "REDIS_PASSWORD=$$($(VAULT_CLI) kv get -field=REDIS_PASSWORD bastion/db/redis)" \
 	  "KEYCLOAK_ADMIN_PASSWORD=$$($(VAULT_CLI) kv get -field=KEYCLOAK_ADMIN_PASSWORD bastion/db/keycloak)" \
 	  "MINIO_ROOT_PASSWORD=$$($(VAULT_CLI) kv get -field=MINIO_ROOT_PASSWORD bastion/db/minio)" \
