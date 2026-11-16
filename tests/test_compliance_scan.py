@@ -278,6 +278,201 @@ def test_env_file_supplies_overrides_and_process_env_wins(tmp_path: Path) -> Non
     assert from_process.stdout.splitlines() == ["redis:7-alpine"]
 
 
+STEP_CA = (
+    "smallstep/step-ca:0.28.4@sha256:"
+    "0f88382ac5af5c6b7bbba0c6e8fcefef52aee6f22ea364df8e02a09ffd0d22f3"
+)
+VAULT_BASE = (
+    "hashicorp/vault:1.17.0@sha256:51e5f9b108e49aed025a27cbb66848911cb2bccee072057ba965b835a5427bce"
+)
+
+
+def test_overlays_add_their_images_to_the_base_set() -> None:
+    """The union is additive per file and the single-file invocation is unchanged."""
+    base = run_script(
+        "scripts/image_inventory.py", "--compose", "docker-compose.yml", "--no-env-file"
+    )
+    assert base.returncode == 0, base.stderr
+    base_images = base.stdout.splitlines()
+
+    union = run_script(
+        "scripts/image_inventory.py",
+        "--compose",
+        "docker-compose.yml",
+        "--compose",
+        "docker-compose.pki.yml",
+        "--compose",
+        "docker-compose.vault.yml",
+        "--no-env-file",
+    )
+    assert union.returncode == 0, union.stderr
+    images = union.stdout.splitlines()
+    assert images[: len(base_images)] == base_images
+    assert STEP_CA in images
+    assert VAULT_BASE in images
+
+    # The GPU overlay reuses the base image with another build target.
+    gpu = run_script(
+        "scripts/image_inventory.py",
+        "--compose",
+        "docker-compose.yml",
+        "--compose",
+        "docker-compose.gpu.yml",
+        "--no-env-file",
+    )
+    assert gpu.returncode == 0, gpu.stderr
+    assert gpu.stdout.splitlines() == base_images
+
+
+def test_inventory_resolves_an_anchor_declared_overlay_image(tmp_path: Path) -> None:
+    base = tmp_path / "docker-compose.yml"
+    base.write_text("services:\n  a:\n    image: alpine:3.20\n", encoding="utf-8")
+    overlay = tmp_path / "docker-compose.extra.yml"
+    overlay.write_text(
+        "x-extra-image: &extra-image\n"
+        "  image: ghcr.io/example/sidecar:1.2.3\n"
+        "  profiles: [extra]\n"
+        "\n"
+        "services:\n"
+        "  sidecar:\n"
+        "    <<: *extra-image\n"
+        "  ephemeral:\n"
+        "    image: busybox:1.36\n",
+        encoding="utf-8",
+    )
+
+    both = run_script(
+        "scripts/image_inventory.py",
+        "--compose",
+        str(base),
+        "--compose",
+        str(overlay),
+        "--no-env-file",
+    )
+    assert both.returncode == 0, both.stderr
+    assert both.stdout.splitlines() == [
+        "alpine:3.20",
+        "ghcr.io/example/sidecar:1.2.3",
+        "busybox:1.36",
+    ]
+
+    # An overlay on its own is a valid inventory; before IDEA-055 this exited 2.
+    overlay_only = run_script(
+        "scripts/image_inventory.py", "--compose", str(overlay), "--no-env-file"
+    )
+    assert overlay_only.returncode == 0, overlay_only.stderr
+    assert overlay_only.stdout.splitlines() == [
+        "ghcr.io/example/sidecar:1.2.3",
+        "busybox:1.36",
+    ]
+
+
+def test_an_overlay_required_variable_fails_closed(tmp_path: Path) -> None:
+    base = tmp_path / "docker-compose.yml"
+    base.write_text("services:\n  a:\n    image: alpine:3.20\n", encoding="utf-8")
+    overlay = tmp_path / "docker-compose.extra.yml"
+    overlay.write_text(
+        "services:\n  b:\n    image: ${OVERLAY_TAG:?set OVERLAY_TAG}\n", encoding="utf-8"
+    )
+    result = run_script(
+        "scripts/image_inventory.py",
+        "--compose",
+        str(base),
+        "--compose",
+        str(overlay),
+        "--no-env-file",
+    )
+    assert result.returncode == 2
+    assert "OVERLAY_TAG" in result.stderr
+
+
+def test_a_build_only_service_contributes_its_dockerfile_base(tmp_path: Path) -> None:
+    (tmp_path / "svc").mkdir()
+    (tmp_path / "svc" / "Dockerfile").write_text(
+        "FROM alpine:3.20 AS build\nFROM ghcr.io/example/app:2.0\n", encoding="utf-8"
+    )
+    overlay = tmp_path / "docker-compose.extra.yml"
+    overlay.write_text(
+        "services:\n  app:\n    build:\n      context: .\n      dockerfile: svc/Dockerfile\n",
+        encoding="utf-8",
+    )
+    result = run_script("scripts/image_inventory.py", "--compose", str(overlay), "--no-env-file")
+    assert result.returncode == 0, result.stderr
+    # The last FROM is the image the Dockerfile produces.
+    assert result.stdout.splitlines() == ["ghcr.io/example/app:2.0"]
+
+
+def test_scan_images_covers_every_overlay_by_default(tmp_path: Path) -> None:
+    """The documented command takes no arguments and still renders the union."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    scan = scripts / "scan_images.sh"
+    scan.write_text(
+        (ROOT / "scripts" / "scan_images.sh").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    scan.chmod(0o755)
+    for overlay in ("docker-compose.yml", "docker-compose.pki.yml", "docker-compose.gpu.yml"):
+        (tmp_path / overlay).write_text("services: {}\n", encoding="utf-8")
+    log = tmp_path / "uv.log"
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    uv = binary / "uv"
+    uv.write_text(
+        "#!/bin/bash\n"
+        f'echo "$*" >> "{log}"\n'
+        'case "$*" in\n'
+        "    *--required-vars*) ;;\n"
+        "    *--compose*) printf '%s\\n' bastion-agent:local ;;\n"
+        "    *--slug*) printf '%s\\n' bastion-agent-local ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker = binary / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '    "image inspect "*) exit 0 ;;\n'
+        '    "save "*) for last do :; done; touch "$last" ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    for path in (uv, docker):
+        path.chmod(0o755)
+
+    def run_scan(*args: str) -> None:
+        log.write_text("", encoding="utf-8")
+        result = subprocess.run(
+            [str(scan), *args],
+            cwd=tmp_path,
+            env={**os.environ, "PATH": f"{binary}:{os.environ['PATH']}"},
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+
+    run_scan()
+    invocations = [
+        line for line in log.read_text(encoding="utf-8").splitlines() if "--compose" in line
+    ]
+    # One call renders ${VAR:?} and one prints the inventory; both see the union.
+    assert len(invocations) == 2, invocations
+    assert sum("--required-vars" in line for line in invocations) == 1, invocations
+    for line in invocations:
+        assert "docker-compose.yml" in line, line
+        assert "docker-compose.pki.yml" in line, line
+        assert "docker-compose.gpu.yml" in line, line
+
+    run_scan("--compose", "docker-compose.pki.yml")
+    invocations = [
+        line for line in log.read_text(encoding="utf-8").splitlines() if "--compose" in line
+    ]
+    assert invocations
+    assert all("--compose docker-compose.pki.yml" in line for line in invocations)
+    assert not any("docker-compose.gpu.yml" in line for line in invocations)
+
+
 # ---------------------------------------------------------------------------
 # CVE gate
 # ---------------------------------------------------------------------------
@@ -521,3 +716,45 @@ def test_policy_file_is_valid(path: str) -> None:
     policy = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
     assert policy["version"] == 1
     assert isinstance(policy["ignore"], list)
+
+
+def test_a_policy_entry_can_suppress_an_overlay_only_image(tmp_path: Path) -> None:
+    """An image only an overlay declares is scoped like any other."""
+    slug = run_script("scripts/image_inventory.py", "--slug", STEP_CA).stdout.strip()
+    assert slug == "smallstep-step-ca-0.28.4"
+    report = write_report(tmp_path, slug, ["CVE-2026-0001"])
+
+    policy = write_policy(tmp_path, [ignore_entry(vulnerability_id="CVE-2026-0001", images=[slug])])
+    suppressed = run_script(
+        "scripts/check_trivy_report.py",
+        "--report",
+        str(report),
+        "--policy",
+        str(policy),
+        "--today",
+        "2026-11-16",
+    )
+    assert suppressed.returncode == 0, suppressed.stdout
+
+    # The same entry scoped to a different slug does not suppress it.
+    policy = write_policy(
+        tmp_path,
+        [ignore_entry(vulnerability_id="CVE-2026-0001", images=["hashicorp-vault-1.17.0"])],
+    )
+    unsuppressed = run_script(
+        "scripts/check_trivy_report.py",
+        "--report",
+        str(report),
+        "--policy",
+        str(policy),
+        "--today",
+        "2026-11-16",
+    )
+    assert unsuppressed.returncode == 1
+    assert "unsuppressed CRITICAL" in unsuppressed.stdout
+
+
+def test_the_scanner_is_never_given_an_ignorefile() -> None:
+    """trivy.yaml stays the only suppression path, applied after the report."""
+    scanner = (ROOT / "scripts" / "trivy-scan.sh").read_text(encoding="utf-8")
+    assert "--ignorefile" not in scanner

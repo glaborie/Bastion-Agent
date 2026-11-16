@@ -38,3 +38,44 @@ ignore:
     images: [redis-redisinsight-3.8]
     statement: "proxy-addr bundled in RedisInsight 3.8, the latest published tag; the redis-ui profile is optional and off the request path."
     expires: 2027-02-09
+
+  # ---------------------------------------------------------------------------
+  # IDEA-055: the images the overlays add, now that the inventory covers them.
+  # Measured on 2026-11-16 with the pinned Trivy; every finding below has an
+  # upstream fix, so the statement names the release that carries it and the
+  # expiry forces the bump. `ca` is the internal PKI side car (docker-compose.pki.yml)
+  # and `hashicorp/vault` is the dev-mode base of docker-compose.vault.yml; both
+  # are opt-in overlays that never start in the default stack.
+  # ---------------------------------------------------------------------------
+  - id: CVE-2024-41110
+    images: [hashicorp-vault-1.17.0]
+    statement: "docker/docker 25.0.5 vendored in the Vault dev image; fixed in the 25.0.6/26.1.5 releases, so the next Vault base bump clears it."
+    expires: 2026-12-16
+  - id: CVE-2025-68121
+    images: [hashicorp-vault-1.17.0, smallstep-step-ca-0.28.4]
+    statement: "Go stdlib in the Vault dev image (1.22.4) and step-ca (1.24.5); both binaries need an upstream rebuild on Go 1.24.13+, which is a base image bump."
+    expires: 2026-12-16
+  - id: CVE-2026-33186
+    images: [hashicorp-vault-1.17.0, smallstep-step-ca-0.28.4]
+    statement: "google.golang.org/grpc vendored in the Vault and step-ca binaries; fixed in grpc 1.79.3, reached by the next upstream rebuild of either image."
+    expires: 2026-12-16
+  - id: CVE-2025-44005
+    images: [smallstep-step-ca-0.28.4]
+    statement: "smallstep/certificates v0.28.4 in the internal CA side car; fixed in 0.29.0, so the accepted window ends with the step-ca bump."
+    expires: 2026-12-16
+  - id: CVE-2026-30836
+    images: [smallstep-step-ca-0.28.4]
+    statement: "smallstep/certificates v0.28.4 in the internal CA side car; fixed in 0.30.0, so the accepted window ends with the step-ca bump."
+    expires: 2026-12-16
+  - id: CVE-2026-31789
+    images: [smallstep-step-ca-0.28.4]
+    statement: "Alpine libcrypto3/libssl3 3.5.1-r0 in the step-ca image; fixed in 3.5.6-r0, delivered by the next step-ca base rebuild."
+    expires: 2026-12-16
+  - id: CVE-2026-33815
+    images: [smallstep-step-ca-0.28.4]
+    statement: "jackc/pgx v5.7.2 in the step-ca binary; fixed in 5.9.0, reached by the next step-ca release."
+    expires: 2026-12-16
+  - id: CVE-2026-33816
+    images: [smallstep-step-ca-0.28.4]
+    statement: "jackc/pgx v5.7.2 in the step-ca binary; fixed in 5.9.0, reached by the next step-ca release."
+    expires: 2026-12-16

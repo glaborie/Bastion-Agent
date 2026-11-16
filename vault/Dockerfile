@@ -4,7 +4,7 @@
 # Production: swap the entrypoint for the same image with a real config + storage
 # backend, and inject the unseal keys via a secrets manager or hardware module.
 # =============================================================================
-FROM hashicorp/vault:1.17.0
+FROM hashicorp/vault:1.17.0@sha256:51e5f9b108e49aed025a27cbb66848911cb2bccee072057ba965b835a5427bce
 
 # Copy config + policies + generated certs at build time.
 COPY vault/config.hcl /etc/vault.d/config.hcl

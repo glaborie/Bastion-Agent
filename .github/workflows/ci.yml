@@ -395,8 +395,8 @@ jobs:
           restore-keys: |
             trivy-db-${{ runner.os }}-
 
-      # Builds the local gateway image, exports every image the compose stack
-      # ships and scans the tarballs with the digest-pinned Trivy service (no
+      # Builds the local gateway image, exports every image the base file and
+      # its overlays declare and scans the tarballs with the digest-pinned Trivy service (no
       # Docker socket). Exits 1 on an unsuppressed CRITICAL or an expired entry
       # in trivy.yaml; writes artifacts/compliance/<date>/.
       - name: Scan images and publish the SBOM
