@@ -1,6 +1,6 @@
 ### IDEA-034: Unify duplicated demo approval-ticket creation
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.3
 - area: agent
