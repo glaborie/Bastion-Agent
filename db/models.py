@@ -42,6 +42,7 @@ from sqlalchemy import (
     LargeBinary,
     MetaData,
     Sequence,
+    SmallInteger,
     String,
     event,
     text,
@@ -53,12 +54,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from db.hashing import HASH_HEX_LENGTH as _HASH_HEX_LENGTH
-
 # Re-exported for callers that import the primitive from here (ADR-005 decision
 # 2); the definitions live in db.hashing and db.tokens. The redundant aliases
 # are what mark the re-export as explicit for mypy.
 # pylint: disable=useless-import-alias,unused-import
+from db.hashing import CURRENT_HASH_VERSION as CURRENT_HASH_VERSION
+from db.hashing import HASH_HEX_LENGTH as _HASH_HEX_LENGTH
 from db.hashing import canonical_payload_bytes as canonical_payload_bytes
 from db.hashing import canonical_timestamp as canonical_timestamp
 from db.hashing import compute_record_hash as compute_record_hash
@@ -232,6 +233,13 @@ class AuditLog(Base):
         _enum_column("audit_event_type", AuditEventType), nullable=False
     )
     payload_hash: Mapped[str] = mapped_column(String(_HASH_HEX_LENGTH), nullable=False)
+    #: Preimage version: 1 predates the metadata digest, 2 covers it.
+    hash_version: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=CURRENT_HASH_VERSION, server_default=text("2")
+    )
+    #: SHA-256 of ``canonical_payload_bytes(metadata_json)`` for v2 rows; NULL
+    #: on v1 rows, whose original preimage must keep verifying.
+    metadata_hash: Mapped[str | None] = mapped_column(String(_HASH_HEX_LENGTH), nullable=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -242,6 +250,11 @@ class AuditLog(Base):
         CheckConstraint("record_hash ~ '^[0-9a-f]{64}$'", name="record_hash_is_sha256_hex"),
         CheckConstraint("previous_hash ~ '^[0-9a-f]{64}$'", name="previous_hash_is_sha256_hex"),
         CheckConstraint("payload_hash ~ '^[0-9a-f]{64}$'", name="payload_hash_is_sha256_hex"),
+        CheckConstraint(
+            "(hash_version = 1 AND metadata_hash IS NULL) "
+            "OR (hash_version = 2 AND metadata_hash ~ '^[0-9a-f]{64}$')",
+            name="hash_version_metadata",
+        ),
         Index("ix_audit_logs_timestamp_id", "timestamp", "id"),
         Index("ix_audit_logs_tenant_timestamp_id", "tenant_id", "timestamp", "id"),
         Index("ix_audit_logs_session_id", "session_id"),
@@ -260,10 +273,22 @@ class AuditLog(Base):
             event_type=str(self.event_type),
             payload_hash=self.payload_hash,
             previous_hash=self.previous_hash,
+            hash_version=self.hash_version,
+            metadata_hash=self.metadata_hash,
         )
 
     def verify(self) -> bool:
-        """Constant-time check that the stored hash matches the record contents."""
+        """Constant-time check that the stored hash matches the record contents.
+
+        A v2 row also has to prove its ``metadata_hash`` still describes the
+        current ``metadata_json``: the record hash covers the digest column, so
+        checking only the hash would let an edit of the JSON metadata pass.
+        """
+        if self.hash_version >= 2 and (
+            self.metadata_hash is None
+            or not hmac.compare_digest(self.metadata_hash, hash_payload(self.metadata_json))
+        ):
+            return False
         return hmac.compare_digest(self.record_hash, self.compute_hash())
 
     def __repr__(self) -> str:
@@ -408,6 +433,33 @@ $$;
 # ---------------------------------------------------------------------------
 # Four-eyes pending approvals
 # ---------------------------------------------------------------------------
+
+
+#: The versioned hash columns are also added idempotently: ``create_all`` never
+#: alters an existing table, and a database that predates this change must keep
+#: its rows verifiable as v1 while new rows are written as v2. The CHECK name
+#: matches the model's naming convention so a fresh database needs no rewrite.
+AUDIT_HASH_VERSION_DDL: Final[tuple[str, ...]] = (
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS hash_version SMALLINT NOT NULL DEFAULT 1",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata_hash CHAR(64)",
+    """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_audit_logs_hash_version_metadata'
+    ) THEN
+        ALTER TABLE audit_logs
+            ADD CONSTRAINT ck_audit_logs_hash_version_metadata
+            CHECK (
+                (hash_version = 1 AND metadata_hash IS NULL)
+                OR (hash_version = 2 AND metadata_hash ~ '^[0-9a-f]{64}$')
+            );
+    END IF;
+END
+$$;
+""",
+)
 
 
 class PendingApproval(Base):

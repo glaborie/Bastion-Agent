@@ -30,7 +30,7 @@ from db.export import (
     segment_key,
     verify_segment,
 )
-from db.models import GENESIS_HASH, AuditEventType, compute_record_hash
+from db.models import GENESIS_HASH, AuditEventType, compute_record_hash, hash_payload
 from settings import Settings, get_settings
 from tests.conftest import requires_database
 
@@ -75,6 +75,37 @@ def make_rows(
     return rows
 
 
+def make_v2_rows() -> list[ExportRecord]:
+    """One v1 row followed by a v2 row whose preimage covers metadata."""
+    first = make_rows(1)[0]
+    metadata_hash = hash_payload({"approver_id": "carol", "outcome": "executed"})
+    timestamp = datetime(2026, 11, 16, 12, 0, 1, tzinfo=UTC)
+    payload_hash = f"{2:064x}"
+    record_hash = compute_record_hash(
+        record_id=2,
+        timestamp=timestamp,
+        actor_id="alice",
+        event_type=str(AuditEventType.TOOL_EXECUTED),
+        payload_hash=payload_hash,
+        previous_hash=first.record_hash,
+        hash_version=2,
+        metadata_hash=metadata_hash,
+    )
+    second = ExportRecord(
+        id=2,
+        timestamp=timestamp,
+        tenant_id="acme",
+        actor_id="alice",
+        event_type=str(AuditEventType.TOOL_EXECUTED),
+        payload_hash=payload_hash,
+        previous_hash=first.record_hash,
+        record_hash=record_hash,
+        hash_version=2,
+        metadata_hash=metadata_hash,
+    )
+    return [first, second]
+
+
 def segment(rows: list[ExportRecord], *, key: str = KEY) -> Any:
     return build_segment(tuple(rows), head_hash=rows[-1].record_hash, key=key)
 
@@ -86,6 +117,18 @@ def test_a_signed_segment_verifies() -> None:
     assert result.checked == 3
     assert result.links == 2
     assert result.gaps == 0
+
+
+def test_a_v2_segment_carries_and_verifies_the_metadata_digest() -> None:
+    """Offline verification recomputes a v2 preimage from the exported fields."""
+    built = segment(make_v2_rows())
+    result = verify_segment(built, KEY)
+
+    assert result.ok, result.reason
+    assert built.rows[1].to_dict()["hash_version"] == 2
+    assert built.rows[1].to_dict()["metadata_hash"] is not None
+    assert "hash_version" not in built.rows[0].to_dict()
+    assert built.manifest.rows_sha256 == rows_digest(built.rows)
 
 
 def test_the_manifest_carries_the_bounds_and_terminal_hash() -> None:
@@ -178,6 +221,26 @@ def test_cli_verifies_a_segment_file(tmp_path: Path) -> None:
         check=False,
     )
     assert tampered.returncode == 1, tampered.stderr
+
+
+def test_cli_verifies_a_v2_segment_file(tmp_path: Path) -> None:
+    key = get_settings().audit_witness_hmac_secret.get_secret_value()
+    built = segment(make_v2_rows(), key=key)
+    path = tmp_path / "segment-v2.json"
+    path.write_text(built.to_json(), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "scripts/verify_audit_chain.py", "--segment", str(path), "--json"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["checked"] == 2
 
 
 # ---------------------------------------------------------------------------

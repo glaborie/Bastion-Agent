@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
 from db.models import (
     AUDIT_APPEND_ONLY_DDL,
     AUDIT_EVENT_VOCABULARY_DDL,
+    AUDIT_HASH_VERSION_DDL,
     ESCROW_KIND_DDL,
     SCHEMA_INIT_LOCK_ID,
     TENANT_SCOPE_DDL,
@@ -179,9 +180,13 @@ async def init_models(engine: AsyncEngine | None = None) -> None:
         # created before ESCROW_ACCESSED existed.
         for statement in AUDIT_EVENT_VOCABULARY_DDL:
             await connection.execute(text(statement))
-        # ...and widen the escrow kind for databases created before
-        # egress_delivered existed.
+        # ADR-005 decisions 7-8: widen the escrow kind for databases created
+        # before ``egress_delivered`` existed.
         for statement in ESCROW_KIND_DDL:
+            await connection.execute(text(statement))
+        # ADR-005 decision 2: add the versioned hash columns to databases
+        # created before the metadata digest existed.
+        for statement in AUDIT_HASH_VERSION_DDL:
             await connection.execute(text(statement))
     logger.info(
         "Database schema ready",

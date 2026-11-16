@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -63,6 +64,25 @@ def test_record_hash_is_deterministic_and_links_previous() -> None:
     assert len(baseline) == 64
     assert baseline != compute_record_hash(**{**kwargs, "previous_hash": "b" * 64})
     assert baseline != compute_record_hash(**{**kwargs, "actor_id": "bob"})
+
+
+def test_record_hash_v2_binds_the_metadata_digest() -> None:
+    kwargs = {
+        "record_id": 1,
+        "timestamp": datetime(2026, 11, 16, 12, 0, 0, tzinfo=UTC),
+        "actor_id": "alice",
+        "event_type": AuditEventType.TOOL_EXECUTED.value,
+        "payload_hash": "a" * 64,
+        "previous_hash": GENESIS_HASH,
+    }
+    v1 = compute_record_hash(**kwargs)
+    v2 = compute_record_hash(**kwargs, hash_version=2, metadata_hash="b" * 64)
+    assert v2 != v1
+    assert v2 != compute_record_hash(**kwargs, hash_version=2, metadata_hash="c" * 64)
+    with pytest.raises(ValueError, match="metadata_hash"):
+        compute_record_hash(**kwargs, hash_version=2)
+    with pytest.raises(ValueError, match="v1"):
+        compute_record_hash(**kwargs, metadata_hash="b" * 64)
 
 
 def test_record_hash_rejects_malformed_digests() -> None:
@@ -166,6 +186,75 @@ async def test_tampering_with_payload_hash_breaks_verification(
     assert verification.ok is False
     assert verification.first_bad_id == target.id
     assert verification.reason == "record_hash does not match record contents"
+
+
+@pytest.mark.integration
+@requires_database
+async def test_metadata_edit_breaks_a_v2_row_while_a_v1_row_still_verifies(
+    session: AsyncSession,
+) -> None:
+    """The versioned preimage covers four-eyes metadata without rewriting v1."""
+    timestamp = datetime(2026, 11, 9, 12, 0, 0, tzinfo=UTC)
+    v1_payload = hash_payload({"n": 1})
+    v1_id = int((await session.execute(text("SELECT nextval('audit_logs_id_seq')"))).scalar_one())
+    session.add(
+        AuditLog(
+            id=v1_id,
+            timestamp=timestamp,
+            tenant_id="acme",
+            actor_id="alice",
+            event_type=AuditEventType.INPUT_RECEIVED,
+            payload_hash=v1_payload,
+            hash_version=1,
+            metadata_hash=None,
+            metadata_json={"n": 1},
+            previous_hash=GENESIS_HASH,
+            record_hash=compute_record_hash(
+                record_id=v1_id,
+                timestamp=timestamp,
+                actor_id="alice",
+                event_type=AuditEventType.INPUT_RECEIVED.value,
+                payload_hash=v1_payload,
+                previous_hash=GENESIS_HASH,
+            ),
+        )
+    )
+    await session.flush()
+
+    v2 = await append_audit_event(
+        session,
+        actor_id="bob",
+        tenant_id="acme",
+        event_type=AuditEventType.TOOL_EXECUTED,
+        payload={"tool": "execute_file_write"},
+        metadata_json={"approver_id": "carol", "initiator_id": "alice", "outcome": "executed"},
+    )
+    await session.commit()
+
+    assert (await verify_audit_chain(session)).ok
+
+    # Rewrite the four-eyes field out-of-band, as a compromised operator would.
+    await session.execute(text("SELECT set_config('bastion.allow_audit_mutation', 'on', true)"))
+    await session.execute(
+        text("UPDATE audit_logs SET metadata_json = CAST(:metadata AS jsonb) WHERE id = :id"),
+        {
+            "metadata": json.dumps(
+                {"approver_id": "mallory", "initiator_id": "alice", "outcome": "executed"}
+            ),
+            "id": v2.id,
+        },
+    )
+    await session.commit()
+    session.expire_all()
+
+    verification = await verify_audit_chain(session)
+    assert verification.ok is False
+    assert verification.first_bad_id == v2.id
+
+    v1_row = await session.get(AuditLog, v1_id)
+    assert v1_row is not None
+    assert v1_row.verify() is True
+    assert v1_row.metadata_json == {"n": 1}
 
 
 @pytest.mark.integration

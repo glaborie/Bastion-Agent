@@ -39,8 +39,10 @@ from settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-#: Bumped only if the segment or manifest body changes shape.
-EXPORT_VERSION: Final[int] = 1
+#: Bumped only if the segment or manifest body changes shape. Version 2 adds
+#: ``hash_version``/``metadata_hash`` to v2 rows; v1 segments and rows still
+#: verify unchanged.
+EXPORT_VERSION: Final[int] = 2
 
 #: Every object the export may create lives under this prefix.
 EXPORT_PREFIX: Final[str] = "export/"
@@ -74,9 +76,11 @@ class ExportRecord:
     payload_hash: str
     previous_hash: str
     record_hash: str
+    hash_version: int = 1
+    metadata_hash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        body: dict[str, Any] = {
             "id": self.id,
             "timestamp": canonical_timestamp(self.timestamp),
             "tenant_id": self.tenant_id,
@@ -86,6 +90,12 @@ class ExportRecord:
             "previous_hash": self.previous_hash,
             "record_hash": self.record_hash,
         }
+        # A v1 row keeps the v1 dictionary shape, so its ``rows_sha256`` still
+        # matches manifests written before the versioned preimage existed.
+        if self.hash_version >= 2:
+            body["hash_version"] = self.hash_version
+            body["metadata_hash"] = self.metadata_hash
+        return body
 
     @classmethod
     def from_row(cls, row: AuditLog) -> ExportRecord:
@@ -98,6 +108,8 @@ class ExportRecord:
             payload_hash=row.payload_hash,
             previous_hash=row.previous_hash,
             record_hash=row.record_hash,
+            hash_version=row.hash_version,
+            metadata_hash=row.metadata_hash,
         )
 
     @classmethod
@@ -111,6 +123,8 @@ class ExportRecord:
             payload_hash=str(raw["payload_hash"]),
             previous_hash=str(raw["previous_hash"]),
             record_hash=str(raw["record_hash"]),
+            hash_version=int(raw.get("hash_version", 1)),
+            metadata_hash=raw.get("metadata_hash"),
         )
 
 
@@ -312,6 +326,8 @@ def verify_segment(segment: ExportSegment, key: str) -> ExportVerification:
             event_type=record.event_type,
             payload_hash=record.payload_hash,
             previous_hash=record.previous_hash,
+            hash_version=record.hash_version,
+            metadata_hash=record.metadata_hash,
         )
         if recomputed != record.record_hash:
             return ExportVerification(

@@ -1,6 +1,6 @@
 ### IDEA-052: Cover the four-eyes fields with the audit chain hash
 
-- status: active
+- status: done
 - priority: P1
 - phase: v0.3
 - area: db
@@ -35,17 +35,17 @@ unchanged.
 
 **Acceptance**
 
-- [ ] `approver_id`, `initiator_id` and `outcome` are hash material for every new row: the
+- [x] `approver_id`, `initiator_id` and `outcome` are hash material for every new row: the
   record carries a `hash_version` and a `metadata_hash` (SHA-256 of the canonical
   `metadata_json` bytes, `canonical_payload_bytes`), and v2 rows hash those two fields under a
   `CHECK` that a v2 row has a 64-hex `metadata_hash` and a v1 row has none; v1 rows recompute
   with today's six fields, with no backfill
-- [ ] A test edits `metadata_json` on a v2 row and `verify_audit_chain` fails, while an
+- [x] A test edits `metadata_json` on a v2 row and `verify_audit_chain` fails, while an
   untouched v1 row still verifies
-- [ ] The tenant-segment export carries `hash_version` and `metadata_hash` in each row and in
+- [x] The tenant-segment export carries `hash_version` and `metadata_hash` in each row and in
   `rows_sha256`, so `scripts/verify_audit_chain.py --segment` still verifies a v2 segment
   offline (`db/export.py:308-316` recomputes from the exported fields alone)
-- [ ] ADR-005 decision 2 (preimage) and decision 3 (boundary) record the versioned preimage and
+- [x] ADR-005 decision 2 (preimage) and decision 3 (boundary) record the versioned preimage and
   state that the GUC escape hatch, the owner credential and `TRUNCATE` belong to IDEA-062
 
 **Notes**
