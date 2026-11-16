@@ -1,6 +1,6 @@
 ### IDEA-044: Scan the whole prompt for injection and confidentiality, not the first 8192 tokens
 
-- status: ready
+- status: active
 - priority: P0
 - phase: v0.3
 - area: agent
