@@ -1,6 +1,6 @@
 ### IDEA-047: Refuse caller-supplied system turns instead of appending them after the canary instruction
 
-- status: ready
+- status: active
 - priority: P1
 - phase: v0.3
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-012
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
