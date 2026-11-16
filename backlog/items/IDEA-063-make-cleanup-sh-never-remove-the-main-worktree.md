@@ -1,6 +1,6 @@
 ### IDEA-063: Make cleanup.sh never remove the main worktree
 
-- status: ready
+- status: active
 - priority: P1
 - phase: v0.3
 - area: tooling
