@@ -1,6 +1,6 @@
 ### IDEA-055: Scan the images that compose overlays add, not just the base file
 
-- status: inbox
+- status: active
 - priority: P2
 - phase: v0.3
 - area: security
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-016
 - created: 2026-11-14
-- updated: 2026-11-14
+- updated: 2026-11-16
 - source: session review on 2026-11-14 of ADR-016's coverage claim against the three compose overlays
 
 **Problem**
