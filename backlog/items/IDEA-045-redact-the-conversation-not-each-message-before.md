@@ -1,6 +1,6 @@
 ### IDEA-045: Redact the conversation, not each message, before the PII routing decision
 
-- status: active
+- status: done
 - priority: P0
 - phase: v0.3
 - area: agent
@@ -31,6 +31,6 @@ it routes local and the ledger records the entities found.
 
 **Acceptance**
 
-- [ ] A test posts two turns whose concatenation is a valid IBAN (and one with an email) and asserts the route is local
-- [ ] The ledger row for that turn records the entity types that were found
-- [ ] ADR-002 states the redaction unit (conversation, not message) and the test proves it
+- [x] A test posts two turns whose concatenation is a valid IBAN (and one with an email) and asserts the route is local
+- [x] The ledger row for that turn records the entity types that were found
+- [x] ADR-002 states the redaction unit (conversation, not message) and the test proves it

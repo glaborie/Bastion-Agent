@@ -263,16 +263,27 @@ async def _redact_messages(
     tenant_id: str,
     vault_session: str,
 ) -> tuple[list[ChatMessage], set[str], int]:
-    """Run the deterministic DLP stage over every turn."""
+    """Run the deterministic DLP stage over the conversation and every turn.
+
+    An identifier split across two adjacent turns matches neither half, so the
+    conversation is analysed as one text (no separator) for detection, entity
+    types and the ``pii_detected`` decision (ADR-002). The per-turn pass still
+    produces the redacted outbound payload. Tokens are stable per session, so a
+    value found by both passes is counted once.
+    """
+    conversation = await dlp.redact(
+        "".join(turn.content for turn in messages), vault_session, tenant_id=tenant_id
+    )
+    tokens = {entity.token for entity in conversation.entities}
+    entity_types = set(conversation.entity_types)
+
     redacted: list[ChatMessage] = []
-    entity_types: set[str] = set()
-    entity_count = 0
     for turn in messages:
         result = await dlp.redact(turn.content, vault_session, tenant_id=tenant_id)
         entity_types.update(entity.entity_type for entity in result.entities)
-        entity_count += len(result.entities)
+        tokens.update(entity.token for entity in result.entities)
         redacted.append(ChatMessage(role=turn.role, content=result.text, name=turn.name))
-    return redacted, entity_types, entity_count
+    return redacted, entity_types, len(tokens)
 
 
 def _blocked(status_code: int, detail: str) -> HTTPException:
