@@ -1,6 +1,6 @@
 ### IDEA-048: Bind the OIDC login state to the browser with a cookie
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.3
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-001
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
@@ -30,6 +30,6 @@ created.
 
 **Acceptance**
 
-- [ ] A test asserts `/auth/login` sets an HttpOnly state cookie
-- [ ] A callback presenting a valid state without that cookie is refused and creates no session
-- [ ] A callback with the matching cookie still succeeds
+- [x] A test asserts `/auth/login` sets an HttpOnly state cookie
+- [x] A callback presenting a valid state without that cookie is refused and creates no session
+- [x] A callback with the matching cookie still succeeds

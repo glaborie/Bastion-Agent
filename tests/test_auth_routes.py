@@ -123,6 +123,38 @@ async def test_login_redirects_with_state_nonce_and_pkce(harness: Any) -> None:
     assert harness["redis"] is not None
 
 
+async def test_login_sets_an_http_only_state_cookie(harness: Any) -> None:
+    response = await harness["client"].get("/auth/login")
+    state = urllib.parse.parse_qs(urllib.parse.urlsplit(response.headers["location"]).query)[
+        "state"
+    ][0]
+
+    cookies = response.headers.get_list("set-cookie")
+    cookie = next(value for value in cookies if value.startswith("bastion_oidc_state="))
+    assert f"bastion_oidc_state={state}" in cookie
+    assert "HttpOnly" in cookie
+    assert "SameSite=lax" in cookie
+    assert "Path=/auth" in cookie
+
+
+async def test_callback_without_the_state_cookie_is_refused(harness: Any) -> None:
+    login = await harness["client"].get("/auth/login")
+    state = urllib.parse.parse_qs(urllib.parse.urlsplit(login.headers["location"]).query)["state"][
+        0
+    ]
+    # Same browser, same valid state, but the binding cookie is gone.
+    harness["client"].cookies.clear()
+
+    response = await harness["client"].get(
+        "/auth/callback", params={"code": "good-code", "state": state}
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/auth/error?reason=state_expired")
+    assert "bastion_session" not in response.headers.get_list("set-cookie")
+    assert await harness["redis"].keys(SESSION_KEY_PREFIX + "*") == []
+
+
 async def test_callback_creates_a_server_side_session(harness: Any) -> None:
     login = await harness["client"].get("/auth/login", params={"next": "/dashboard/audit"})
     state = urllib.parse.parse_qs(urllib.parse.urlsplit(login.headers["location"]).query)["state"][
