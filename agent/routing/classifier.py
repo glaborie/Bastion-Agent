@@ -72,9 +72,9 @@ CATEGORY_REASONS: Final[Mapping[str, str]] = {
     "unauthorized_advice": "unauthorized_advice",
 }
 
-#: Cap the tokens considered per prompt/document. The graphs accept up to 8192
-#: positions; anything longer is windowed rather than silently truncated.
-_MAX_DOCUMENT_TOKENS: Final[int] = 8192
+#: The graphs accept a bounded number of positions per inference; longer text
+#: is scanned as overlapping windows so no token is dropped (ADR-011 §6).
+
 
 #: One token of padding when the tokenizer yields nothing (empty prompt).
 _EMPTY_ID: Final[int] = 0
@@ -374,7 +374,7 @@ class _OnnxGraph:
     def logits_windows(self, text: str) -> list[np.ndarray]:
         """Return one flattened logit array per sliding window."""
         encoding = self._tokenizer.encode(text or "")
-        ids = list(encoding.ids)[:_MAX_DOCUMENT_TOKENS]
+        ids = list(encoding.ids)
         if not ids:
             ids = [_EMPTY_ID]
         return [self._run(window) for window in _windows(ids, self._max_tokens)]
