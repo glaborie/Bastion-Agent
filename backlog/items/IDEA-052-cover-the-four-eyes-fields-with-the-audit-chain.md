@@ -1,6 +1,6 @@
 ### IDEA-052: Cover the four-eyes fields with the audit chain hash
 
-- status: ready
+- status: active
 - priority: P1
 - phase: v0.3
 - area: db
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-005
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
