@@ -1,6 +1,6 @@
 ### IDEA-053: Scope /api/audit/verify to the caller's tenant and bound its limit
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.3
 - area: gateway
