@@ -482,6 +482,9 @@ stages run in a fixed order and each one is audited before the next starts:
    `SECURITY_INCIDENT` records the routing-stage verdict. No answer exists that
    could fabricate a system prompt.
 4. Canary injection and fencing of `tool` messages as `<untrusted_content>`.
+   Only `user` and `tool` turns are accepted; a `system` or `assistant` turn is
+   rejected with `422` before any model call, so the gateway's canary
+   instruction is the only system message.
 5. Model call on the selected alias.
 6. `EGRESS_FILTERED` — canary scan, quarantine check and marker restoration.
    A billed response also writes `SECURITY_INCIDENT` and returns `502` with no

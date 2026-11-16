@@ -123,7 +123,8 @@
         setStatus("Prompt injection detected; the model answer was withheld.", "error");
         return;
       }
-      history.push(data.message);
+      /* Only caller turns are resent: the gateway refuses assistant and system
+         turns, so a model answer cannot be replayed as context (ADR-012). */
       renderTurn("assistant", data.message.content);
       renderBadges(data);
       setConversation(data.conversation_id);

@@ -86,7 +86,10 @@ MAX_MESSAGE_CHARS: Final[int] = 32_768
 MAX_TOTAL_CHARS: Final[int] = 65_536
 CONVERSATION_PATTERN: Final[str] = r"^[A-Za-z0-9._:-]{1,128}$"
 
-ChatRole = Literal["system", "user", "assistant", "tool"]
+#: Only caller-authored turns. The gateway writes the one system message and
+#: the model alone writes assistant turns, so neither is accepted here
+#: (ADR-012 section 3). ``tool`` stays because tool output is fenced as data.
+ChatRole = Literal["user", "tool"]
 
 #: Reason the classifier sets when the injection guard fires (ADR-011).
 _INJECTION_REASON: Final[str] = "prompt_injection_detected"

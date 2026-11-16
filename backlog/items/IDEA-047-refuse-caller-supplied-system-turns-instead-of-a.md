@@ -1,6 +1,6 @@
 ### IDEA-047: Refuse caller-supplied system turns instead of appending them after the canary instruction
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.3
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-012
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
@@ -30,6 +30,6 @@ caller cannot author turns in the model's own voice.
 
 **Acceptance**
 
-- [ ] A request with `role="system"` is rejected (422) and no model call is made
-- [ ] A test asserts exactly one system message in the upstream payload for a normal request
-- [ ] ADR-012 section 3 names the accepted roles and the reason for the allowlist
+- [x] A request with `role="system"` is rejected (422) and no model call is made
+- [x] A test asserts exactly one system message in the upstream payload for a normal request
+- [x] ADR-012 section 3 names the accepted roles and the reason for the allowlist
