@@ -1,6 +1,6 @@
 ### IDEA-056: Make the dev stack consume .env.vault for its infra credentials
 
-- status: inbox
+- status: active
 - priority: P2
 - phase: v0.3
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-14
-- updated: 2026-11-14
+- updated: 2026-11-16
 - source: 2026-11-14 review of the vault overlay (`vault-secrets-overlay`, PR #42) and its `make vault-export` output against a live Vault
 
 **Problem**
