@@ -9,7 +9,11 @@
 #   scripts/scan_images.sh                    # scan images already on the host
 #   scripts/scan_images.sh --build-missing    # build/pull what is absent first
 #   scripts/scan_images.sh --keep-work        # keep tarballs (debugging)
-#   scripts/scan_images.sh --compose FILE     # inventory from another compose file
+#   scripts/scan_images.sh --compose FILE     # inventory from these files (repeatable)
+#
+# The inventory is the additive union of docker-compose.yml and every
+# docker-compose.*.yml overlay, because that is the set of stacks a developer
+# can start. `--compose` replaces that default with exactly the files given.
 #   scripts/scan_images.sh --jobs 8           # concurrent registry pulls (default 4)
 #
 # Images are scanned one archive at a time so peak disk stays bounded.
@@ -24,7 +28,7 @@ cd "$ROOT" || exit 2
 
 BUILD_MISSING=0
 KEEP_WORK=0
-COMPOSE_FILE="docker-compose.yml"
+COMPOSE_FILES=()
 JOBS="${SCAN_JOBS:-4}"
 while (($#)); do
     case "$1" in
@@ -37,7 +41,7 @@ while (($#)); do
             ;;
         --compose)
             [[ $# -ge 2 ]] || { echo "scan-images: --compose needs a file" >&2; exit 2; }
-            COMPOSE_FILE="$2"
+            COMPOSE_FILES+=("$2")
             shift
             ;;
         -h | --help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
@@ -48,6 +52,17 @@ done
 
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "scan-images: --jobs must be a positive integer" >&2; exit 2; }
 
+if [ "${#COMPOSE_FILES[@]}" -eq 0 ]; then
+    COMPOSE_FILES=(docker-compose.yml)
+    for overlay in docker-compose.*.yml; do
+        [ -f "$overlay" ] && COMPOSE_FILES+=("$overlay")
+    done
+fi
+COMPOSE_ARGS=()
+for file in "${COMPOSE_FILES[@]}"; do
+    COMPOSE_ARGS+=(--compose "$file")
+done
+
 command -v docker >/dev/null || { echo "scan-images: docker is not on PATH" >&2; exit 2; }
 command -v uv >/dev/null || { echo "scan-images: uv is not on PATH" >&2; exit 2; }
 
@@ -57,11 +72,12 @@ while IFS= read -r name; do
     if [ -z "${!name:-}" ]; then
         export "$name=compliance-scan-render-only"
     fi
-done < <(uv run python scripts/image_inventory.py --required-vars)
+done < <(uv run python scripts/image_inventory.py --required-vars "${COMPOSE_ARGS[@]}")
 
-mapfile -t IMAGES < <(uv run python scripts/image_inventory.py --compose "$COMPOSE_FILE")
+echo "scan-images: inventory from ${COMPOSE_FILES[*]}"
+mapfile -t IMAGES < <(uv run python scripts/image_inventory.py "${COMPOSE_ARGS[@]}")
 if [ "${#IMAGES[@]}" -eq 0 ]; then
-    echo "scan-images: no images found in docker-compose.yml" >&2
+    echo "scan-images: no images found in ${COMPOSE_FILES[*]}" >&2
     exit 2
 fi
 

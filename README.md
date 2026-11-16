@@ -78,7 +78,8 @@ docker compose up -d --no-deps gateway worker   # only needed if a key was writt
 
 ### Upgrading the pinned images
 
-Every image the stack ships is scanned by `scripts/scan_images.sh` (see ADR-016).
+Every image the stack ships — the base compose file and each overlay — is scanned by
+`scripts/scan_images.sh` (see ADR-016).
 Two notes for the current pins:
 
 - **Keycloak 26.8.2** cannot open the H2 dev-file written by 26.0: it crash-loops
