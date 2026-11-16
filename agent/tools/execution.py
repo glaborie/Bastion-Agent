@@ -203,11 +203,10 @@ async def resume_approved_tool(
     if ticket.status is ApprovalStatus.PENDING:
         if ticket.token_expires_at > moment:
             raise ApprovalExecutionError("not_approved", "the ticket is still awaiting a decision")
-        ticket.status = ApprovalStatus.EXPIRED
+        await _expire_ticket(session, ticket, moment)
         await session.flush()
         logger.info("Approval expired", extra={"ticket_id": str(ticket.ticket_id)})
         return ToolExecutionResult(status=ToolStatus.EXPIRED, tool_name=ticket.tool_name)
-
     # From here the ticket is APPROVED.
     if not ticket.approver_id or ticket.approver_id == ticket.initiator_id:
         await _record_incident(session, ticket, "approver_missing_or_is_initiator")
@@ -334,7 +333,7 @@ async def expire_stale_approvals(
     )
     tickets = list((await session.execute(statement)).scalars())
     for ticket in tickets:
-        ticket.status = ApprovalStatus.EXPIRED
+        await _expire_ticket(session, ticket, moment)
     if tickets:
         await session.flush()
         logger.info("Expired stale approval tickets", extra={"count": len(tickets)})
@@ -658,6 +657,34 @@ async def _mark_failed(session: AsyncSession, ticket: PendingApproval, moment: d
     ticket.status = ApprovalStatus.FAILED
     ticket.executed_at = moment
     await session.flush()
+
+
+async def _expire_ticket(session: AsyncSession, ticket: PendingApproval, moment: datetime) -> None:
+    """Close a lapsed ticket as EXPIRED and append its terminal ledger row.
+
+    There is no operator behind an expiry, so the runtime is the actor.
+    ``decided_at`` is what makes the ticket appear in ``list_recently_decided``
+    instead of vanishing when it leaves the pending queue (ADR-010 decision 8).
+    """
+    ticket.status = ApprovalStatus.EXPIRED
+    ticket.decided_at = moment
+    await append_audit_event(
+        session,
+        actor_id=SYSTEM_ACTOR,
+        tenant_id=ticket.tenant_id,
+        event_type=AuditEventType.APPROVAL_EXPIRED,
+        session_id=ticket.session_id,
+        payload={
+            "ticket_id": str(ticket.ticket_id),
+            "tool": ticket.tool_name,
+            "request_fingerprint": ticket.request_fingerprint,
+        },
+        metadata_json={
+            "initiator_id": ticket.initiator_id,
+            "required_role": ticket.required_role,
+        },
+        timestamp=moment,
+    )
 
 
 def _coerce_uuid(value: uuid.UUID | str) -> uuid.UUID:
