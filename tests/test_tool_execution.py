@@ -96,7 +96,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(root))
     reset_settings_cache()
     try:
-        yield root
+        yield root / "acme"
     finally:
         reset_settings_cache()
 

@@ -1,6 +1,6 @@
 ### IDEA-051: Scope the tool workspace to the tenant
 
-- status: active
+- status: done
 - priority: P1
 - phase: v0.3
 - area: agent
@@ -28,6 +28,6 @@ Tool paths are namespaced per tenant and a read cannot cross a tenant boundary.
 
 **Acceptance**
 
-- [ ] A test shows tenant B cannot read a file tenant A wrote, and tenant A's content is unchanged
-- [ ] The catalog entry and `docs/tools/v1.json` state the tenant scoping
-- [ ] `uv run python scripts/validate_tool_catalog.py --check` passes
+- [x] A test shows tenant B cannot read a file tenant A wrote, and tenant A's content is unchanged
+- [x] The catalog entry and `docs/tools/v1.json` state the tenant scoping
+- [x] `uv run python scripts/validate_tool_catalog.py --check` passes
