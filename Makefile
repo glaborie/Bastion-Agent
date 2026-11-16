@@ -5,7 +5,12 @@
 # =============================================================================
 
 SHELL := /bin/bash
-COMPOSE := docker compose -f docker-compose.yml -f docker-compose.vault.yml
+# `.env.vault` (from `make vault-export`) wins over the hand-typed `.env` for the
+# keys it carries: a later --env-file takes precedence, and the app services load
+# it as a second env_file in docker-compose.yml. Without the file the render is
+# exactly the pre-IDEA-056 one, so a fresh clone and CI are unaffected.
+COMPOSE_ENV := --env-file .env$(if $(wildcard .env.vault), --env-file .env.vault,)
+COMPOSE := docker compose $(COMPOSE_ENV) -f docker-compose.yml -f docker-compose.vault.yml
 VAULT_CMD := docker compose -f docker-compose.vault.yml run --rm vault
 VAULT_ADDR := https://127.0.0.1:8200
 VAULT_TOKEN := dev-root-token-bastion
@@ -59,6 +64,10 @@ vault-export: ## Materialise infra creds from Vault into a gitignored .env.vault
 	@! grep -qE '^[A-Za-z_]+=$$' .env.vault || { rm -f .env.vault; \
 	  echo "[vault-export] FAILED: empty secret value (is Vault up and seeded? make vault-up)"; exit 1; }
 	@echo "[vault-export] done. .env.vault is gitignored."
+
+.PHONY: vault-check
+vault-check: ## Fail if .env.vault is incomplete or has drifted from Vault
+	uv run python scripts/check_env_vault.py --vault
 
 .PHONY: vault-list
 vault-list: ## List all secrets in Vault (paths only, no values)

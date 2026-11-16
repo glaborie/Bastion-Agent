@@ -120,6 +120,11 @@ x-app-build: &app-build
   env_file:
     - path: .env
       required: false
+    # Vault-materialised infra credentials override the hand-typed copy in .env;
+    # a later entry wins, and `required: false` keeps a tree without the file
+    # (CI, a fresh clone) rendering exactly as before (IDEA-056).
+    - path: .env.vault
+      required: false
   init: true
   restart: unless-stopped
   security_opt:
