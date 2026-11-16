@@ -1,6 +1,6 @@
 ### IDEA-053: Scope /api/audit/verify to the caller's tenant and bound its limit
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.3
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-015
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
