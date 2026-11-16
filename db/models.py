@@ -199,9 +199,10 @@ class AuditLog(Base):
     retained long after the DLP token vault has expired.
 
     Append-only is enforced by a PostgreSQL trigger (see the DDL listeners below),
-    not merely by convention. UPDATE/DELETE raise ``insufficient_privilege``
-    unless the transaction explicitly sets ``bastion.allow_audit_mutation = on``
-    (used only by integrity tests and break-glass maintenance).
+    not merely by convention. UPDATE and DELETE always raise
+    ``insufficient_privilege``; break-glass maintenance is owner DDL that
+    disables the trigger, and the runtime role can neither do that nor truncate
+    the table (IDEA-062).
     """
 
     __tablename__ = "audit_logs"
@@ -301,21 +302,16 @@ class AuditLog(Base):
 # Audit immutability guard (ADR-001 / ADR-005)
 # ---------------------------------------------------------------------------
 
-#: The ledger is append-only by construction. A row-level trigger rejects UPDATE
-#: and DELETE. Integrity tests (and documented break-glass maintenance) can opt
-#: out for the duration of one transaction with:
-#:     SELECT set_config('bastion.allow_audit_mutation', 'on', true);
-#: TRUNCATE is intentionally still allowed: it is a DDL reset (used by tests and
-#: disaster recovery), and it leaves the chain visibly empty rather than forked.
+#: The ledger is append-only by construction. A row-level trigger always rejects
+#: UPDATE and DELETE; break-glass maintenance is owner DDL (disable the trigger,
+#: mutate, re-enable) and the runtime role cannot run it. TRUNCATE is refused by
+#: table privilege for the runtime role and remains an explicit owner reset.
 _AUDIT_APPEND_ONLY_FUNCTION: Final[str] = """
 CREATE OR REPLACE FUNCTION bastion_audit_logs_append_only()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF current_setting('bastion.allow_audit_mutation', true) = 'on' THEN
-        RETURN COALESCE(NEW, OLD);
-    END IF;
     -- No format placeholders here: SQLAlchemy formats DDL strings.
     RAISE EXCEPTION 'audit_logs is append-only'
         USING ERRCODE = 'insufficient_privilege',

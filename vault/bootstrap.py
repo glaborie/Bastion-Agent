@@ -164,6 +164,8 @@ def seed_secrets() -> None:
         "db/postgres": {
             "POSTGRES_USER": "bastion",
             "POSTGRES_PASSWORD": os.urandom(24).hex(),
+            "POSTGRES_APP_USER": "bastion_app",
+            "POSTGRES_APP_PASSWORD": os.urandom(24).hex(),
             "POSTGRES_DB": "bastion",
         },
         "db/redis": {

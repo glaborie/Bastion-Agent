@@ -188,7 +188,7 @@ uv run python scripts/validate_rbac.py
 
 Retention is split across three stores, and they are not interchangeable (ADR-005 decisions 5, 9 and 10).
 
-- **Ledger rows** stay in PostgreSQL. Nothing deletes them: the append-only trigger refuses `UPDATE` and `DELETE`, `TRUNCATE` is an explicit DDL reset, and break-glass maintenance opts out per transaction with `set_config('bastion.allow_audit_mutation', 'on', true)`. Annual partitioning of the table is **not implemented**, so rows are retained in place.
+- **Ledger rows** stay in PostgreSQL. Nothing deletes them: the append-only trigger refuses `UPDATE` and `DELETE`, and the gateway/worker role holds only `SELECT, INSERT` on the table, so `TRUNCATE` and trigger DDL are refused by privilege. Break-glass maintenance is owner DDL — disable the trigger, mutate, re-enable — performed with the owner credential that only the one-shot `migrate` service holds (ADR-005 decision 3, IDEA-062). Annual partitioning of the table is **not implemented**, so rows are retained in place.
 - **Exported segments** are written by `scripts/export_audit_ledger.py` (or the `export_audit_ledger_job` worker job) into the `bastion-audit` bucket under `export/<tenant>/<first_id>-<last_id>.json`. Each segment is signed and carries the verifiable fields of every record, the segment bounds, the terminal hash and the global head at export time. The objects are written with `COMPLIANCE` object lock and the bucket's 7-year default, and the application credential is denied `DeleteObject`/`DeleteObjectVersion` and every retention or policy change. Running the export is manual; no schedule ships yet.
 - **Witness objects** live under `witness/<scope>/` in the same bucket with the same lock and default retention.
 

@@ -170,6 +170,8 @@ jobs:
     env:
       # The suite refuses to run destructive tests on a database whose name lacks "test".
       TEST_DATABASE_URL: postgresql+asyncpg://bastion:bastion@localhost:5432/bastion_test
+      # Least-privilege role provisioned by `python -m db.migrate` below.
+      TEST_DATABASE_APP_URL: postgresql+asyncpg://bastion_app:bastion_app@localhost:5432/bastion_test
       REDIS_TEST_URL: redis://localhost:6379/0
       # Audit-witness store (IDEA-021). Started below; without it the witness
       # tests skip, and the skip gate fails the job rather than hiding that.
@@ -219,6 +221,13 @@ jobs:
             --entrypoint /bin/bash \
             "${AUDIT_WITNESS_IMAGE}" /opt/bastion/init-audit-witness.sh ||
             { docker logs audit-witness; exit 1; }
+
+      - name: Create the runtime database role
+        run: uv run --no-sync python -m db.migrate
+        env:
+          DATABASE_URL: postgresql+asyncpg://bastion:bastion@localhost:5432/bastion_test
+          RUNTIME_DB_USER: bastion_app
+          RUNTIME_DB_PASSWORD: bastion_app
 
       - name: Run tests
         run: uv run --no-sync python -m pytest -p scripts.pytest_ci_shard --ci-shard=${{ matrix.shard }}/2 -ra --durations=10 --junitxml=pytest-report.xml

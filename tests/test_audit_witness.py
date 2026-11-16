@@ -41,7 +41,12 @@ from db.witness import (
     witness_matches,
 )
 from settings import Settings
-from tests.conftest import TEST_DATABASE_URL, requires_database
+from tests.conftest import (
+    TEST_DATABASE_URL,
+    disable_audit_guard,
+    enable_audit_guard,
+    requires_database,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -314,8 +319,9 @@ async def test_witness_catches_a_chain_recomputed_in_the_database(
 
     # Removing the tail leaves a chain that still verifies: every surviving link
     # is intact. Only the stored witness notices that the head moved.
-    await session.execute(text("SELECT set_config('bastion.allow_audit_mutation', 'on', true)"))
+    await disable_audit_guard(session)
     await session.execute(text("DELETE FROM audit_logs WHERE id = :id"), {"id": records[-1].id})
+    await enable_audit_guard(session)
     await session.commit()
 
     verification = await verify_audit_chain(session)
@@ -430,8 +436,9 @@ async def test_cli_exits_one_when_the_witness_disagrees(session: AsyncSession) -
     config = witness_settings()
     await publish_witness(await verify_audit_chain(session), settings=config)
 
-    await session.execute(text("SELECT set_config('bastion.allow_audit_mutation', 'on', true)"))
+    await disable_audit_guard(session)
     await session.execute(text("DELETE FROM audit_logs WHERE id = :id"), {"id": records[-1].id})
+    await enable_audit_guard(session)
     await session.commit()
 
     result = run_verify_witness()

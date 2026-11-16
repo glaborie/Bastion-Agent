@@ -25,7 +25,7 @@ from db.models import (
     compute_record_hash,
     hash_payload,
 )
-from tests.conftest import requires_database
+from tests.conftest import disable_audit_guard, enable_audit_guard, requires_database
 
 # ---------------------------------------------------------------------------
 # Pure functions
@@ -173,12 +173,13 @@ async def test_tampering_with_payload_hash_breaks_verification(
     await session.commit()
 
     # Rewrite history out-of-band, exactly as a compromised operator would.
-    # The append-only trigger only lets this through with an explicit opt-in.
-    await session.execute(text("SELECT set_config('bastion.allow_audit_mutation', 'on', true)"))
+    # Break-glass is owner DDL: disable the trigger, mutate, re-enable.
+    await disable_audit_guard(session)
     await session.execute(
         text("UPDATE audit_logs SET payload_hash = :hash WHERE id = :id"),
         {"hash": "f" * 64, "id": target.id},
     )
+    await enable_audit_guard(session)
     await session.commit()
     session.expire_all()
 
@@ -234,7 +235,7 @@ async def test_metadata_edit_breaks_a_v2_row_while_a_v1_row_still_verifies(
     assert (await verify_audit_chain(session)).ok
 
     # Rewrite the four-eyes field out-of-band, as a compromised operator would.
-    await session.execute(text("SELECT set_config('bastion.allow_audit_mutation', 'on', true)"))
+    await disable_audit_guard(session)
     await session.execute(
         text("UPDATE audit_logs SET metadata_json = CAST(:metadata AS jsonb) WHERE id = :id"),
         {
@@ -244,6 +245,7 @@ async def test_metadata_edit_breaks_a_v2_row_while_a_v1_row_still_verifies(
             "id": v2.id,
         },
     )
+    await enable_audit_guard(session)
     await session.commit()
     session.expire_all()
 
@@ -283,8 +285,9 @@ async def test_deleting_a_record_breaks_the_chain(session: AsyncSession) -> None
     )
     await session.commit()
 
-    await session.execute(text("SELECT set_config('bastion.allow_audit_mutation', 'on', true)"))
+    await disable_audit_guard(session)
     await session.execute(text("DELETE FROM audit_logs WHERE id = :id"), {"id": middle.id})
+    await enable_audit_guard(session)
     await session.commit()
     session.expire_all()
 

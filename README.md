@@ -60,6 +60,9 @@ mv models/Qwen2.5-7B-Instruct-Q4_K_M.gguf models/qwen2.5-7b-instruct-q4_k_m.gguf
 ls -lh models/qwen2.5-7b-instruct-q4_k_m.gguf   # must be ~4.7 GB, not 0 bytes
 
 # 4. Start full stack
+#    The one-shot `migrate` service creates the schema as the owner and grants
+#    the non-owner `bastion_app` role that gateway and worker connect as; both
+#    wait for it to finish (ADR-005 decision 3, IDEA-062).
 docker compose up -d
 
 # 5. Register the routing aliases (idempotent; writes OMNIROUTE_API_KEY to .env)

@@ -20,7 +20,12 @@ x-app-environment: &app-environment
   ENVIRONMENT: ${ENVIRONMENT:-local}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   # Container-internal topology (overrides the host-side values in .env).
-  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bastion}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-bastion}
+  # The app tier connects as the non-owner runtime role (IDEA-062); only the
+  # one-shot `migrate` service is given the owner credential. The host .env is
+  # still mounted for the rest of the settings, so blank the owner password in
+  # the app environment: nothing in gateway/worker reads it.
+  POSTGRES_PASSWORD: ""
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:-bastion_app}:${POSTGRES_APP_PASSWORD:-dev-only-app-password}@db:5432/${POSTGRES_DB:-bastion}
   DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
   DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-5}
   DATABASE_ECHO: ${DATABASE_ECHO:-false}
@@ -126,6 +131,25 @@ x-app-build: &app-build
 
 services:
   # ---------------------------------------------------------------------------
+  # One-shot owner migration: schema + least-privilege runtime role (IDEA-062)
+  # ---------------------------------------------------------------------------
+  migrate:
+    <<: *app-build
+    command: ["python", "-m", "db.migrate"]
+    environment:
+      <<: *app-environment
+      # Only this service holds the owner credential. It is absent from the
+      # gateway and worker environments by construction.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bastion}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-bastion}
+      RUNTIME_DB_USER: ${POSTGRES_APP_USER:-bastion_app}
+      RUNTIME_DB_PASSWORD: ${POSTGRES_APP_PASSWORD:-dev-only-app-password}
+      OTEL_SERVICE_NAME: bastion-migrate
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
   # Gateway: OIDC + RBAC, DLP pipeline, dashboard, health probes
   # ---------------------------------------------------------------------------
   gateway:
@@ -153,6 +177,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       keycloak:
@@ -192,6 +218,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       otel-collector:
