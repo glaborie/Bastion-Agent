@@ -592,6 +592,65 @@ async def test_worker_commits_a_catalog_refusal_after_the_request_rolls_back(
     }
 
 
+async def test_worker_commits_a_malformed_call_as_one_refusal(worker_db, workspace) -> None:
+    """A validation failure aborts the request transaction; one row must remain."""
+    from agent.runtime import execute_tool_job
+
+    result = await execute_tool_job(
+        {"job_id": "test-malformed-job"},
+        **signed_tool_job(
+            tool_name="execute_file_write",
+            actor_id="alice",
+            tenant_id="acme",
+            roles=["operator"],
+            session_id="sess-malformed",
+            arguments={"path": "reports/q3.txt"},
+        ),
+    )
+
+    assert result["status"] == "invalid_arguments"
+    factory = async_sessionmaker(worker_db, expire_on_commit=False)
+    async with factory() as fresh:
+        records = list((await fresh.execute(select(AuditLog).order_by(AuditLog.id))).scalars())
+        assert (await verify_audit_chain(fresh)).ok
+
+    assert [record.event_type for record in records] == [AuditEventType.TOOL_REQUESTED]
+    assert records[0].actor_id == "alice"
+    assert records[0].session_id == "sess-malformed"
+    assert records[0].metadata_json["tool"] == "execute_file_write"
+    assert records[0].metadata_json["outcome"] == "refused"
+    assert records[0].metadata_json["argument_keys"] == ["path"]
+
+
+async def test_worker_commits_a_failed_read_as_one_refusal(worker_db, workspace) -> None:
+    """The accepted and failed rows roll back, so a handler failure leaves one."""
+    from agent.runtime import execute_tool_job
+
+    result = await execute_tool_job(
+        {"job_id": "test-read-failure-job"},
+        **signed_tool_job(
+            tool_name="read_file",
+            actor_id="alice",
+            tenant_id="acme",
+            roles=["operator"],
+            session_id="sess-read-failure",
+            arguments={"path": "missing.txt"},
+        ),
+    )
+
+    assert result["status"] == "error"
+    factory = async_sessionmaker(worker_db, expire_on_commit=False)
+    async with factory() as fresh:
+        records = list((await fresh.execute(select(AuditLog).order_by(AuditLog.id))).scalars())
+        assert (await verify_audit_chain(fresh)).ok
+
+    assert [record.event_type for record in records] == [AuditEventType.TOOL_REQUESTED]
+    assert records[0].actor_id == "alice"
+    assert records[0].session_id == "sess-read-failure"
+    assert records[0].metadata_json["tool"] == "read_file"
+    assert records[0].metadata_json["outcome"] == "refused"
+
+
 # ---------------------------------------------------------------------------
 # Worker spans
 # ---------------------------------------------------------------------------
