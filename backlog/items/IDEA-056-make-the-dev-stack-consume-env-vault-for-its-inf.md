@@ -1,6 +1,6 @@
 ### IDEA-056: Make the dev stack consume .env.vault for its infra credentials
 
-- status: inbox
+- status: done
 - priority: P2
 - phase: v0.3
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-14
-- updated: 2026-11-14
+- updated: 2026-11-16
 - source: 2026-11-14 review of the vault overlay (`vault-secrets-overlay`, PR #42) and its `make vault-export` output against a live Vault
 
 **Problem**
@@ -21,10 +21,10 @@ One documented start path renders the stack from `.env.vault` for the five infra
 
 **Acceptance**
 
-- [ ] Precedence and completeness are proven, not assumed: with sentinel values written into a temp copy of `.env.vault`, the rendered output of the chosen mechanism (for example repeatable `--env-file`, `.env` first and `.env.vault` second) shows each sentinel in `DATABASE_URL`, `REDIS_URL`, the redis command and healthcheck, the Keycloak admin password and `MINIO_ROOT_PASSWORD` (`docker-compose.yml:23,27,264,276,282,325,524`), shows the `.env` value for those keys nowhere, and still resolves `VAULT_MASTER_KEY`, `APPROVAL_HMAC_SECRET`, `OMNIROUTE_ADMIN_PASSWORD` and the pgAdmin pair from `.env`; a committed `scripts/check_env_vault.py --render` (or pytest equivalent) asserts all three and fails when the `.env.vault` input is dropped
-- [ ] A committed check fails, naming only the key, when a required key is missing from `.env.vault` (this mode runs in CI, which has no Vault) and when a `.env.vault` value differs from the corresponding `bastion/db/*` entry in a live Vault (`make vault-check`, requires Vault); a test mutates both cases against temp copies, asserts a non-zero exit, and greps the output for a sentinel secret to prove no value is printed
-- [ ] With `.env.vault` absent, `make up` takes the implemented branch and that branch is proven: either the rendered config is identical to today's `.env`-only render, or the target prints one actionable line and exits before any container exists (`docker compose ps -q` empty); a test exercises the target in a copy of the tree and asserts the chosen branch, so a partially created stack fails the item
-- [ ] README-Vault.md (quick start 42-60, target table 119-132) and `.env.example` (header 4-5) describe the single documented path: no hand-typed `.env` instruction for the five, no second manual `--env-file` invocation, the five marked as Vault-materialised, and the minimum Compose version stated if repeatable `--env-file` is used; `grep -n "does not load" README-Vault.md` returns nothing
+- [x] Precedence and completeness are proven, not assumed: with sentinel values written into a temp copy of `.env.vault`, the rendered output of the chosen mechanism (for example repeatable `--env-file`, `.env` first and `.env.vault` second) shows each sentinel in `DATABASE_URL`, `REDIS_URL`, the redis command and healthcheck, the Keycloak admin password and `MINIO_ROOT_PASSWORD` (`docker-compose.yml:23,27,264,276,282,325,524`), shows the `.env` value for those keys nowhere, and still resolves `VAULT_MASTER_KEY`, `APPROVAL_HMAC_SECRET`, `OMNIROUTE_ADMIN_PASSWORD` and the pgAdmin pair from `.env`; a committed `scripts/check_env_vault.py --render` (or pytest equivalent) asserts all three and fails when the `.env.vault` input is dropped
+- [x] A committed check fails, naming only the key, when a required key is missing from `.env.vault` (this mode runs in CI, which has no Vault) and when a `.env.vault` value differs from the corresponding `bastion/db/*` entry in a live Vault (`make vault-check`, requires Vault); a test mutates both cases against temp copies, asserts a non-zero exit, and greps the output for a sentinel secret to prove no value is printed
+- [x] With `.env.vault` absent, `make up` takes the implemented branch and that branch is proven: either the rendered config is identical to today's `.env`-only render, or the target prints one actionable line and exits before any container exists (`docker compose ps -q` empty); a test exercises the target in a copy of the tree and asserts the chosen branch, so a partially created stack fails the item
+- [x] README-Vault.md (quick start 42-60, target table 119-132) and `.env.example` (header 4-5) describe the single documented path: no hand-typed `.env` instruction for the five, no second manual `--env-file` invocation, the five marked as Vault-materialised, and the minimum Compose version stated if repeatable `--env-file` is used; `grep -n "does not load" README-Vault.md` returns nothing
 
 **Notes**
 
@@ -34,3 +34,20 @@ One documented start path renders the stack from `.env.vault` for the five infra
 - Classification: `P2`/`v0.3`/`infra` per triage. It is a dev-experience defect in the overlay's start path, not the ADR-008 v0.5 secrets scope, and not `P0` because the stack still starts from `.env` exactly as before.
 - Honest limit: `.env.vault` stays plaintext at mode 600 and readable by the developer's processes. This removes the duplicate hand-typed copy and the silent drift, not the at-rest exposure `IDEA-020` addresses; `.gitignore:3` (`.env.*` with `!.env.example`) already covers the file, so no gitignore change is needed.
 - Scope: intake only. No Makefile, compose, script or document edit is part of this capture.
+- 2026-11-16: interpolation alone was not enough. The app services load `.env` as a
+  container `env_file` (the `x-app-build` anchor), so a value the overlay only interpolated
+  still reached the container from `.env`: the render check caught `POSTGRES_APP_PASSWORD` and
+  four others surviving. `.env.vault` is now a second `env_file` entry with `required: false`,
+  so the later file wins there too and a tree without it renders exactly as before.
+- 2026-11-16: `vault-export` materialises **seven** keys, not the five the acceptance names
+  (POSTGRES_APP_USER, POSTGRES_APP_PASSWORD and KEYCLOAK_CLIENT_SECRET included). The checker
+  covers all seven, and a test parses the Makefile export target so the map cannot drift.
+- 2026-11-16: `scripts/check_env_vault.py --render` renders a temporary project built from
+  copies of the two compose files and `.env.example`, because CI has no `.env`; the keys under
+  test are cleared from the child environment first, since Compose gives the process
+  environment precedence over `--env-file`. Both layers are covered: the sentinels must appear
+  with `.env.vault` and disappear when it is dropped, and `.env.example`'s values (also turned
+  into distinct sentinels) must not survive.
+- 2026-11-16: `make vault-check` fails closed without a Vault ("cannot read bastion/db/... — is
+  it up and unsealed?"), so it is a pre-start check rather than a CI gate; `--render` and the
+  offline completeness mode are what the suite runs.

@@ -52,12 +52,22 @@ make vault-export
 make up
 ```
 
-`make up` does not load `.env.vault` by itself. To feed the materialised creds
-to Compose, pass the file explicitly:
+That is the only start path. `make up` layers `.env.vault` over `.env` (a later
+`--env-file` wins) and the app services load it as a second `env_file`, so the
+credentials Vault materialised are the ones the stack runs with while every
+other setting still comes from `.env`. Without `.env.vault` the render is
+exactly the hand-typed-`.env` one, so a fresh clone still starts.
+
+If `.env.vault` is incomplete, or Vault has been rotated since it was written,
+`make vault-check` stops you before the stack starts:
 
 ```bash
-docker compose --env-file .env.vault -f docker-compose.yml -f docker-compose.vault.yml up -d
+make vault-check   # keys present, and every value still matches Vault
 ```
+
+The seven keys below are Vault-materialised; `.env` keeps a development copy so
+a clone without Vault still starts, and it is overridden whenever `.env.vault`
+exists.
 
 ## TLS certificate
 
@@ -124,6 +134,7 @@ what `vault/policies/*.hcl` grant read access to.
 | `make vault-down` | Stop Vault containers (the data volume persists) |
 | `make vault-shell` | Open an interactive shell in the Vault image |
 | `make vault-export` | Materialise infra creds into gitignored `.env.vault` (mode 600) |
+| `make vault-check` | Fail if `.env.vault` is incomplete or has drifted from Vault |
 | `make vault-list` | List secret paths under `bastion/` (no values) |
 | `make vault-rotate SECRET=db/postgres` | Patch a secret value (paths are relative to `bastion/`) |
 
