@@ -1,6 +1,6 @@
 ### IDEA-052: Cover the four-eyes fields with the audit chain hash
 
-- status: ready
+- status: active
 - priority: P1
 - phase: v0.3
 - area: db
