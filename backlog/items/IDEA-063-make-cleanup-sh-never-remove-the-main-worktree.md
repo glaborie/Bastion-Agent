@@ -1,6 +1,6 @@
 ### IDEA-063: Make cleanup.sh never remove the main worktree
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.3
 - area: tooling
@@ -35,18 +35,18 @@ removes merged linked worktrees and their branches as before.
 
 **Acceptance**
 
-- [ ] Running `scripts/dev/cleanup.sh` from a linked worktree never removes the
+- [x] Running `scripts/dev/cleanup.sh` from a linked worktree never removes the
       main worktree: the main path and its `.git` directory survive, and the
       merged linked worktree is still removed
-- [ ] The exclusion set is derived from `git worktree list --porcelain` (the
+- [x] The exclusion set is derived from `git worktree list --porcelain` (the
       first entry, or every entry that is not a linked worktree) rather than from
       the script's own directory, and the destructive fallback refuses a path
       that contains an active `.git` directory or is the main worktree
-- [ ] A test builds a throwaway repository with a main worktree and one merged
+- [x] A test builds a throwaway repository with a main worktree and one merged
       linked worktree, runs the script from inside the linked worktree, and
       asserts the main tree and its `.git` still exist and the linked worktree is
       gone
-- [ ] `scripts/dev/worktree.sh`/`cleanup.sh` keep their existing `--help` text
+- [x] `scripts/dev/worktree.sh`/`cleanup.sh` keep their existing `--help` text
       and the gate stays green (`uv run python scripts/check_backlog.py --check`
       at minimum; the full `scripts/gate.sh` when the fix lands)
 
