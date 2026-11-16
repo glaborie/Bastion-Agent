@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
@@ -19,12 +20,15 @@ from agent.routing.classifier import (
     _execution_providers,
     _graph_for_provider,
     _OnnxGraph,
+    _OnnxInjectionModel,
+    _OnnxSafetyModel,
     _operating_unsafe_threshold,
     _sigmoid,
     _softmax,
     _windows,
     decide_ensemble,
 )
+from agent.routing.client import ModelRouter, OmniRouteClient
 from settings import Settings
 
 THRESHOLDS = EnsembleThresholds(injection=0.662, unsafe=0.5, category=0.3)
@@ -391,6 +395,73 @@ def test_long_documents_are_windowed_with_overlap() -> None:
 
 def test_short_documents_are_a_single_window() -> None:
     assert _windows([1, 2, 3], window=40) == [[1, 2, 3]]
+
+
+# -- whole-prompt scanning (IDEA-044) -------------------------------------
+_LONG_TOKENS = 10_000
+_TAIL_MARKER = _LONG_TOKENS - 1
+
+
+class _LongTokenizer:
+    """A tokenizer that returns more tokens than a single graph window."""
+
+    def encode(self, text: str) -> SimpleNamespace:
+        return SimpleNamespace(ids=list(range(_LONG_TOKENS)))
+
+
+class _TailGraph(_OnnxGraph):
+    """Logits that only fire when the final token is inside the window."""
+
+    def __init__(self, behaviour: str) -> None:  # pylint: disable=super-init-not-called
+        self._tokenizer = _LongTokenizer()
+        self._max_tokens = 8192
+        self._behaviour = behaviour
+        self.seen: list[list[int]] = []
+
+    def _run(self, ids: list[int]) -> np.ndarray:
+        self.seen.append(list(ids))
+        hit = _TAIL_MARKER in ids
+        if self._behaviour == "injection":
+            return np.array([0.0, 20.0]) if hit else np.array([20.0, 0.0])
+        if self._behaviour == "privacy":
+            logits = np.full(len(SAFETY_LABELS), -20.0)
+            if hit:
+                logits[SAFETY_LABELS.index("privacy")] = 20.0
+            return logits
+        return np.full(len(SAFETY_LABELS), -20.0)
+
+
+def _tail_classifier(injection: str, safety: str) -> SensitivityClassifier:
+    return SensitivityClassifier(
+        injection_predictor=_OnnxInjectionModel(_TailGraph(injection)),
+        safety_predictor=_OnnxSafetyModel(_TailGraph(safety)),
+        injection_threshold=0.662,
+        safety_unsafe_threshold=0.5,
+        safety_category_threshold=0.3,
+    )
+
+
+def test_long_prompt_tail_tokens_are_scanned() -> None:
+    graph = _TailGraph("injection")
+    graph.logits_windows("x")
+    assert all(len(window) <= 8192 for window in graph.seen)
+    assert any(_TAIL_MARKER in window for window in graph.seen)
+
+
+def test_injection_in_the_tail_of_a_long_prompt_is_refused_locally() -> None:
+    classifier_ = _tail_classifier(injection="injection", safety="clean")
+    result = classifier_.classify("x")
+    assert result.label is Sensitivity.CONFIDENTIAL
+    assert result.reason == "prompt_injection_detected"
+    assert ModelRouter(classifier_, cast(OmniRouteClient, None)).route("x").local is True
+
+
+def test_unmarked_confidential_content_in_the_tail_routes_locally() -> None:
+    classifier_ = _tail_classifier(injection="clean", safety="privacy")
+    result = classifier_.classify("x")
+    assert result.label is Sensitivity.CONFIDENTIAL
+    assert result.reason == "privacy_risk"
+    assert ModelRouter(classifier_, cast(OmniRouteClient, None)).route("x").local is True
 
 
 # -- settings --------------------------------------------------------------

@@ -1,6 +1,6 @@
 ### IDEA-044: Scan the whole prompt for injection and confidentiality, not the first 8192 tokens
 
-- status: ready
+- status: done
 - priority: P0
 - phase: v0.3
 - area: agent
@@ -33,6 +33,6 @@ provider.
 
 **Acceptance**
 
-- [ ] A test builds a prompt above 8192 tokens with an injection as the last message and asserts the reason is `prompt_injection_detected`
-- [ ] A test builds a prompt above 8192 tokens with unmarked confidential content and asserts the route is local
-- [ ] ADR-011 section 6 and the classifier docstring describe what the code does, or are corrected
+- [x] A test builds a prompt above 8192 tokens with an injection as the last message and asserts the reason is `prompt_injection_detected`
+- [x] A test builds a prompt above 8192 tokens with unmarked confidential content and asserts the route is local
+- [x] ADR-011 section 6 and the classifier docstring describe what the code does, or are corrected
