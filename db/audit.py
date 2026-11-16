@@ -16,7 +16,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 _ALLOCATE_ID = text("SELECT nextval(CAST(:sequence AS regclass))")
 _ACQUIRE_CHAIN_LOCK = text("SELECT pg_advisory_xact_lock(:lock_id)")
 _LATEST_HASH = select(AuditLog.record_hash).order_by(AuditLog.id.desc()).limit(1)
+
+#: Maximum rows one tenant-scoped API verification may materialise. The global
+#: chain pass stays a script/operator operation (ADR-015 decision 5).
+MAX_VERIFY_RECORDS: Final[int] = 1000
 
 
 class AuditChainError(RuntimeError):
@@ -211,4 +215,54 @@ async def verify_audit_chain(
         first_id=records[0].id,
         last_id=records[-1].id,
         head_hash=expected_previous,
+    )
+
+
+async def verify_tenant_audit_chain(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    limit: int = MAX_VERIFY_RECORDS,
+) -> ChainVerification:
+    """Verify the caller's own rows in a bounded window (ADR-015 decision 5).
+
+    The chain is global, so rows from other tenants interleave and a per-tenant
+    link check cannot prove the global sequence. This pass recomputes each
+    selected row's own hash and reports only this tenant's count and first bad
+    row: no global record count, global id or global head is disclosed, and one
+    request materialises at most :data:`MAX_VERIFY_RECORDS` rows.
+    """
+    if limit <= 0:
+        raise ValueError("limit must be a positive integer")
+    capped = min(limit, MAX_VERIFY_RECORDS)
+    tail_ids = (
+        select(AuditLog.id)
+        .where(AuditLog.tenant_id == tenant_id)
+        .order_by(AuditLog.id.desc())
+        .limit(capped)
+        .subquery()
+    )
+    statement = (
+        select(AuditLog).where(AuditLog.id.in_(select(tail_ids.c.id))).order_by(AuditLog.id.asc())
+    )
+    records = list((await session.execute(statement)).scalars())
+    if not records:
+        return ChainVerification(ok=True, checked=0)
+
+    checked = 0
+    for record in records:
+        if not record.verify():
+            return ChainVerification(
+                ok=False,
+                checked=checked,
+                first_bad_id=record.id,
+                reason="record_hash does not match record contents",
+            )
+        checked += 1
+    logger.debug("Tenant audit window verified", extra={"tenant": tenant_id, "checked": checked})
+    return ChainVerification(
+        ok=True,
+        checked=checked,
+        first_id=records[0].id,
+        last_id=records[-1].id,
     )
