@@ -105,8 +105,9 @@ without its document fails CI, not review.
   assume the base.
 - Do not stack pull requests. Merge the base first, then open the next one, or
   the second PR carries the first PR's commits.
-- Run `gh pr list --head <branch>` before `gh pr create`; a backgrounded
-  create plus a retry produces "already exists".
+- A push is not finished until its pull request exists: every pushed branch
+  gets a PR in the same turn. Run `gh pr list --head <branch>` before
+  `gh pr create`; a backgrounded create plus a retry produces "already exists".
 - At merge time, run `scripts/dev/cleanup.sh` (dry-run first): it removes the
   worktree and deletes local and remote branches only where the pull request is
   merged, and reports the rest.
