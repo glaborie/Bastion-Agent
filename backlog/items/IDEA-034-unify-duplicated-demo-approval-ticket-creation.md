@@ -1,6 +1,6 @@
 ### IDEA-034: Unify duplicated demo approval-ticket creation
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.3
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-010
 - created: 2026-11-12
-- updated: 2026-11-12
+- updated: 2026-11-16
 - source: review of `agent/demo/scenarios.py` and `scripts/seed_demo_approval.py`, 2026-11-12
 
 **Problem**

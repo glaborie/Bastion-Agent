@@ -1,6 +1,6 @@
 ### IDEA-043: Scope pyright to the shipped packages and fix the __doc__ indexing sites
 
-- status: inbox
+- status: ready
 - priority: P3
 - phase: v0.3
 - area: tooling
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: session on 2026-11-13 after `[tool.pyright] venvPath`/`venv` stopped masking pyright's view
 
 **Problem**
