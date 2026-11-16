@@ -1,6 +1,7 @@
 ### IDEA-052: Cover the four-eyes fields with the audit chain hash
 
-- status: active
+- status: blocked
+- blocked-by: acceptance criteria need clarification
 - priority: P1
 - phase: v0.3
 - area: db
@@ -35,3 +36,7 @@ settable by the application role.
 - [ ] A test shows that editing `metadata_json` makes verification fail
 - [ ] The runtime database role cannot set `bastion.allow_audit_mutation` (explicit `GRANT`/`REVOKE`)
 - [ ] ADR-005 decision 3 records the boundary
+
+**Notes**
+
+- Blocked 2026-11-16 on acceptance 3. PostgreSQL 16 cannot express "the runtime role cannot set `bastion.allow_audit_mutation`" with `GRANT`/`REVOKE`: the name is a placeholder custom GUC, so `GRANT SET ON PARAMETER` succeeds but a non-superuser can still `SET` it (verified against a throwaway `postgres:16-alpine`: after `REVOKE SET ... FROM PUBLIC, app` the role still set it and `has_parameter_privilege` returned false), and `ALTER SYSTEM SET` rejects the unrecognised placeholder so it never becomes a registered parameter. The runtime also connects as the bootstrap `POSTGRES_USER` superuser, which bypasses any parameter or table privilege. What is missing is the INSERT-only, non-superuser runtime role that ADR-005 decisions 9/10 and `THREAT_MODEL.md` T10 already record as open, plus a migration owner distinct from the runtime (today `init_models` creates and alters the schema at gateway/worker startup as the runtime role). That changes `docker-compose.yml`, the `DATABASE_URL`/`.env` contract, CI and the test fixtures, and it is not captured as a ready item. Acceptance 1 additionally needs a versioned hash input so v1 rows keep verifying (IDEA-059 Notes), which is worth deciding in the same pass. Triage should either capture the runtime-role split first and re-scope this item to the metadata digest once it lands, or drop acceptance 3 and keep the hash-coverage half as its own item.
