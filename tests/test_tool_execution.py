@@ -33,6 +33,7 @@ from agent.tools.decorator import (
     unregister_tool,
 )
 from agent.tools.execution import (
+    SYSTEM_ACTOR,
     ApprovalExecutionError,
     approved_ticket_ids,
     expire_stale_approvals,
@@ -50,7 +51,7 @@ from db.models import (
     hash_approval_token,
     utcnow,
 )
-from gateway.approvals import ApprovalDecisionError, decide_ticket
+from gateway.approvals import ApprovalDecisionError, decide_ticket, list_recently_decided
 from settings import get_settings, reset_settings_cache
 from tests.conftest import requires_database
 
@@ -345,6 +346,29 @@ async def test_expired_ticket_is_closed_without_executing(session: AsyncSession,
     assert not (workspace / "reports/q3.txt").exists()
 
 
+async def test_resume_expiry_is_audited_and_marked_decided(
+    session: AsyncSession, workspace
+) -> None:
+    pending = await request_write(session, now=utcnow() - timedelta(hours=2))
+    assert pending.ticket_id is not None
+
+    result = await resume_approved_tool(session, ticket_id=pending.ticket_id)
+
+    assert result.status is ToolStatus.EXPIRED
+    ticket = await session.get(PendingApproval, uuid.UUID(pending.ticket_id))
+    assert ticket is not None
+    assert ticket.status is ApprovalStatus.EXPIRED
+    assert ticket.decided_at is not None
+    expired = [
+        record
+        for record in await events(session)
+        if record.event_type is AuditEventType.APPROVAL_EXPIRED
+    ]
+    assert len(expired) == 1
+    assert expired[0].actor_id == SYSTEM_ACTOR
+    assert expired[0].session_id == "sess-tool"
+
+
 async def test_tampered_arguments_fail_closed_and_flag_an_incident(
     session: AsyncSession, workspace
 ) -> None:
@@ -416,6 +440,30 @@ async def test_expire_sweep_closes_only_lapsed_tickets(session: AsyncSession, wo
     fresh_ticket = await session.get(PendingApproval, uuid.UUID(str(fresh.ticket_id)))
     assert old_ticket is not None and old_ticket.status is ApprovalStatus.EXPIRED
     assert fresh_ticket is not None and fresh_ticket.status is ApprovalStatus.PENDING
+
+
+async def test_expire_sweep_audits_and_lists_the_ticket(session: AsyncSession, workspace) -> None:
+    old = await request_write(session, now=utcnow() - timedelta(hours=1))
+    assert old.ticket_id is not None
+
+    assert await expire_stale_approvals(session) == 1
+
+    ticket = await session.get(PendingApproval, uuid.UUID(old.ticket_id))
+    assert ticket is not None
+    assert ticket.status is ApprovalStatus.EXPIRED
+    assert ticket.decided_at is not None
+    expired = [
+        record
+        for record in await events(session)
+        if record.event_type is AuditEventType.APPROVAL_EXPIRED
+    ]
+    assert len(expired) == 1
+    assert expired[0].actor_id == SYSTEM_ACTOR
+    assert expired[0].session_id == "sess-tool"
+
+    decided = await list_recently_decided(session, tenant_id="acme")
+    assert [view.ticket_id for view in decided] == [old.ticket_id]
+    assert decided[0].status == "expired"
 
 
 async def test_approved_ticket_ids_drives_the_safety_net(session: AsyncSession, workspace) -> None:

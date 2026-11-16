@@ -1,6 +1,6 @@
 ### IDEA-050: Audit both approval expiry paths and mark the ticket decided
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.3
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-010
 - created: 2026-11-13
-- updated: 2026-11-13
+- updated: 2026-11-16
 - source: security review of feat/backlog-list on 2026-11-13
 
 **Problem**
@@ -28,6 +28,6 @@ list.
 
 **Acceptance**
 
-- [ ] Both expiry paths append an `APPROVAL_EXPIRED` event and set `decided_at`
-- [ ] A test forces a ticket past its expiry, runs the sweep, and asserts the ledger row
-- [ ] The expired ticket appears in `list_recently_decided`
+- [x] Both expiry paths append an `APPROVAL_EXPIRED` event and set `decided_at`
+- [x] A test forces a ticket past its expiry, runs the sweep, and asserts the ledger row
+- [x] The expired ticket appears in `list_recently_decided`
