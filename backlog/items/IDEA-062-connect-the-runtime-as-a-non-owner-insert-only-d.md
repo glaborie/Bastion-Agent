@@ -1,6 +1,6 @@
 ### IDEA-062: Connect the runtime as a non-owner INSERT-only database role
 
-- status: ready
+- status: active
 - priority: P1
 - phase: v0.3
 - area: db
