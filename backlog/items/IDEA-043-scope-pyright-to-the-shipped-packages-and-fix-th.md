@@ -1,6 +1,6 @@
 ### IDEA-043: Scope pyright to the shipped packages and fix the __doc__ indexing sites
 
-- status: ready
+- status: active
 - priority: P3
 - phase: v0.3
 - area: tooling
