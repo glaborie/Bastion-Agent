@@ -79,8 +79,12 @@ vault-rotate: ## Rotate a secret: make vault-rotate SECRET=db/postgres
 	@echo "Rotated bastion/$(SECRET). Re-run \`make vault-export\` for infra creds."
 
 # ---- Stack lifecycle --------------------------------------------------------
+.PHONY: preflight
+preflight: ## Drop containers whose network the daemon deleted, so up can recreate them
+	uv run python scripts/dev/compose_preflight.py
+
 .PHONY: up
-up: ## Start the full stack (requires Vault)
+up: preflight ## Start the full stack (requires Vault)
 	$(COMPOSE) up -d
 
 .PHONY: down

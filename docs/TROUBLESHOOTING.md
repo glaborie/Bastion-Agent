@@ -27,6 +27,42 @@ docker compose exec redis sh -c \
   'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "auth:subject-sessions:*"'
 ```
 
+## `docker compose up` aborts with `Could not attach to network …: network … not found`
+
+**Symptom.** `docker compose up -d` starts db, Redis, Keycloak and migrate, then
+stops with
+
+```
+Error response from daemon: failed to set up container networking:
+Could not attach to network 3cdb3d40…: rpc error: code = NotFound desc:
+network 3cdb3d40… not found
+```
+
+and the services that failed sit in `Created`. Recreating them with
+`docker compose rm -sf` does not help, because the next `up` reuses them.
+
+**Cause.** A container stores its network binding by *id*. When a network is
+deleted and recreated under a long-lived container — a Docker Desktop restart, a
+`docker network prune`, a chaos run — the stored endpoint id survives while the
+network with that id does not, and the daemon refuses to attach. `docker network
+ls` shows the network under its current id, so the id in the error appears
+nowhere, and `docker inspect <container>` still names the network correctly. The
+stale containers are the ones created before the network was recreated;
+`docker inspect <name> --format '{{json .NetworkSettings.Networks}}'` shows the
+old `NetworkID` on exactly those.
+
+**Fix.** Remove the containers bound to the dead id; compose recreates them on
+the current network, and volumes are untouched:
+
+```bash
+uv run python scripts/dev/compose_preflight.py --dry-run   # which ones
+uv run python scripts/dev/compose_preflight.py             # remove them
+```
+
+`make up` runs the same preflight first, so the check no longer has to be
+remembered. Observe the rule: deleting the *network* while containers are up is
+what starts this, so `docker network prune` on a running stack is not safe.
+
 ## Host processes get `Connection reset by peer` from Postgres or Redis
 
 **Symptom.** After a `docker compose restart`, a `docker compose up -d` or a
