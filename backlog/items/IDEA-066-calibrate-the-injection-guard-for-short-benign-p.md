@@ -1,6 +1,6 @@
 ### IDEA-066: Calibrate the injection guard for short benign prompts
 
-- status: inbox
+- status: active
 - priority: P2
 - phase: v0.4
 - area: agent
