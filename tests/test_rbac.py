@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -228,3 +230,20 @@ def test_an_expired_bearer_token_is_a_generic_401() -> None:
     assert response.json()["detail"] == "authentication required"
     # A caller holding a stale token learns nothing more than "not valid".
     assert response.headers["www-authenticate"] == 'Bearer realm="bastion"'
+
+
+def test_the_demo_tenant_seeds_an_admin_so_escrow_reads_are_reachable() -> None:
+    """ADR-005 decision 7: an escrow read is admin-only and tenant-scoped.
+
+    Before this, the only seeded admin was `breakglass` in the `platform`
+    tenant, so every `acme` record answered 404 "no escrow payload" even with
+    the flag on and no human could use the debugging path.
+    """
+    realm = json.loads(Path("config/keycloak/realm-export.json").read_text(encoding="utf-8"))
+    admins_by_tenant: dict[str, list[str]] = {}
+    for user in realm["users"]:
+        tenant = (user.get("attributes") or {}).get("tenant", [""])[0]
+        if "admin" in (user.get("realmRoles") or []):
+            admins_by_tenant.setdefault(tenant, []).append(user["username"])
+
+    assert "alice" in admins_by_tenant.get("acme", [])

@@ -183,7 +183,7 @@
       "lastName": "Operator",
       "email": "alice@bastion.local",
       "requiredActions": [],
-      "realmRoles": ["operator"],
+      "realmRoles": ["operator", "admin"],
       "credentials": [
         {
           "type": "password",
