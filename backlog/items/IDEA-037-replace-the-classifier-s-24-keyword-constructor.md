@@ -1,6 +1,6 @@
 ### IDEA-037: Replace the classifier's 24-keyword constructor with a guard configuration object
 
-- status: ready
+- status: active
 - priority: P3
 - phase: v0.3
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-011
 - created: 2026-11-12
-- updated: 2026-11-16
+- updated: 2026-11-17
 - source: review of `agent/routing/classifier.py` on 2026-11-12
 
 **Problem**
