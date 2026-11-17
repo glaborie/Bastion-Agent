@@ -25,6 +25,7 @@ from agent.dlp.vault import TokenVault
 from agent.egress.sanitizer import EgressSanitizer
 from agent.routing.classifier import Classification, Sensitivity
 from agent.routing.client import ChatCompletion, ChatMessage, RouteDecision, RoutingError
+from agent.routing.complexity import ComplexityTier, assess_complexity
 from db.audit import verify_audit_chain
 from db.models import AuditEventType, AuditLog
 from db.session import get_db_session
@@ -79,7 +80,7 @@ class StubRouter:
     pii_flags: list[bool] = field(default_factory=list)
     sent: list[list[ChatMessage]] = field(default_factory=list)
 
-    def _decision(self, *, pii_detected: bool = False) -> RouteDecision:
+    def _decision(self, prompt: str = "", *, pii_detected: bool = False) -> RouteDecision:
         confidential = self.classification.is_confidential
         local = confidential or pii_detected
         return RouteDecision(
@@ -87,13 +88,15 @@ class StubRouter:
             classification=self.classification,
             local=local,
             override="pii_detected" if pii_detected and not confidential else None,
+            # The real signal, so the ledger and span assertions see real scores.
+            complexity=assess_complexity(prompt),
         )
 
     async def aroute(self, prompt: str, *, pii_detected: bool = False) -> RouteDecision:
         self.route_calls += 1
         self.scan_inputs.append(prompt)
         self.pii_flags.append(pii_detected)
-        return self._decision(pii_detected=pii_detected)
+        return self._decision(prompt, pii_detected=pii_detected)
 
     async def complete(
         self,
@@ -631,3 +634,30 @@ async def test_the_handoff_queue_is_operator_only(chat_api: Harness) -> None:
 
     chat_api.state["context"] = AuthContext(principal=READONLY, method="bearer")
     assert (await chat_api.client.get("/api/handoffs")).status_code == 403
+
+
+async def test_the_routing_row_reports_complexity_without_prompt_text(
+    chat_api: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-004 decision 3: the verdict and its score are evidence, the text is not."""
+    annotated: dict[str, Any] = {}
+    monkeypatch.setattr(chat_router_module, "_annotate", annotated.update)
+    prompt = "Analyze the three proposals, compare their trade-offs, then recommend one."
+
+    response = await chat_api.client.post("/v1/chat", json=body(prompt))
+
+    assert response.status_code == 200, response.text
+    records = await events(chat_api)
+    routing_record = next(r for r in records if r.event_type is AuditEventType.ROUTING_DECISION)
+    metadata = routing_record.metadata_json
+    assert metadata["complexity"] == ComplexityTier.COMPLEX.value
+    assert metadata["complexity_score"] == 0.7
+    assert metadata["route"] == "cloud-primary"
+
+    assert annotated["bastion.complexity"] == ComplexityTier.COMPLEX.value
+    assert annotated["bastion.complexity.score"] == 0.7
+    assert annotated["bastion.route"] == "cloud-primary"
+
+    # Neither record may carry the text that produced the verdict.
+    for value in (*metadata.values(), *annotated.values()):
+        assert not isinstance(value, str) or "trade-offs" not in value

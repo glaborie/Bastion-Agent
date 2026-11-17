@@ -325,12 +325,19 @@ class Settings(BaseSettings):
     omniroute_retry_backoff_seconds: float = 0.25
     model_local_alias: str = "local-llama"
     model_cloud_alias: str = "cloud-primary"
+    #: Alias a CONFIDENTIAL or PII-bearing prompt never leaves; the only tier
+    #: that is not a cost choice (ADR-004 decision 3).
+    model_cloud_strong_alias: str = "cloud-strong"
     #: First target of each OmniRoute combo, router prefix removed; mirrors
     #: config/omniroute/config.yaml (tests/test_routing_client.py pins the pair).
     #: Telemetry reports these as the requested model, so a trace never claims a
     #: routing alias is a model id.
     model_local_primary: str = "qwen2.5-7b-instruct-q4_k_m"
     model_cloud_primary: str = "openai/gpt-4o-mini"
+    model_cloud_strong_primary: str = "anthropic/claude-haiku-4.5"
+    #: A PUBLIC prompt at or above this complexity score goes to the strong
+    #: alias instead of the cheap one (ADR-004 decision 3).
+    complexity_threshold: float = 0.6
 
     # -- Observability -----------------------------------------------------
     otel_enabled: bool = True
@@ -435,6 +442,7 @@ class Settings(BaseSettings):
         "classifier_safety_category_threshold",
         "dlp_score_threshold",
         "dlp_language_min_confidence",
+        "complexity_threshold",
     )
     @classmethod
     def _validate_ratio(cls, value: float | None) -> float | None:

@@ -387,6 +387,7 @@ async def _routing_stage(
     # whose name or address Presidio missed off a third-party provider.
     decision = await model_router.aroute(raw_scan, pii_detected=entity_count > 0)
     classification = decision.classification
+    complexity = decision.complexity
     await _record(
         state.session,
         actor_id=state.actor_id,
@@ -401,6 +402,8 @@ async def _routing_stage(
             "confidence": round(classification.confidence, 4),
             "model": classification.model,
             "override": decision.override,
+            "complexity": complexity.tier.value if complexity else None,
+            "complexity_score": round(complexity.score, 3) if complexity else None,
         },
     )
     _annotate(
@@ -411,6 +414,8 @@ async def _routing_stage(
             "bastion.classification": classification.label.value,
             "bastion.classification.reason": classification.reason,
             "bastion.classification.confidence": round(classification.confidence, 4),
+            "bastion.complexity": complexity.tier.value if complexity else None,
+            "bastion.complexity.score": round(complexity.score, 3) if complexity else None,
         }
     )
     return decision

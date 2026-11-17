@@ -4,7 +4,9 @@
 # Two aliases are exposed to the agent router (`agent/routing/client.py`):
 #
 #   local-llama    CONFIDENTIAL prompts -> llama.cpp on the host GPU. No egress.
-#   cloud-primary  PUBLIC prompts       -> OpenRouter cloud models.
+#   cloud-primary  SIMPLE PUBLIC prompts -> the cheap cloud model.
+#   cloud-strong   COMPLEX PUBLIC prompts -> the larger cloud model first.
+#                  Complexity never moves a local route to either cloud alias.
 #
 # OmniRoute persists this state in its own SQLite store. Apply it idempotently:
 #
@@ -62,6 +64,16 @@ combos:
     models:
       - openrouter/openai/gpt-4o-mini
       - openrouter/anthropic/claude-haiku-4.5
+
+  # ADR-004 decision 3: a PUBLIC prompt whose complexity verdict is COMPLEX goes
+  # here. Same two providers as `cloud-primary`, ordered so the larger model is
+  # tried first; no new provider or model id is introduced by the tiering.
+  cloud-strong:
+    strategy: priority
+    privacy: third-party
+    models:
+      - openrouter/anthropic/claude-haiku-4.5
+      - openrouter/openai/gpt-4o-mini
 
 # --- Gateway API key ---------------------------------------------------------
 # The /v1 plane enforces bearer auth (REQUIRE_API_KEY=true). The bootstrap

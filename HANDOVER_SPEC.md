@@ -164,7 +164,7 @@ Bastion-Agent/
 - **Stage 2 (Semantic Sensitivity Classifier)** (`agent/routing/classifier.py`):
   - Lightweight sequence classifier running in ONNX Runtime (CPU/DirectML) detecting internal corporate secrets/confidential IP.
   - If sensitive: sets model alias to `local-llama` (dispatched by OmniRoute to local `llama.cpp`).
-  - If public/non-sensitive: sets model alias to `cloud-primary` (dispatched by OmniRoute to OpenRouter).
+  - If public/non-sensitive: sets model alias to `cloud-primary`, or `cloud-strong` when the complexity signal in `agent/routing/complexity.py` reads the prompt as hard work (both dispatched by OmniRoute to OpenRouter; ADR-004 decision 3).
 
 ### 3.4 Egress Filter & Indirect Prompt Injection Defense (`agent/egress/`)
 - Embed a session-unique UUID canary token (e.g., `BASTION-CANARY-<uuid4>`) inside system instructions.

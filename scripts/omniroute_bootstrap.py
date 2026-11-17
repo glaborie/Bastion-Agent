@@ -2,8 +2,8 @@
 """Idempotently reconcile the OmniRoute routing contract for Bastion-Agent.
 
 Creates/updates the llama.cpp provider node, the provider connections, the
-`local-llama` / `cloud-primary` combos and the gateway API key, then smoke-tests
-both aliases.
+`local-llama` / `cloud-primary` / `cloud-strong` combos and the gateway API key,
+then smoke-tests every alias.
 
     uv run python scripts/omniroute_bootstrap.py --write-env
 
@@ -44,6 +44,13 @@ COMBOS = {
         "models": [
             "openrouter/openai/gpt-4o-mini",
             "openrouter/anthropic/claude-haiku-4.5",
+        ],
+    },
+    "cloud-strong": {
+        "strategy": "priority",
+        "models": [
+            "openrouter/anthropic/claude-haiku-4.5",
+            "openrouter/openai/gpt-4o-mini",
         ],
     },
 }
