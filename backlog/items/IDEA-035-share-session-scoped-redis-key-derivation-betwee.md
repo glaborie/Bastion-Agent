@@ -1,6 +1,6 @@
 ### IDEA-035: Share session-scoped Redis key derivation between the vault and the egress sanitizer
 
-- status: inbox
+- status: ready
 - priority: P3
 - phase: v0.3
 - area: db
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-015
 - created: 2026-11-12
-- updated: 2026-11-12
+- updated: 2026-11-16
 - source: review of agent/dlp/vault.py and agent/egress/sanitizer.py
 
 **Problem**

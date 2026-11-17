@@ -1,6 +1,6 @@
 ### IDEA-058: Fail the gate when certificate or key material becomes trackable
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.3
 - area: security
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-14
-- updated: 2026-11-14
+- updated: 2026-11-16
 - source: 2026-11-14, after `vault/certs/vault.key` sat unignored on master because the ignore rule only existed on a closed branch (PR #42); the same day the rule was restored (PR #44) with no gate behind it
 
 **Problem**

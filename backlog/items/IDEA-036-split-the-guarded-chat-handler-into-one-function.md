@@ -1,6 +1,6 @@
 ### IDEA-036: Split the guarded chat handler into one function per lifecycle stage
 
-- status: inbox
+- status: ready
 - priority: P3
 - phase: v0.3
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-012
 - created: 2026-11-12
-- updated: 2026-11-12
+- updated: 2026-11-16
 - source: review of gateway/routers/chat.py, 2026-11-12
 
 **Problem**

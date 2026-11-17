@@ -1,6 +1,6 @@
 ### IDEA-057: Record the Vault dev overlay in an ADR and reconcile it with IDEA-020
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.3
 - area: docs
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-14
-- updated: 2026-11-14
+- updated: 2026-11-16
 - source: review of the vault-secrets-overlay branch (PR #42, unmerged) against AGENTS.md "A decision → the ADR that records it"
 
 **Problem**
