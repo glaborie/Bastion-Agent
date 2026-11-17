@@ -339,9 +339,9 @@ a French or German prompt is no longer rewritten as a person name;
 is analyzed as English, preserving NER coverage for short English prompts.
 
 **A DLP hit keeps the turn local.** `ModelRouter` maps `CONFIDENTIAL` to
-`local-llama` and `PUBLIC` to `cloud-primary`, but when the DLP stage redacted at
-least one entity the request goes to `local-llama` even though the label stays
-`PUBLIC`. `RouteDecision.override` and the `ROUTING_DECISION` audit row record
+`local-llama` and `PUBLIC` to one of two cloud tiers, but when the DLP stage
+redacted at least one entity the request goes to `local-llama` even though the
+label stays `PUBLIC`. `RouteDecision.override` and the `ROUTING_DECISION` audit row record
 `pii_detected`, so the label and the route are both legible. The rule is a proxy
 for incomplete recall: if the stage found personal data in the prompt, it is not
 trusted with the rest of it. A local-model failure on such a prompt returns
@@ -437,8 +437,13 @@ mismatch raises `ClassifierConfigurationError` rather than degrading the gate.
 
 ### Routing
 
-`ModelRouter` maps `CONFIDENTIAL` → `MODEL_LOCAL_ALIAS` (`local-llama`) and
-`PUBLIC` → `MODEL_CLOUD_ALIAS` (`cloud-primary`). Completions go to
+`ModelRouter` maps `CONFIDENTIAL` → `MODEL_LOCAL_ALIAS` (`local-llama`). A
+`PUBLIC` prompt goes to `MODEL_CLOUD_ALIAS` (`cloud-primary`) when
+`agent/routing/complexity.py` scores it `SIMPLE`, and to
+`MODEL_CLOUD_STRONG_ALIAS` (`cloud-strong`) when it scores `COMPLEX` (at or above
+`COMPLEXITY_THRESHOLD`, default `0.6`). Complexity is subordinate: it never moves
+a `CONFIDENTIAL` or PII-bearing prompt off the local alias, and both verdicts are
+recorded on the `ROUTING_DECISION` row. Completions go to
 `OMNIROUTE_BASE_URL/v1/chat/completions` with `OMNIROUTE_API_KEY`.
 `CONFIDENTIAL` traffic never falls back to cloud: retries stay on the same
 alias, and a local outage raises `UpstreamError` (fail closed).
@@ -1030,9 +1035,9 @@ are effective on a native Linux host only. Falco detects; it does not contain.
 
 `scripts/omniroute_bootstrap.py` reconciles the routing contract in
 `config/omniroute/config.yaml`: the llama.cpp provider node, the llama.cpp and
-OpenRouter connections, the `local-llama` / `cloud-primary` combos, and the
-gateway's `/v1` API key. It is idempotent and ends with a smoke test of both
-aliases:
+OpenRouter connections, the `local-llama` / `cloud-primary` / `cloud-strong`
+combos, and the gateway's `/v1` API key. It is idempotent and ends with a smoke
+test of every alias:
 
 ```bash
 uv run python scripts/omniroute_bootstrap.py --write-env
@@ -1095,13 +1100,15 @@ upstream is distinguishable from a slow local guardrail. Only the OmniRoute
 client is instrumented; the Keycloak JWKS and token calls are deliberately left
 untraced so sign-ins do not add noise to every model turn. The server span
 carries the guardrail evidence: `bastion.dlp.*`, `bastion.classification.*`,
-`bastion.route*`, `bastion.egress.*` and `gen_ai.conversation.id`.
+`bastion.route*`, `bastion.complexity*`, `bastion.egress.*` and
+`gen_ai.conversation.id`.
 
 The alias itself is a routing label, never reported as a model: sending
 `cloud-primary` as `gen_ai.request.model` makes every trace look like an
-unintended provider swap. `MODEL_LOCAL_PRIMARY` / `MODEL_CLOUD_PRIMARY` mirror
-the first target of each OmniRoute combo (`config/omniroute/config.yaml`, pinned
-by `tests/test_routing_client.py`), and a genuine failover to the second target
+unintended provider swap. `MODEL_LOCAL_PRIMARY` / `MODEL_CLOUD_PRIMARY` /
+`MODEL_CLOUD_STRONG_PRIMARY` mirror the first target of each OmniRoute combo
+(`config/omniroute/config.yaml`, pinned by `tests/test_routing_client.py` and
+`tests/test_routing_complexity.py`), and a genuine failover to the second target
 is recorded as `bastion.model.swapped=true` instead of being hidden.
 
 Prompt and completion text is never exported. That is deliberate: traces go to

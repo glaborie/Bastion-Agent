@@ -2,9 +2,9 @@
 
 The agent never talks to a provider directly: every completion goes through
 OmniRoute's ``/v1/chat/completions`` with a model alias. ``ModelRouter`` maps a
-CONFIDENTIAL classification to the local alias and PUBLIC traffic to the cloud
-alias. There is no automatic cloud fallback for confidential prompts — the
-local path fails closed (ADR-004).
+CONFIDENTIAL classification to the local alias and PUBLIC traffic to one of two
+cloud tiers, chosen by how much work the prompt is. There is no automatic cloud
+fallback for confidential prompts — the local path fails closed (ADR-004).
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from agent.routing.classifier import (
     SensitivityClassifier,
     get_classifier,
 )
+from agent.routing.complexity import Complexity, ComplexityTier, assess_complexity
 from settings import get_settings
 from telemetry import instrument_http_client
 
@@ -93,6 +94,9 @@ class RouteDecision:
     #: verdict. ``"pii_detected"`` means the DLP stage found personal data and
     #: the prompt is kept on the local model regardless of the PUBLIC label.
     override: str | None = None
+    #: How much work the prompt is (ADR-004 decision 3). It only chooses between
+    #: cloud tiers: when ``local`` is set it is recorded and otherwise ignored.
+    complexity: Complexity | None = None
 
 
 class OmniRouteClient:
@@ -245,6 +249,8 @@ class ModelRouter:
         self._cloud_alias = cloud_alias or settings.model_cloud_alias
         self._local_primary = settings.model_local_primary
         self._cloud_primary = settings.model_cloud_primary
+        self._strong_alias = settings.model_cloud_strong_alias
+        self._strong_primary = settings.model_cloud_strong_primary
 
     @property
     def client(self) -> OmniRouteClient:
@@ -252,11 +258,19 @@ class ModelRouter:
 
     def route(self, prompt: str, *, pii_detected: bool = False) -> RouteDecision:
         """Synchronous routing decision (rule/ONNX inference is cheap)."""
-        return self._decision(self._classifier.classify(prompt), pii_detected=pii_detected)
+        return self._decision(
+            self._classifier.classify(prompt),
+            pii_detected=pii_detected,
+            complexity=assess_complexity(prompt),
+        )
 
     async def aroute(self, prompt: str, *, pii_detected: bool = False) -> RouteDecision:
         """Async routing decision for callers on the event loop."""
-        return self._decision(await self._classifier.aclassify(prompt), pii_detected=pii_detected)
+        return self._decision(
+            await self._classifier.aclassify(prompt),
+            pii_detected=pii_detected,
+            complexity=assess_complexity(prompt),
+        )
 
     async def complete(
         self,
@@ -277,7 +291,11 @@ class ModelRouter:
         )
 
     def _decision(
-        self, classification: Classification, *, pii_detected: bool = False
+        self,
+        classification: Classification,
+        *,
+        pii_detected: bool = False,
+        complexity: Complexity | None = None,
     ) -> RouteDecision:
         """Map a classification to an alias, letting a DLP hit force local.
 
@@ -285,16 +303,30 @@ class ModelRouter:
         ``PUBLIC`` verdict next to the ``pii_detected`` override, so the reason a
         prompt stayed on-box is legible after the fact. Only a route that the
         evidence did not already send local is marked as an override.
+
+        Complexity is subordinate: it picks the strong cloud alias for a PUBLIC
+        prompt that reads as hard work, and is ignored for every local route, so
+        it can never move a confidential or PII-bearing prompt off the host.
         """
         confidential = classification.is_confidential
         local = confidential or pii_detected
         override = "pii_detected" if pii_detected and not confidential else None
+        strong = (
+            not local and complexity is not None and (complexity.tier is ComplexityTier.COMPLEX)
+        )
+        if local:
+            alias, primary = self._local_alias, self._local_primary
+        elif strong:
+            alias, primary = self._strong_alias, self._strong_primary
+        else:
+            alias, primary = self._cloud_alias, self._cloud_primary
         return RouteDecision(
-            alias=self._local_alias if local else self._cloud_alias,
+            alias=alias,
             classification=classification,
             local=local,
-            primary_model=self._local_primary if local else self._cloud_primary,
+            primary_model=primary,
             override=override,
+            complexity=complexity,
         )
 
 
