@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -42,10 +43,10 @@ from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.dlp.presidio import DLPUnavailableError, PresidioDLP, get_dlp
-from agent.dlp.vault import VaultError
+from agent.dlp.presidio import PresidioDLP, get_dlp
 from agent.egress.sanitizer import (
     EgressCircuitOpenError,
+    EgressResult,
     EgressSanitizer,
     EgressUnavailableError,
     get_egress_sanitizer,
@@ -54,6 +55,7 @@ from agent.routing.client import (
     ChatCompletion,
     ChatMessage,
     ModelRouter,
+    RouteDecision,
     RoutingError,
     get_model_router,
 )
@@ -62,7 +64,7 @@ from db.models import AuditEventType, EscrowKind
 from db.session import get_db_session
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 from gateway.rate_limit import rate_limit
-from settings import get_settings
+from settings import Settings, get_settings
 from telemetry import annotate_span, span_attributes
 
 logger = logging.getLogger(__name__)
@@ -286,53 +288,35 @@ async def _redact_messages(
     return redacted, entity_types, len(tokens)
 
 
-def _blocked(status_code: int, detail: str) -> HTTPException:
-    return HTTPException(status_code=status_code, detail=detail)
+@dataclass(frozen=True, slots=True)
+class _Turn:
+    """The request-scoped identity every stage writes its audit row against."""
+
+    actor_id: str
+    tenant_id: str
+    conversation_id: str
+    vault_session: str
+    session: AsyncSession
 
 
-@router.post(
-    "/v1/chat",
-    response_model=ChatResponse,
-    summary="Guarded chat completion",
-    responses={
-        403: {"description": "Session quarantined by the egress circuit breaker"},
-        413: {"description": "Request exceeds the chat size limits"},
-        502: {"description": "Upstream failure or egress filter block"},
-        503: {"description": "DLP, canary registry or quarantine store unavailable"},
-    },
-)
-async def chat(
-    request: ChatRequest,
-    context: AuthContext = Depends(require_roles("operator", "analyst", "admin")),
-    _csrf: AuthContext = Depends(require_csrf),
-    session: AsyncSession = Depends(get_db_session),
-    model_router: ModelRouter = Depends(get_chat_router),
-    dlp: PresidioDLP = Depends(get_chat_dlp),
-    sanitizer: EgressSanitizer = Depends(get_chat_sanitizer),
-) -> ChatResponse:
-    """Run one guarded turn from ingress to sanitized egress."""
-    actor_id = context.actor_id
-    tenant_id = context.tenant_id
-    settings = get_settings()
-    conversation_id = request.conversation_id or uuid.uuid4().hex
-    vault_session = _vault_session(tenant_id, actor_id, conversation_id)
-
+async def _ingress(state: _Turn, request: ChatRequest) -> None:
+    """Stage 0: size limit, ``INPUT_RECEIVED`` and the request span attributes."""
     total_chars = sum(len(turn.content) for turn in request.messages)
     if total_chars > MAX_TOTAL_CHARS:
-        raise _blocked(
+        raise HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE,
             f"conversation exceeds {MAX_TOTAL_CHARS} characters",
         )
 
     await _record(
-        session,
-        actor_id=actor_id,
-        tenant_id=tenant_id,
+        state.session,
+        actor_id=state.actor_id,
+        tenant_id=state.tenant_id,
         event_type=AuditEventType.INPUT_RECEIVED,
-        conversation_id=conversation_id,
+        conversation_id=state.conversation_id,
         payload=[turn.model_dump(exclude_none=True) for turn in request.messages],
         metadata={
-            "conversation_id": conversation_id,
+            "conversation_id": state.conversation_id,
             "messages": len(request.messages),
             "roles": sorted({turn.role for turn in request.messages}),
             "chars": total_chars,
@@ -344,34 +328,35 @@ async def chat(
     )
     _annotate(
         {
-            "gen_ai.conversation.id": conversation_id,
-            "bastion.conversation.id": conversation_id,
+            "gen_ai.conversation.id": state.conversation_id,
+            "bastion.conversation.id": state.conversation_id,
             "bastion.request.messages": len(request.messages),
             "bastion.request.chars": total_chars,
         }
     )
 
-    # -- stage 1: deterministic DLP ---------------------------------------
+
+async def _dlp_stage(
+    state: _Turn, dlp: PresidioDLP, request: ChatRequest
+) -> tuple[list[ChatMessage], int]:
+    """Stage 1: redact, then record ``DLP_REDACTION``."""
     try:
         redacted, entity_types, entity_count = await _redact_messages(
-            dlp, request.messages, tenant_id, vault_session
+            dlp, request.messages, state.tenant_id, state.vault_session
         )
-    except (DLPUnavailableError, VaultError) as exc:
-        logger.error("DLP stage failed", extra={"error": type(exc).__name__})
-        raise _blocked(status.HTTP_503_SERVICE_UNAVAILABLE, "DLP stage unavailable") from exc
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        # Presidio/spaCy can fail in ways that are not worth enumerating. The
-        # only safe response is to stop: forwarding the unredacted text would
-        # defeat the entire stage.
+        # Presidio/spaCy can fail in ways that are not worth enumerating, and a
+        # vault error is no safer. The only safe response is to stop: forwarding
+        # the unredacted text would defeat the entire stage.
         logger.error("DLP stage failed", extra={"error": type(exc).__name__})
-        raise _blocked(status.HTTP_503_SERVICE_UNAVAILABLE, "DLP stage unavailable") from exc
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DLP stage unavailable") from exc
 
     await _record(
-        session,
-        actor_id=actor_id,
-        tenant_id=tenant_id,
+        state.session,
+        actor_id=state.actor_id,
+        tenant_id=state.tenant_id,
         event_type=AuditEventType.DLP_REDACTION,
-        conversation_id=conversation_id,
+        conversation_id=state.conversation_id,
         metadata={
             "redacted": entity_count > 0,
             "entities": entity_count,
@@ -385,8 +370,13 @@ async def chat(
             "bastion.dlp.types": ",".join(sorted(entity_types)),
         }
     )
+    return redacted, entity_count
 
-    # -- stage 2: classify the raw text and route -------------------------
+
+async def _routing_stage(
+    state: _Turn, model_router: ModelRouter, request: ChatRequest, entity_count: int
+) -> RouteDecision:
+    """Stage 2: classify the raw text, route, record ``ROUTING_DECISION``."""
     # Never prefix role tags here: "[user] …" reads as a role-injection marker
     # to the guard and produced a measured false positive on a benign question.
     raw_scan = "\n\n".join(turn.content for turn in request.messages)
@@ -397,11 +387,11 @@ async def chat(
     decision = await model_router.aroute(raw_scan, pii_detected=entity_count > 0)
     classification = decision.classification
     await _record(
-        session,
-        actor_id=actor_id,
-        tenant_id=tenant_id,
+        state.session,
+        actor_id=state.actor_id,
+        tenant_id=state.tenant_id,
         event_type=AuditEventType.ROUTING_DECISION,
-        conversation_id=conversation_id,
+        conversation_id=state.conversation_id,
         metadata={
             "route": decision.alias,
             "local": decision.local,
@@ -422,92 +412,113 @@ async def chat(
             "bastion.classification.confidence": round(classification.confidence, 4),
         }
     )
+    return decision
 
-    # -- stage 3: canary + untrusted fences -------------------------------
+
+async def _preflight(state: _Turn, sanitizer: EgressSanitizer) -> str:
+    """Stage 3: clear the circuit breaker and mint the session canary."""
     try:
-        await sanitizer.ensure_available(tenant_id, vault_session)
-        canary = await sanitizer.canary_for(tenant_id, vault_session)
+        await sanitizer.ensure_available(state.tenant_id, state.vault_session)
+        return await sanitizer.canary_for(state.tenant_id, state.vault_session)
     except EgressCircuitOpenError as exc:
         await _record(
-            session,
-            actor_id=actor_id,
-            tenant_id=tenant_id,
+            state.session,
+            actor_id=state.actor_id,
+            tenant_id=state.tenant_id,
             event_type=AuditEventType.EGRESS_FILTERED,
-            conversation_id=conversation_id,
+            conversation_id=state.conversation_id,
             metadata={"blocked": True, "reason": "circuit_open"},
         )
         await _record(
-            session,
-            actor_id=actor_id,
-            tenant_id=tenant_id,
+            state.session,
+            actor_id=state.actor_id,
+            tenant_id=state.tenant_id,
             event_type=AuditEventType.SECURITY_INCIDENT,
-            conversation_id=conversation_id,
+            conversation_id=state.conversation_id,
             metadata={"reason": "circuit_open", "stage": "preflight"},
         )
         _annotate({"bastion.egress.blocked": True, "bastion.egress.reason": "circuit_open"})
-        raise _blocked(
+        raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "session quarantined by the egress circuit breaker",
         ) from exc
     except EgressUnavailableError as exc:
-        raise _blocked(status.HTTP_503_SERVICE_UNAVAILABLE, "egress sanitizer unavailable") from exc
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "egress sanitizer unavailable"
+        ) from exc
 
-    # -- stage 3a: injection gate -----------------------------------------
+
+async def _injection_gate(state: _Turn, decision: RouteDecision) -> ChatResponse | None:
+    """Stage 3a: refuse a flagged prompt before the model is called (ADR-012)."""
     # The guard already made this CONFIDENTIAL and kept it local. Treat it as
     # hostile: refuse before inference, so no model answer exists to fabricate a
     # system prompt from, and tell the caller that the request was caught. The
     # model is deliberately not called and no RESPONSE_SENT row is written.
-    if classification.reason == _INJECTION_REASON:
-        await _record(
-            session,
-            actor_id=actor_id,
-            tenant_id=tenant_id,
-            event_type=AuditEventType.EGRESS_FILTERED,
-            conversation_id=conversation_id,
-            metadata={
-                "blocked": True,
-                "reason": "prompt_injection",
-                "restored_tokens": 0,
-                "unresolved_tokens": 0,
-                "disclosure_claim": None,
-                "model": "gateway",
-                "route": decision.alias,
-            },
-        )
-        await _record(
-            session,
-            actor_id=actor_id,
-            tenant_id=tenant_id,
-            event_type=AuditEventType.SECURITY_INCIDENT,
-            conversation_id=conversation_id,
-            metadata={
-                "reason": _INJECTION_REASON,
-                "stage": "routing",
-                "route": decision.alias,
-                "label": classification.label.value,
-                "confidence": round(classification.confidence, 4),
-            },
-        )
-        _annotate(
-            {
-                "bastion.egress.blocked": True,
-                "bastion.egress.reason": "prompt_injection",
-                "bastion.injection.detected": True,
-            }
-        )
-        return ChatResponse(
-            conversation_id=conversation_id,
-            message=AssistantTurn(content=_INJECTION_NOTICE),
-            model="gateway",
-            route=decision.alias,
-            classification=classification.label.value,
-            reason=classification.reason,
-            confidence=classification.confidence,
-            restored_tokens=0,
-            blocked=True,
-            block_reason=_INJECTION_REASON,
-        )
+    classification = decision.classification
+    if classification.reason != _INJECTION_REASON:
+        return None
 
+    await _record(
+        state.session,
+        actor_id=state.actor_id,
+        tenant_id=state.tenant_id,
+        event_type=AuditEventType.EGRESS_FILTERED,
+        conversation_id=state.conversation_id,
+        metadata={
+            "blocked": True,
+            "reason": "prompt_injection",
+            "restored_tokens": 0,
+            "unresolved_tokens": 0,
+            "disclosure_claim": None,
+            "model": "gateway",
+            "route": decision.alias,
+        },
+    )
+    await _record(
+        state.session,
+        actor_id=state.actor_id,
+        tenant_id=state.tenant_id,
+        event_type=AuditEventType.SECURITY_INCIDENT,
+        conversation_id=state.conversation_id,
+        metadata={
+            "reason": _INJECTION_REASON,
+            "stage": "routing",
+            "route": decision.alias,
+            "label": classification.label.value,
+            "confidence": round(classification.confidence, 4),
+        },
+    )
+    _annotate(
+        {
+            "bastion.egress.blocked": True,
+            "bastion.egress.reason": "prompt_injection",
+            "bastion.injection.detected": True,
+        }
+    )
+    return ChatResponse(
+        conversation_id=state.conversation_id,
+        message=AssistantTurn(content=_INJECTION_NOTICE),
+        model="gateway",
+        route=decision.alias,
+        classification=classification.label.value,
+        reason=classification.reason,
+        confidence=classification.confidence,
+        restored_tokens=0,
+        blocked=True,
+        block_reason=_INJECTION_REASON,
+    )
+
+
+async def _complete(
+    state: _Turn,
+    model_router: ModelRouter,
+    request: ChatRequest,
+    redacted: list[ChatMessage],
+    canary: str,
+    decision: RouteDecision,
+    sanitizer: EgressSanitizer,
+) -> ChatCompletion:
+    """Stage 3b: build the fenced upstream payload and call the routed model."""
     upstream: list[ChatMessage] = [
         ChatMessage(role="system", content=sanitizer.with_canary("", canary))
     ]
@@ -531,7 +542,7 @@ async def chat(
             _attributes(
                 {
                     "gen_ai.operation.name": "chat",
-                    "gen_ai.conversation.id": conversation_id,
+                    "gen_ai.conversation.id": state.conversation_id,
                     "gen_ai.system": requested_provider,
                     "gen_ai.request.model": requested_model,
                     "gen_ai.request.temperature": request.temperature,
@@ -555,11 +566,11 @@ async def chat(
                 # data. Falling back would undo that control, so the request
                 # fails closed and the attempt is on the ledger (ADR-004).
                 await _record(
-                    session,
-                    actor_id=actor_id,
-                    tenant_id=tenant_id,
+                    state.session,
+                    actor_id=state.actor_id,
+                    tenant_id=state.tenant_id,
                     event_type=AuditEventType.SECURITY_INCIDENT,
-                    conversation_id=conversation_id,
+                    conversation_id=state.conversation_id,
                     metadata={
                         "reason": "pii_route_local_unavailable",
                         "stage": "model",
@@ -567,27 +578,39 @@ async def chat(
                         "error": type(exc).__name__,
                     },
                 )
-                raise _blocked(
+                raise HTTPException(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
                     "local model unavailable for a PII-bearing prompt",
                 ) from exc
-            raise _blocked(status.HTTP_502_BAD_GATEWAY, "upstream model unavailable") from exc
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream model unavailable") from exc
         model_span.set_attributes(
             _completion_attributes(completion, requested=decision.primary_model or decision.alias)
         )
+    return completion
 
-    # -- stage 4: egress inspection ---------------------------------------
+
+async def _egress_stage(
+    state: _Turn,
+    sanitizer: EgressSanitizer,
+    completion: ChatCompletion,
+    decision: RouteDecision,
+) -> EgressResult:
+    """Stage 4: scan the answer, record ``EGRESS_FILTERED``, refuse a leak."""
     try:
-        egress = await sanitizer.inspect(completion.content, vault_session, tenant_id=tenant_id)
+        egress = await sanitizer.inspect(
+            completion.content, state.vault_session, tenant_id=state.tenant_id
+        )
     except EgressUnavailableError as exc:
-        raise _blocked(status.HTTP_503_SERVICE_UNAVAILABLE, "egress sanitizer unavailable") from exc
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "egress sanitizer unavailable"
+        ) from exc
 
     await _record(
-        session,
-        actor_id=actor_id,
-        tenant_id=tenant_id,
+        state.session,
+        actor_id=state.actor_id,
+        tenant_id=state.tenant_id,
         event_type=AuditEventType.EGRESS_FILTERED,
-        conversation_id=conversation_id,
+        conversation_id=state.conversation_id,
         metadata={
             "blocked": egress.blocked,
             "reason": egress.reason,
@@ -598,7 +621,6 @@ async def chat(
             "route": decision.alias,
         },
     )
-
     _annotate(
         {
             "bastion.egress.blocked": egress.blocked,
@@ -611,11 +633,11 @@ async def chat(
 
     if egress.blocked:
         await _record(
-            session,
-            actor_id=actor_id,
-            tenant_id=tenant_id,
+            state.session,
+            actor_id=state.actor_id,
+            tenant_id=state.tenant_id,
             event_type=AuditEventType.SECURITY_INCIDENT,
-            conversation_id=conversation_id,
+            conversation_id=state.conversation_id,
             metadata={
                 "reason": egress.reason,
                 "stage": "egress",
@@ -627,21 +649,30 @@ async def chat(
             "Egress filter blocked a model response",
             extra={"reason": egress.reason, "route": decision.alias},
         )
-        raise _blocked(status.HTTP_502_BAD_GATEWAY, "egress filter blocked the model response")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "egress filter blocked the model response")
+    return egress
 
-    # -- stage 5: record the answer that is actually delivered -------------
+
+async def _delivery_stage(
+    state: _Turn,
+    settings: Settings,
+    egress: EgressResult,
+    completion: ChatCompletion,
+    decision: RouteDecision,
+) -> ChatResponse:
+    """Stage 5: record ``RESPONSE_SENT`` for the text that is actually delivered."""
     # The payload is the sanitized text (or its configured prefix), so its
     # payload_hash covers exactly what the caller received. The escrow copy is a
-    # no-op unless the pre-production flag is on. A blocked turn returned above
+    # no-op unless the pre-production flag is on. A blocked turn raised above
     # and therefore has no answer event.
     stored_answer = egress.text[: settings.response_store_max_chars]
     truncated = len(egress.text) > len(stored_answer)
     await _record(
-        session,
-        actor_id=actor_id,
-        tenant_id=tenant_id,
+        state.session,
+        actor_id=state.actor_id,
+        tenant_id=state.tenant_id,
         event_type=AuditEventType.RESPONSE_SENT,
-        conversation_id=conversation_id,
+        conversation_id=state.conversation_id,
         payload=stored_answer,
         metadata={
             "model": completion.model,
@@ -659,9 +690,9 @@ async def chat(
             "bastion.response.truncated": truncated,
         }
     )
-
+    classification = decision.classification
     return ChatResponse(
-        conversation_id=conversation_id,
+        conversation_id=state.conversation_id,
         message=AssistantTurn(content=egress.text),
         model=completion.model,
         route=decision.alias,
@@ -670,3 +701,46 @@ async def chat(
         confidence=classification.confidence,
         restored_tokens=egress.restored_tokens,
     )
+
+
+@router.post(
+    "/v1/chat",
+    response_model=ChatResponse,
+    summary="Guarded chat completion",
+    responses={
+        403: {"description": "Session quarantined by the egress circuit breaker"},
+        413: {"description": "Request exceeds the chat size limits"},
+        502: {"description": "Upstream failure or egress filter block"},
+        503: {"description": "DLP, canary registry or quarantine store unavailable"},
+    },
+)
+async def chat(
+    request: ChatRequest,
+    context: AuthContext = Depends(require_roles("operator", "analyst", "admin")),
+    _csrf: AuthContext = Depends(require_csrf),
+    session: AsyncSession = Depends(get_db_session),
+    model_router: ModelRouter = Depends(get_chat_router),
+    dlp: PresidioDLP = Depends(get_chat_dlp),
+    sanitizer: EgressSanitizer = Depends(get_chat_sanitizer),
+) -> ChatResponse:
+    """Run one guarded turn from ingress to sanitized egress."""
+    conversation_id = request.conversation_id or uuid.uuid4().hex
+    state = _Turn(
+        actor_id=context.actor_id,
+        tenant_id=context.tenant_id,
+        conversation_id=conversation_id,
+        vault_session=_vault_session(context.tenant_id, context.actor_id, conversation_id),
+        session=session,
+    )
+
+    await _ingress(state, request)
+    redacted, entity_count = await _dlp_stage(state, dlp, request)
+    decision = await _routing_stage(state, model_router, request, entity_count)
+    canary = await _preflight(state, sanitizer)
+    if (blocked := await _injection_gate(state, decision)) is not None:
+        return blocked
+    completion = await _complete(
+        state, model_router, request, redacted, canary, decision, sanitizer
+    )
+    egress = await _egress_stage(state, sanitizer, completion, decision)
+    return await _delivery_stage(state, get_settings(), egress, completion, decision)

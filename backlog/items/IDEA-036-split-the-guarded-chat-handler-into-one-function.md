@@ -1,6 +1,6 @@
 ### IDEA-036: Split the guarded chat handler into one function per lifecycle stage
 
-- status: ready
+- status: done
 - priority: P3
 - phase: v0.3
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-012
 - created: 2026-11-12
-- updated: 2026-11-16
+- updated: 2026-11-17
 - source: review of gateway/routers/chat.py, 2026-11-12
 
 **Problem**
@@ -21,10 +21,10 @@
 
 **Acceptance**
 
-- [ ] `chat()` is at most 80 lines, and no stage body remains inline: each of the five stages is a named function called from the orchestrator, verified by reading the handler and by a line count of the `chat` function
-- [ ] `uv run pytest tests/test_chat.py tests/test_chat_contract.py -q` passes with no assertion added, removed or loosened
-- [ ] Every stage still writes its existing audit event and sets its span attributes in the same order as today: `INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION`, `RESPONSE_SENT`, `EGRESS_FILTERED` and `SECURITY_INCIDENT` appear in the same sequence and with the same metadata keys for a normal turn and for the blocked paths (circuit open, injection, canary leak)
-- [ ] `uv run mypy gateway/routers/chat.py` and `uv run ruff check gateway/routers/chat.py` pass
+- [x] `chat()` is at most 80 lines, and no stage body remains inline: each of the five stages is a named function called from the orchestrator, verified by reading the handler and by a line count of the `chat` function
+- [x] `uv run pytest tests/test_chat.py tests/test_chat_contract.py -q` passes with no assertion added, removed or loosened
+- [x] Every stage still writes its existing audit event and sets its span attributes in the same order as today: `INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION`, `RESPONSE_SENT`, `EGRESS_FILTERED` and `SECURITY_INCIDENT` appear in the same sequence and with the same metadata keys for a normal turn and for the blocked paths (circuit open, injection, canary leak)
+- [x] `uv run mypy gateway/routers/chat.py` and `uv run ruff check gateway/routers/chat.py` pass
 
 **Notes**
 
