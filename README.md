@@ -882,6 +882,10 @@ uv run python scripts/check_threat_model.py --check
 uv run pytest -m "not integration"   # unit tests (no database required)
 ```
 
+`make test` runs the unit suite and `make test-integration`, `make test-redis`,
+`make test-witness`, `make test-model` and `make test-evals` wrap the rest;
+`make help` lists every target.
+
 `scripts/gate.sh` runs that set in one shot — adding the ruff format check and
 the backlog validator — and prints a metrics table plus one verdict line:
 

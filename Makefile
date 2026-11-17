@@ -94,3 +94,30 @@ down: ## Stop the full stack
 .PHONY: logs
 logs: ## Tail logs for all services
 	$(COMPOSE) logs -f
+
+# ---- Tests ------------------------------------------------------------------
+# Each target is the command README "Verification" documents, so the suite a
+# reviewer runs and the one CI runs stay the same.
+.PHONY: test
+test: ## Unit tests: no database, no models, no network
+	uv run pytest -m "not integration"
+
+.PHONY: test-integration
+test-integration: ## Database-backed tests (needs TEST_DATABASE_URL)
+	uv run pytest -m integration
+
+.PHONY: test-redis
+test-redis: ## Redis-backed tests (needs REDIS_TEST_URL)
+	uv run pytest -m redis_integration
+
+.PHONY: test-witness
+test-witness: ## Audit-witness tests (needs AUDIT_WITNESS_*)
+	uv run pytest -m witness_integration
+
+.PHONY: test-model
+test-model: ## llama.cpp tests (needs LLAMA_CPP_BASE_URL)
+	uv run pytest -m model_integration
+
+.PHONY: test-evals
+test-evals: ## Zero-tolerance golden eval gates (needs the ONNX models)
+	uv run python scripts/run_evals.py
