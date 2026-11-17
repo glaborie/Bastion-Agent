@@ -12,8 +12,8 @@
       "version": "3.11"
     },
     "ghcr.io/devcontainers/features/github-cli:1": {},
-    // Moby packages are not published for Ubuntu 24.04 (noble); install Docker CE instead
-    "ghcr.io/devcontainers/features/docker-in-docker:1": {
+    // v1 rejects Ubuntu 24.04 (noble); v2 supports it. Moby packages are not published for noble, so install Docker CE.
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "moby": false
     }
   },
