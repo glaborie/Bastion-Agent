@@ -246,4 +246,8 @@ def test_the_demo_tenant_seeds_an_admin_so_escrow_reads_are_reachable() -> None:
         if "admin" in (user.get("realmRoles") or []):
             admins_by_tenant.setdefault(tenant, []).append(user["username"])
 
-    assert "alice" in admins_by_tenant.get("acme", [])
+    # A dedicated account, not the operator: `admin` satisfies every gate, so
+    # promoting alice would have removed least privilege from the demo tenant.
+    assert admins_by_tenant.get("acme") == ["admin"]
+    alice = next(user for user in realm["users"] if user["username"] == "alice")
+    assert "admin" not in (alice.get("realmRoles") or [])

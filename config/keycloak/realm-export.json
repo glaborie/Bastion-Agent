@@ -183,7 +183,25 @@
       "lastName": "Operator",
       "email": "alice@bastion.local",
       "requiredActions": [],
-      "realmRoles": ["operator", "admin"],
+      "realmRoles": ["operator"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Bastion-dev-2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Acme",
+      "lastName": "Administrator",
+      "email": "admin@bastion.local",
+      "requiredActions": [],
+      "attributes": {"tenant": ["acme"]},
+      "realmRoles": ["admin"],
       "credentials": [
         {
           "type": "password",
