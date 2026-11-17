@@ -61,6 +61,10 @@ def test_dashboard_approvals_are_traced_but_eval_poll_is_excluded() -> None:
     excluded = parse_excluded_urls(DEFAULT_EXCLUDED_URLS)
     assert not excluded.url_disabled("http://localhost:8000/api/approvals")
     assert excluded.url_disabled("http://localhost:8000/api/evals/latest")
+    # The dashboard polls these two fragments every 15 s while a tab is open.
+    assert excluded.url_disabled("http://localhost:8000/api/incidents")
+    assert excluded.url_disabled("http://localhost:8000/api/handoffs/panel")
+    assert not excluded.url_disabled("http://localhost:8000/api/handoffs")
     assert not excluded.url_disabled(
         "http://localhost:8000/api/approvals/9624899a-294e-452d-b60d-e84e24593a96/action"
     )

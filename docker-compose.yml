@@ -546,6 +546,7 @@ services:
       - ./config/otel/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
       # Choose the pipeline overlay. `otel-collector-no-export.yaml` (default)
       # keeps egress local; `otel-collector-opik.yaml` adds Opik Cloud;
+      # `otel-collector-langfuse.yaml` adds Langfuse alone; and
       # `otel-collector-export.yaml` adds Langfuse and Arize.
       - ./config/otel/${OTEL_REMOTE_EXPORT_CONFIG:-otel-collector-no-export.yaml}:/etc/otelcol/export.yaml:ro
     ports:

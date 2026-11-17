@@ -38,7 +38,12 @@ SERVICE_VERSION = "0.1.0"
 #: over ``/ws/approvals`` (ADR-007), so its HTTP read is no longer a 3 s poll and
 #: the old ``api/approvals$`` exclusion is gone: a fallback read or a four-eyes
 #: decision is worth a span.
-DEFAULT_EXCLUDED_URLS = "/health,/health/ready,/metrics,api/evals/latest$"
+#: Health probes and the dashboard's polling fragments: a panel that polls
+#: every 15 s is pure quota consumption in a metered trace store (ADR-014
+#: decision 4).
+DEFAULT_EXCLUDED_URLS = (
+    "/health,/health/ready,/metrics,api/evals/latest$,api/incidents$,api/handoffs/panel$"
+)
 
 _provider: TracerProvider | None = None
 
