@@ -1,6 +1,6 @@
 ### IDEA-024: Convert PDFs to redacted Markdown before their text reaches a model
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.4
 - area: agent
