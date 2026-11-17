@@ -16,6 +16,8 @@ MAX_PAGE_SIZE: Final[int] = 200
 MAX_TIMELINE_RECORDS: Final[int] = 1000
 #: Upper bound for the dashboard's live incident panel.
 MAX_INCIDENT_RECORDS: Final[int] = 10
+#: Upper bound for the operator handoff queue (ADR-022).
+MAX_HANDOFF_RECORDS: Final[int] = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +137,30 @@ async def recent_security_incidents(
         .where(
             AuditLog.tenant_id == tenant_id,
             AuditLog.event_type == AuditEventType.SECURITY_INCIDENT,
+        )
+        .order_by(AuditLog.id.desc())
+        .limit(bounded)
+    )
+    return list((await session.execute(statement)).scalars())
+
+
+async def recent_handoffs(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    limit: int = MAX_HANDOFF_RECORDS,
+) -> list[AuditLog]:
+    """Newest-first ``HANDOFF_REQUIRED`` rows for the operator queue (ADR-022).
+
+    A frustration verdict is a UX signal, not a security incident: it lives in
+    its own event type so the incident panel stays a security surface.
+    """
+    bounded = max(1, min(limit, MAX_HANDOFF_RECORDS))
+    statement = (
+        select(AuditLog)
+        .where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.event_type == AuditEventType.HANDOFF_REQUIRED,
         )
         .order_by(AuditLog.id.desc())
         .limit(bounded)

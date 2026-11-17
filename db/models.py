@@ -131,8 +131,13 @@ class AuditEventType(StrEnum):
     #: payload is the delivered text, or its configured prefix when truncated.
     RESPONSE_SENT = "RESPONSE_SENT"
     #: A ticket whose approval window lapsed without a decision (ADR-010
-    #: decision 8). Appended last so the DDL guard below widens existing rows.
+    #: decision 8).
     APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
+    #: The caller's recent history reads as frustrated and an operator handoff
+    #: is waiting (ADR-022). Metadata carries the verdict and the marker count,
+    #: never the conversation text. Appended last so the DDL guard below widens
+    #: existing rows.
+    HANDOFF_REQUIRED = "HANDOFF_REQUIRED"
 
 
 class EscrowKind(StrEnum):
@@ -375,7 +380,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'ck_audit_logs_audit_event_type'
-          AND pg_get_constraintdef(oid) LIKE '%APPROVAL_EXPIRED%'
+          AND pg_get_constraintdef(oid) LIKE '%HANDOFF_REQUIRED%'
     ) THEN
         ALTER TABLE audit_logs
             DROP CONSTRAINT IF EXISTS ck_audit_logs_audit_event_type;
@@ -394,7 +399,8 @@ BEGIN
                 'SECURITY_INCIDENT',
                 'ESCROW_ACCESSED',
                 'RESPONSE_SENT',
-                'APPROVAL_EXPIRED'
+                'APPROVAL_EXPIRED',
+                'HANDOFF_REQUIRED'
             ));
     END IF;
 END

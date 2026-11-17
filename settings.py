@@ -199,6 +199,10 @@ class Settings(BaseSettings):
     #: an uncapped model hallucination cannot grow the ledger without bound.
     response_store_max_chars: int = 32_768
 
+    #: Frustration detection (ADR-022). A UX signal written to the ledger and
+    #: the operator handoff queue; it never changes the answer or the route.
+    sentiment_detection_enabled: bool = True
+
     # -- Two-stage classifier ---------------------------------------------
     #: Legacy single-graph contract: one ONNX file returning two logits ordered
     #: ``[PUBLIC, CONFIDENTIAL]``. It remains supported for a custom model, but

@@ -43,6 +43,7 @@ Out of scope:
 - Factual accuracy of model answers (`LLM07:2026` Misinformation). The platform does not verify content. Human approval applies to state-changing tools only.
 - An attacker with PostgreSQL superuser or host root access (see T10 for the audit-ledger consequence).
 - Legal interpretation. `COMPLIANCE.md` and `README-SWISS.md` map controls to requirements. They do not claim that a deployment is compliant.
+- Conversational sentiment and the operator handoff queue (ADR-022). They are a UX signal, not a control: nothing here is mitigated by them, a caller can phrase frustration to generate a handoff at will, and tool output cannot generate one. Security escalation stays the incident tiers in `SECURITY.md`, driven by `SECURITY_INCIDENT` rows.
 
 ## 3. Architecture and trust boundaries
 
