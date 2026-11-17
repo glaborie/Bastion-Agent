@@ -10,6 +10,8 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from gateway.auth.rbac import session_principal
+from gateway.auth.roles import any_satisfied
 from gateway.dashboard.theme import theme_from_request
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -54,7 +56,7 @@ def render(
     )
 
 
-def render_error(
+async def render_error(
     request: Request,
     *,
     title: str,
@@ -62,14 +64,24 @@ def render_error(
     status_code: int,
     headers: dict[str, str] | None = None,
 ) -> HTMLResponse:
+    """Render an error page with the caller's own header when there is one.
+
+    A signed-in principal without the role the page needs used to land on a
+    chrome-less page with no Sign out; resolving the cookie here keeps the
+    operator bar, and the template offers Sign out instead of a dead link back
+    to a route that will refuse them again.
+    """
+    principal, csrf_token = await session_principal(request)
+    authorized = principal is not None and any_satisfied(principal.roles, ("operator", "admin"))
     return render(
         request,
         "error.html",
         context={
             "title": title,
             "detail": detail,
-            "principal": None,
-            "csrf_token": None,
+            "principal": principal,
+            "csrf_token": csrf_token,
+            "dashboard_link": authorized or principal is None,
         },
         status_code=status_code,
         headers=headers,

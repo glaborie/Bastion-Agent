@@ -240,7 +240,7 @@ async def audit_page(
             limit=limit,
         ).validated()
     except ValueError as exc:
-        return render_error(
+        return await render_error(
             request,
             title="Invalid filter",
             detail=str(exc),
@@ -274,7 +274,7 @@ async def session_page(
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     if not session_id or len(session_id) > 128:
-        return render_error(
+        return await render_error(
             request, title="Invalid session", detail="Malformed session id.", status_code=422
         )
     events = await session_timeline(session, session_id, tenant_id=context.tenant_id)

@@ -7,7 +7,14 @@
     <header><strong>{{ title }}</strong></header>
     <p>{{ detail }}</p>
     <footer>
-      <a href="/dashboard" role="button">Back to Command Control</a>
+      {% if dashboard_link %}
+        <a href="/dashboard" role="button">Back to Command Control</a>
+      {% else %}
+        <form method="post" action="/auth/logout" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
+          <button type="submit" class="secondary">Sign out</button>
+        </form>
+      {% endif %}
     </footer>
   </article>
 {% endblock %}

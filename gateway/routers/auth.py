@@ -175,7 +175,7 @@ async def login_error(
 ) -> HTMLResponse:
     """Public, human-readable sign-in failure page."""
     detail = _ERROR_DETAILS.get(reason or "", "Sign-in failed. Start again from the dashboard.")
-    return render_error(request, title="Sign-in failed", detail=detail, status_code=400)
+    return await render_error(request, title="Sign-in failed", detail=detail, status_code=400)
 
 
 @router.post("/logout", include_in_schema=False)

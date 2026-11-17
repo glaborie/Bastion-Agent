@@ -168,7 +168,7 @@ def create_app() -> FastAPI:
             # the session the cookie names now, instead of a dead-end fragment.
             return Response(status_code=403, headers=dict(exc.headers or {}))
         if exc.status_code == 403 and path.startswith("/dashboard"):
-            return render_error(
+            return await render_error(
                 request,
                 title="Not authorized",
                 detail="This dashboard requires the operator or admin role.",
@@ -180,7 +180,7 @@ def create_app() -> FastAPI:
             # Retry-After the limiter produced.
             headers = dict(exc.headers or {})
             retry_after = headers.get("Retry-After", "60")
-            return render_error(
+            return await render_error(
                 request,
                 title="Too many requests",
                 detail=(
