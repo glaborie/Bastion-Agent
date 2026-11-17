@@ -1,6 +1,6 @@
 ### IDEA-064: Fetch the ONNX guard models as a stack dependency so the gateway can start
 
-- status: ready
+- status: done
 - priority: P1
 - phase: v0.4
 - area: infra
@@ -46,25 +46,25 @@ the two cannot drift.
 
 **Acceptance**
 
-- [ ] `uv run pytest tests/test_fetch_models.py -q` passes: a file matching its
+- [x] `uv run pytest tests/test_fetch_models.py -q` passes: a file matching its
       digest is kept without a request, a mismatched digest fails naming the path
       and both hashes, a missing file is fetched from the pinned URL and verified,
       and a failed fetch leaves no partial file under the model directory
-- [ ] `make models` materialises both graphs and `uv run python scripts/fetch_models.py`
+- [x] `make models` materialises both graphs and `uv run python scripts/fetch_models.py`
       exits 0 on the second run without downloading anything, printing the two
       verified paths
-- [ ] `docker-compose.yml` defines a one-shot `models-init` service that runs the
+- [x] `docker-compose.yml` defines a one-shot `models-init` service that runs the
       fetcher with `./models` writable, and `gateway` and `worker` both declare
       `depends_on: models-init: condition: service_completed_successfully`; a test
       parses the compose file and asserts both edges and the fetch command
-- [ ] `docker compose up -d` on a checkout whose `models/` lacks the guards starts
+- [x] `docker compose up -d` on a checkout whose `models/` lacks the guards starts
       the gateway without `ClassifierConfigurationError`, and the two files are
       present afterwards with their pinned digests
-- [ ] The pinned repository and revision in the fetcher match the digests the
+- [x] The pinned repository and revision in the fetcher match the digests the
       classifier verifies (`CLASSIFIER_INJECTION_MODEL_SHA256`,
       `CLASSIFIER_SAFETY_MODEL_SHA256` in `.env.example`), and a wrong revision
       fails the digest check rather than loading a different graph
-- [ ] `.env.example`, `README.md` and `docs/TROUBLESHOOTING.md` describe the
+- [x] `.env.example`, `README.md` and `docs/TROUBLESHOOTING.md` describe the
       service, how to refetch after a revision bump, and what the gateway error
       looks like when the fetch fails; `docker compose config -q` stays clean and
       `scripts/gate.sh` passes

@@ -95,6 +95,11 @@ down: ## Stop the full stack
 logs: ## Tail logs for all services
 	$(COMPOSE) logs -f
 
+# ---- Models -----------------------------------------------------------------
+.PHONY: models
+models: ## Fetch and verify the pinned ONNX guard graphs into ./models
+	uv run python scripts/fetch_models.py
+
 # ---- Tests ------------------------------------------------------------------
 # Each target is the command README "Verification" documents, so the suite a
 # reviewer runs and the one CI runs stay the same.

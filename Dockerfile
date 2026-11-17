@@ -39,6 +39,10 @@ COPY --chown=bastion:bastion agent ./agent
 # ADR-009 Gate 1: the image carries the approved tool allow-list, and startup
 # refuses to run if the registry and this catalog disagree.
 COPY --chown=bastion:bastion docs ./docs
+# The one-shot ``models-init`` service runs this to materialise the guard graphs
+# into the mounted ./models directory (IDEA-064); the rest of scripts/ is
+# host tooling and stays out of the image.
+COPY --chown=bastion:bastion scripts/fetch_models.py ./scripts/fetch_models.py
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 

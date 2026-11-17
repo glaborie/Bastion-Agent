@@ -136,6 +136,29 @@ x-app-build: &app-build
 
 services:
   # ---------------------------------------------------------------------------
+  # One-shot ONNX guard fetch: the gateway and worker read the graphs from
+  # ./models read-only, so this materialises them first and verifies each graph
+  # against the pinned digest (IDEA-064, ADR-011). A checkout that already has
+  # them exits immediately; an offline host fails here, by name, instead of
+  # starting the gateway into a ClassifierConfigurationError.
+  # ---------------------------------------------------------------------------
+  models-init:
+    <<: *app-build
+    # The application image runs as uid 10001, which cannot write the host's
+    # ./models directory; this one-shot service writes the graphs, so it runs as
+    # the invoking user. Set MODELS_INIT_UID/GID when the host uid is not 1000
+    # (macOS uses 501).
+    user: "${MODELS_INIT_UID:-1000}:${MODELS_INIT_GID:-1000}"
+    entrypoint: ["python", "scripts/fetch_models.py"]
+    environment:
+      <<: *app-environment
+      OTEL_SERVICE_NAME: bastion-models-init
+    volumes:
+      # Writable: this is the one service that owns the model directory.
+      - ./models:/app/models
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
   # One-shot owner migration: schema + least-privilege runtime role (IDEA-062)
   # ---------------------------------------------------------------------------
   migrate:
@@ -184,6 +207,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      models-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       keycloak:
@@ -224,6 +249,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      models-init:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
