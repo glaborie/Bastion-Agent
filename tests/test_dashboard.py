@@ -20,10 +20,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from db.audit import append_audit_event
+from db.escrow import record_payload_escrow
 from db.models import (
     ApprovalStatus,
     AuditEventType,
     AuditLog,
+    EscrowKind,
     PendingApproval,
     fingerprint_request,
     hash_approval_token,
@@ -51,6 +53,15 @@ CAROL = Principal(
 )
 DAVE = Principal(
     subject="dave-sub", tenant_id="acme", username="dave", roles=frozenset({"readonly"})
+)
+ADMIN = Principal(
+    subject="admin-sub", tenant_id="acme", username="admin", roles=frozenset({"admin"})
+)
+GLOBEX_ADMIN = Principal(
+    subject="globex-admin-sub",
+    tenant_id="globex",
+    username="globex-admin",
+    roles=frozenset({"admin"}),
 )
 
 ARGUMENTS: dict[str, Any] = {"path": "/srv/reports/q3.csv", "content": "revenue"}
@@ -532,6 +543,163 @@ async def test_an_analyst_signed_in_gets_a_sign_out_on_the_403_page(
     assert "Back to Command Control" not in response.text
 
 
+async def _seed_handoff(db_engine: AsyncEngine, conversation_id: str = "conv-ack") -> None:
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as session:
+        await append_audit_event(
+            session,
+            actor_id="alice-sub",
+            tenant_id="acme",
+            event_type=AuditEventType.HANDOFF_REQUIRED,
+            session_id=conversation_id,
+            metadata_json={"verdict": "escalating_language", "conversation_id": conversation_id},
+        )
+        await session.commit()
+
+
+async def _acknowledgements(db_engine: AsyncEngine) -> list[AuditLog]:
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as session:
+        return list(
+            (
+                await session.execute(
+                    select(AuditLog)
+                    .where(AuditLog.event_type == AuditEventType.HANDOFF_ACKNOWLEDGED)
+                    .order_by(AuditLog.id)
+                )
+            ).scalars()
+        )
+
+
+async def test_a_handoff_is_acknowledged_once(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    client, state = api
+    state["context"] = session_context(BOB)
+    await _seed_handoff(db_engine)
+
+    first = await client.post(
+        "/api/handoffs/conv-ack/acknowledge", headers={"X-CSRF-Token": "csrf-token"}
+    )
+    assert first.status_code == 200, first.text
+    assert "acknowledged" in first.text
+    assert "Acknowledge</button>" not in first.text
+
+    rows = await _acknowledgements(db_engine)
+    assert len(rows) == 1
+    assert rows[0].actor_id == BOB.subject
+    assert rows[0].session_id == "conv-ack"
+    assert rows[0].metadata_json["verdict"] == "escalating_language"
+
+    second = await client.post(
+        "/api/handoffs/conv-ack/acknowledge", headers={"X-CSRF-Token": "csrf-token"}
+    )
+    assert second.status_code == 200
+    assert len(await _acknowledgements(db_engine)) == 1
+
+    queue = await client.get("/api/handoffs")
+    assert queue.json()[0]["acknowledged"] is True
+    assert queue.json()[0]["acknowledged_at"] is not None
+
+
+async def test_acknowledge_is_operator_only_and_tenant_scoped(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    client, state = api
+    await _seed_handoff(db_engine)
+
+    for principal in (CAROL, DAVE):
+        state["context"] = session_context(principal)
+        response = await client.post(
+            "/api/handoffs/conv-ack/acknowledge", headers={"X-CSRF-Token": "csrf-token"}
+        )
+        assert response.status_code == 403, principal.username
+
+    state["context"] = session_context(GLOBEX_ADMIN)
+    assert (
+        await client.post(
+            "/api/handoffs/conv-ack/acknowledge", headers={"X-CSRF-Token": "csrf-token"}
+        )
+    ).status_code == 404
+    assert await _acknowledgements(db_engine) == []
+
+
+async def test_the_transcript_is_admin_only(api: tuple[httpx.AsyncClient, Any]) -> None:
+    client, state = api
+
+    for principal in (BOB, CAROL, DAVE):
+        state["context"] = session_context(principal)
+        assert (
+            await client.post(
+                "/api/handoffs/conv-ack/transcript", headers={"X-CSRF-Token": "csrf-token"}
+            )
+        ).status_code == 403, principal.username
+
+    state["context"] = session_context(ADMIN)
+    missing = await client.post(
+        "/api/handoffs/conv-ack/transcript", headers={"X-CSRF-Token": "csrf-token"}
+    )
+    assert missing.status_code == 200
+    assert "Transcript unavailable" in missing.text
+
+
+async def test_the_transcript_reads_escrow_and_audits_the_read(
+    api: tuple[httpx.AsyncClient, Any],
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from settings import reset_settings_cache
+
+    monkeypatch.setenv("PAYLOAD_ESCROW_ENABLED", "true")
+    reset_settings_cache()
+    client, state = api
+    state["context"] = session_context(ADMIN)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    prompt = [{"role": "user", "content": "this button is not working"}]
+    answer = "I understand how frustrating that can be."
+    async with factory() as session:
+        request_row = await append_audit_event(
+            session,
+            actor_id="alice-sub",
+            tenant_id="acme",
+            event_type=AuditEventType.INPUT_RECEIVED,
+            session_id="conv-transcript",
+            payload=prompt,
+        )
+        await record_payload_escrow(session, request_row, prompt)
+        answer_row = await append_audit_event(
+            session,
+            actor_id="alice-sub",
+            tenant_id="acme",
+            event_type=AuditEventType.RESPONSE_SENT,
+            session_id="conv-transcript",
+            payload=answer,
+        )
+        await record_payload_escrow(session, answer_row, answer, kind=EscrowKind.EGRESS_DELIVERED)
+        await session.commit()
+
+    response = await client.post(
+        "/api/handoffs/conv-transcript/transcript", headers={"X-CSRF-Token": "csrf-token"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert "this button is not working" in response.text
+    assert "assistant: I understand how frustrating that can be." in response.text
+    assert "<pre>" in response.text
+
+    async with factory() as session:
+        accessed = list(
+            (
+                await session.execute(
+                    select(AuditLog).where(AuditLog.event_type == AuditEventType.ESCROW_ACCESSED)
+                )
+            ).scalars()
+        )
+    assert len(accessed) == 2
+    assert {row.payload_hash for row in accessed}  # hashes recorded, never the text
+
+
 async def test_handoff_panel_lists_rows_queued_between_polls(
     api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
 ) -> None:
@@ -576,7 +744,13 @@ async def test_handoff_panel_lists_rows_queued_between_polls(
     assert "conv-handoff-2" in second.text
 
     queue = await client.get("/api/handoffs")
-    assert set(queue.json()[0]) == {"conversation_id", "verdict", "created_at"}
+    assert set(queue.json()[0]) == {
+        "conversation_id",
+        "verdict",
+        "created_at",
+        "acknowledged",
+        "acknowledged_at",
+    }
 
 
 async def test_handoff_panel_is_operator_only(

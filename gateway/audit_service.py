@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import urllib.parse
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import AuditEventType, AuditLog
+from db.models import AuditEventType, AuditLog, PayloadEscrow, utcnow
 
 DEFAULT_PAGE_SIZE: Final[int] = 50
 MAX_PAGE_SIZE: Final[int] = 200
@@ -166,6 +167,114 @@ async def recent_handoffs(
         .limit(bounded)
     )
     return list((await session.execute(statement)).scalars())
+
+
+async def handoff_acknowledgements(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    conversation_ids: Sequence[str],
+) -> dict[str, AuditLog]:
+    """Newest ``HANDOFF_ACKNOWLEDGED`` row per conversation (ADR-022 decision 9).
+
+    One acknowledgement per conversation is the rule, so the first row seen in
+    id-descending order wins; anything older is history.
+    """
+    ids = [conversation_id for conversation_id in conversation_ids if conversation_id]
+    if not ids:
+        return {}
+    statement = (
+        select(AuditLog)
+        .where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.event_type == AuditEventType.HANDOFF_ACKNOWLEDGED,
+            AuditLog.session_id.in_(ids),
+        )
+        .order_by(AuditLog.id.desc())
+    )
+    acknowledged: dict[str, AuditLog] = {}
+    for row in (await session.execute(statement)).scalars():
+        if row.session_id and row.session_id not in acknowledged:
+            acknowledged[row.session_id] = row
+    return acknowledged
+
+
+async def handoff_transcript_ready(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    conversation_ids: Sequence[str],
+) -> set[str]:
+    """Conversations whose request payload is still in ``payload_escrow``.
+
+    The panel offers a transcript control only for these; the read itself still
+    goes through the admin escrow path, so this is a hint, not an entitlement.
+    """
+    ids = [conversation_id for conversation_id in conversation_ids if conversation_id]
+    if not ids:
+        return set()
+    statement = (
+        select(AuditLog.session_id)
+        .join(PayloadEscrow, PayloadEscrow.audit_log_id == AuditLog.id)
+        .where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.event_type == AuditEventType.INPUT_RECEIVED,
+            AuditLog.session_id.in_(ids),
+            PayloadEscrow.expires_at > utcnow(),
+        )
+        .distinct()
+    )
+    return {row for row in (await session.execute(statement)).scalars() if row}
+
+
+async def handoff_transcript_records(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    conversation_id: str,
+) -> tuple[AuditLog | None, AuditLog | None]:
+    """Newest escrowed request and delivered answer for one conversation."""
+    statement = (
+        select(AuditLog)
+        .join(PayloadEscrow, PayloadEscrow.audit_log_id == AuditLog.id)
+        .where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.session_id == conversation_id,
+            AuditLog.event_type.in_((AuditEventType.INPUT_RECEIVED, AuditEventType.RESPONSE_SENT)),
+            PayloadEscrow.expires_at > utcnow(),
+        )
+        .order_by(AuditLog.id.desc())
+    )
+    request_row: AuditLog | None = None
+    answer_row: AuditLog | None = None
+    for row in (await session.execute(statement)).scalars():
+        if row.event_type is AuditEventType.INPUT_RECEIVED and request_row is None:
+            request_row = row
+        elif row.event_type is AuditEventType.RESPONSE_SENT and answer_row is None:
+            answer_row = row
+        if request_row is not None and answer_row is not None:
+            break
+    return request_row, answer_row
+
+
+async def handoff_record(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    conversation_id: str,
+) -> AuditLog | None:
+    """The ``HANDOFF_REQUIRED`` row a caller is acting on, if this tenant has one."""
+    statement = (
+        select(AuditLog)
+        .where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.event_type == AuditEventType.HANDOFF_REQUIRED,
+            AuditLog.session_id == conversation_id,
+        )
+        .order_by(AuditLog.id.desc())
+        .limit(1)
+    )
+    return (await session.execute(statement)).scalars().first()
 
 
 def next_page_url(path: str, filters: AuditFilters, next_before_id: int) -> str:

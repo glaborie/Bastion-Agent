@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
+from typing import Final
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.demo.scenarios import SCENARIOS
+from db.audit import append_audit_event
+from db.escrow import (
+    EscrowDecryptionError,
+    EscrowExpiredError,
+    EscrowNotFoundError,
+    read_payload_escrow,
+)
+from db.models import AuditEventType
 from db.session import get_db_session
 from gateway.approvals import list_pending
 from gateway.audit_service import (
@@ -17,6 +27,10 @@ from gateway.audit_service import (
     MAX_PAGE_SIZE,
     AuditFilters,
     event_type_choices,
+    handoff_acknowledgements,
+    handoff_record,
+    handoff_transcript_ready,
+    handoff_transcript_records,
     list_records,
     next_page_url,
     recent_handoffs,
@@ -38,6 +52,9 @@ router = APIRouter(
     include_in_schema=False,
     dependencies=[Depends(rate_limit("dashboard"))],
 )
+
+#: A conversation id the handoff endpoints accept: the chat pattern, bounded.
+CONVERSATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 #: Prompts that exercise one control each, shown on the chat page.
 CHAT_SUGGESTIONS: tuple[dict[str, str], ...] = (
@@ -131,11 +148,21 @@ async def handoff_queue(
     transcript stays in the ledger and its retention rules (IDEA-016).
     """
     rows = await recent_handoffs(session, tenant_id=context.tenant_id)
+    conversation_ids = [row.session_id for row in rows if row.session_id]
+    acknowledged = await handoff_acknowledgements(
+        session, tenant_id=context.tenant_id, conversation_ids=conversation_ids
+    )
     return [
         {
             "conversation_id": row.session_id,
             "verdict": (row.metadata_json or {}).get("verdict"),
             "created_at": row.timestamp.isoformat(),
+            "acknowledged": row.session_id in acknowledged,
+            "acknowledged_at": (
+                acknowledged[row.session_id].timestamp.isoformat()
+                if row.session_id in acknowledged
+                else None
+            ),
         }
         for row in rows
     ]
@@ -153,11 +180,142 @@ async def handoff_panel(
     conversation id, verdict and timestamp as data attributes so the browser
     can raise one notification per new handoff without ever receiving text.
     """
+    return await _render_handoff_panel(request, context, session)
+
+
+async def _render_handoff_panel(
+    request: Request, context: AuthContext, session: AsyncSession
+) -> HTMLResponse:
+    """Render the queue with each row's acknowledgement and transcript state."""
     handoffs = await recent_handoffs(session, tenant_id=context.tenant_id)
+    conversation_ids = [row.session_id for row in handoffs if row.session_id]
+    acknowledgements = await handoff_acknowledgements(
+        session, tenant_id=context.tenant_id, conversation_ids=conversation_ids
+    )
+    transcript_ready = await handoff_transcript_ready(
+        session, tenant_id=context.tenant_id, conversation_ids=conversation_ids
+    )
     return render(
         request,
         "partials/handoff_panel.html",
-        context={"handoffs": handoffs},
+        context={
+            "handoffs": handoffs,
+            "acknowledgements": acknowledgements,
+            "transcript_ready": transcript_ready,
+            "is_admin": "admin" in context.principal.roles,
+        },
+    )
+
+
+def _conversation_id(conversation_id: str) -> str:
+    if not CONVERSATION_PATTERN.match(conversation_id):
+        raise HTTPException(status_code=422, detail="malformed conversation id")
+    return conversation_id
+
+
+@router.post("/api/handoffs/{conversation_id}/acknowledge", response_class=HTMLResponse)
+async def acknowledge_handoff(
+    request: Request,
+    conversation_id: str = Path(max_length=128),
+    context: AuthContext = Depends(require_csrf),
+    _authorized: AuthContext = Depends(require_roles("operator", "admin")),
+    session: AsyncSession = Depends(get_db_session),
+) -> HTMLResponse:
+    """Take ownership of one queued handoff (ADR-022 decision 9).
+
+    One ``HANDOFF_ACKNOWLEDGED`` row per conversation: a repeat call is a no-op
+    that renders the same acknowledged panel, so two operators clicking at once
+    do not stack records. Unknown or foreign conversations answer 404 rather
+    than creating a row about somebody else's tenant.
+    """
+    conversation_id = _conversation_id(conversation_id)
+    handoff = await handoff_record(
+        session, tenant_id=context.tenant_id, conversation_id=conversation_id
+    )
+    if handoff is None:
+        raise HTTPException(status_code=404, detail="no handoff for that conversation")
+    existing = await handoff_acknowledgements(
+        session, tenant_id=context.tenant_id, conversation_ids=[conversation_id]
+    )
+    if conversation_id not in existing:
+        verdict = (handoff.metadata_json or {}).get("verdict")
+        await append_audit_event(
+            session,
+            actor_id=context.actor_id,
+            tenant_id=context.tenant_id,
+            event_type=AuditEventType.HANDOFF_ACKNOWLEDGED,
+            session_id=conversation_id,
+            metadata_json={"conversation_id": conversation_id, "verdict": verdict},
+        )
+        await session.commit()
+    return await _render_handoff_panel(request, context, session)
+
+
+@router.post("/api/handoffs/{conversation_id}/transcript", response_class=HTMLResponse)
+async def handoff_transcript(
+    request: Request,
+    conversation_id: str = Path(max_length=128),
+    context: AuthContext = Depends(require_csrf),
+    _authorized: AuthContext = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db_session),
+) -> HTMLResponse:
+    """Render the escrowed transcript of one handoff for an admin.
+
+    Escrow is the only source of the text: each read goes through
+    ``read_payload_escrow`` and appends its own ``ESCROW_ACCESSED`` row, exactly
+    like ``POST /api/audit/{id}/escrow``. With no live row the page says so and
+    shows nothing, rather than failing on click.
+    """
+    conversation_id = _conversation_id(conversation_id)
+    request_row, answer_row = await handoff_transcript_records(
+        session, tenant_id=context.tenant_id, conversation_id=conversation_id
+    )
+    turns: list[tuple[str, str]] = []
+    for row in (request_row, answer_row):
+        if row is None:
+            continue
+        try:
+            escrow = await read_payload_escrow(
+                session, audit_log_id=int(row.id), tenant_id=context.tenant_id
+            )
+        except (EscrowNotFoundError, EscrowExpiredError):
+            continue
+        except EscrowDecryptionError as exc:
+            logger.error(
+                "Handoff transcript failed authentication",
+                extra={"audit_log_id": int(row.id), "actor_id": context.actor_id},
+            )
+            raise HTTPException(
+                status_code=409, detail="escrow payload failed authentication"
+            ) from exc
+        evidence = {
+            "audit_log_id": escrow.audit_log_id,
+            "kind": escrow.kind.value,
+            "outcome": "decrypted",
+        }
+        await append_audit_event(
+            session,
+            actor_id=context.actor_id,
+            tenant_id=context.tenant_id,
+            event_type=AuditEventType.ESCROW_ACCESSED,
+            payload=evidence,
+            metadata_json=evidence,
+        )
+        if row.event_type is AuditEventType.INPUT_RECEIVED:
+            for message in escrow.payload if isinstance(escrow.payload, list) else []:
+                if (
+                    isinstance(message, dict)
+                    and isinstance(message.get("role"), str)
+                    and isinstance(message.get("content"), str)
+                ):
+                    turns.append((message["role"], message["content"]))
+        elif isinstance(escrow.payload, str):
+            turns.append(("assistant", escrow.payload))
+    await session.commit()
+    return render(
+        request,
+        "partials/handoff_transcript.html",
+        context={"conversation_id": conversation_id, "turns": turns},
     )
 
 

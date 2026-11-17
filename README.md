@@ -574,7 +574,14 @@ operator reads.
 Every dashboard page carries an **Operator handoffs** panel for `operator` and
 `admin` sessions: it polls `GET /api/handoffs/panel` (the same rows as the JSON
 queue, never the marker count or the text) and links each row to the session
-inspector. A browser signed in as e.g. `breakglass` in a second window is also
+inspector. **Acknowledge** posts `POST /api/handoffs/{conversation_id}/acknowledge`
+and records one `HANDOFF_ACKNOWLEDGED` row (actor and timestamp, never the text);
+a second click is a no-op and the row shows who owns it. An `admin` also gets
+**Show transcript**, which reads the conversation's escrowed turns through the
+admin-only escrow path (`POST /api/handoffs/{conversation_id}/transcript`,
+`ESCROW_ACCESSED` per read). Both controls are absent when escrow is off or the
+24-hour entry expired — the panel says the transcript is unavailable instead of
+offering a button that cannot work. A browser signed in as e.g. `breakglass` in a second window is also
 notified: click **Enable browser alerts** once, and each newly queued handoff
 raises one `Notification` built from the conversation id, verdict and timestamp.
 The first poll primes the page, so rows queued before you opened it do not

@@ -68,7 +68,9 @@ def test_the_fragment_carries_metadata_attributes_only() -> None:
         metadata_json={"verdict": "escalating_language", "markers": 3},
     )
 
-    html = templates.env.get_template("partials/handoff_panel.html").render(handoffs=[row])
+    html = templates.env.get_template("partials/handoff_panel.html").render(
+        handoffs=[row], acknowledgements={}, transcript_ready=set(), is_admin=False
+    )
 
     assert 'data-handoff-id="6fb2af8453734dfd97025541ab9196ed"' in html
     assert 'data-handoff-verdict="escalating_language"' in html
@@ -79,7 +81,9 @@ def test_the_fragment_carries_metadata_attributes_only() -> None:
 
 
 def test_an_empty_queue_says_so() -> None:
-    html = templates.env.get_template("partials/handoff_panel.html").render(handoffs=[])
+    html = templates.env.get_template("partials/handoff_panel.html").render(
+        handoffs=[], acknowledgements={}, transcript_ready=set(), is_admin=False
+    )
 
     assert "No handoffs queued" in html
 
@@ -102,3 +106,53 @@ def test_the_script_notifies_from_the_attributes_it_renders() -> None:
     # The body is built from the attributes alone; nothing injects markup.
     assert "innerHTML" not in script
     assert "messages" not in script
+
+
+def _row(conversation_id: str = "conv-1") -> SimpleNamespace:
+    return SimpleNamespace(
+        session_id=conversation_id,
+        timestamp=datetime(2026, 11, 17, 13, 47, 46, tzinfo=UTC),
+        metadata_json={"verdict": "escalating_language"},
+    )
+
+
+def _panel(**overrides: object) -> str:
+    context: dict[str, object] = {
+        "handoffs": [_row()],
+        "acknowledgements": {},
+        "transcript_ready": set(),
+        "is_admin": False,
+    }
+    context.update(overrides)
+    return templates.env.get_template("partials/handoff_panel.html").render(**context)
+
+
+def test_an_unacknowledged_row_offers_acknowledge() -> None:
+    html = _panel()
+
+    assert 'hx-post="/api/handoffs/conv-1/acknowledge"' in html
+    assert "Acknowledge" in html
+
+
+def test_an_acknowledged_row_shows_who_owns_it() -> None:
+    ack = SimpleNamespace(
+        timestamp=datetime(2026, 11, 17, 14, 0, tzinfo=UTC), actor_id="bob-subject-1234"
+    )
+    html = _panel(acknowledgements={"conv-1": ack})
+
+    assert "acknowledged" in html
+    assert "bob-subject-1234" not in html  # only the short hash is rendered
+    assert "/acknowledge" not in html
+
+
+def test_the_transcript_control_is_admin_only() -> None:
+    operator_view = _panel(transcript_ready={"conv-1"})
+    assert "/transcript" not in operator_view
+    assert "Transcript" not in operator_view
+
+    admin_view = _panel(transcript_ready={"conv-1"}, is_admin=True)
+    assert 'hx-post="/api/handoffs/conv-1/transcript"' in admin_view
+
+    unavailable = _panel(transcript_ready=set(), is_admin=True)
+    assert "/transcript" not in unavailable
+    assert "transcript unavailable" in unavailable
