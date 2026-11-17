@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -13,8 +14,10 @@ from agent.routing import classifier as classifier_module
 from agent.routing.classifier import (
     CATEGORY_REASONS,
     SAFETY_LABELS,
+    ClassifierConfig,
     ClassifierConfigurationError,
     EnsembleThresholds,
+    GuardConfig,
     Sensitivity,
     SensitivityClassifier,
     _execution_providers,
@@ -38,7 +41,7 @@ SAFETY_GRAPH = MODELS / "content-safety-guard-small/onnx/model_quantized.onnx"
 
 
 def classifier(threshold: float = 0.55) -> SensitivityClassifier:
-    return SensitivityClassifier(model_path=None, threshold=threshold)
+    return SensitivityClassifier(ClassifierConfig(model_path=None, threshold=threshold))
 
 
 class _InjectionStub:
@@ -204,14 +207,14 @@ def test_reason_contains_families_not_the_prompt() -> None:
 
 def test_missing_onnx_model_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(ClassifierConfigurationError, match="model not found"):
-        SensitivityClassifier(model_path=str(tmp_path / "missing.onnx"))
+        SensitivityClassifier(ClassifierConfig(model_path=str(tmp_path / "missing.onnx")))
 
 
 def test_missing_tokenizer_fails_closed(tmp_path: Path) -> None:
     model = tmp_path / "model.onnx"
     model.write_bytes(b"not-a-real-onnx-model")
     with pytest.raises(ClassifierConfigurationError, match="tokenizer not found"):
-        SensitivityClassifier(model_path=str(model))
+        SensitivityClassifier(ClassifierConfig(model_path=str(model)))
 
 
 def test_softmax_is_stable_for_large_logits() -> None:
@@ -223,9 +226,15 @@ def test_softmax_is_stable_for_large_logits() -> None:
 
 def test_invalid_threshold_is_rejected() -> None:
     with pytest.raises(ValueError, match="threshold"):
-        SensitivityClassifier(model_path=None, threshold=1.5)
+        SensitivityClassifier(ClassifierConfig(model_path=None, threshold=1.5))
     with pytest.raises(ValueError, match="max_tokens"):
-        SensitivityClassifier(model_path=None, max_tokens=0)
+        SensitivityClassifier(ClassifierConfig(model_path=None, max_tokens=0))
+
+
+def test_constructor_takes_the_config_and_the_two_predictors_only() -> None:
+    """IDEA-037: the 24 keyword arguments cannot come back one at a time."""
+    parameters = inspect.signature(SensitivityClassifier.__init__).parameters
+    assert len([name for name in parameters if name != "self"]) <= 6
 
 
 # -- ADR-011 decision table (pure) ----------------------------------------
@@ -316,9 +325,9 @@ def test_ensemble_keeps_explicit_markings_confidential() -> None:
 
 def test_rules_floor_can_be_disabled() -> None:
     classifier_ = SensitivityClassifier(
+        ClassifierConfig(rules_floor=False),
         injection_predictor=_InjectionStub(0.0),
         safety_predictor=_SafetyStub(_clean()),
-        rules_floor=False,
     )
     assert classifier_.classify("This is strictly confidential.").label is Sensitivity.PUBLIC
 
@@ -345,18 +354,18 @@ def test_safety_error_fails_closed() -> None:
 def test_partial_ensemble_is_a_configuration_error() -> None:
     with pytest.raises(ClassifierConfigurationError, match="configured together"):
         SensitivityClassifier(
+            ClassifierConfig(require_models=False),
             injection_predictor=_InjectionStub(0.0),
-            require_models=False,
         )
 
 
 def test_non_local_environment_requires_a_model() -> None:
     with pytest.raises(ClassifierConfigurationError, match="no classifier model"):
-        SensitivityClassifier(model_path=None, require_models=True)
+        SensitivityClassifier(ClassifierConfig(model_path=None, require_models=True))
 
 
 def test_local_environment_allows_the_rule_fallback() -> None:
-    classifier_ = SensitivityClassifier(model_path=None, require_models=False)
+    classifier_ = SensitivityClassifier(ClassifierConfig(model_path=None, require_models=False))
     assert classifier_.model_name == "semantic-rules"
     assert not classifier_.uses_model
 
@@ -433,11 +442,13 @@ class _TailGraph(_OnnxGraph):
 
 def _tail_classifier(injection: str, safety: str) -> SensitivityClassifier:
     return SensitivityClassifier(
+        ClassifierConfig(
+            injection_threshold=0.662,
+            safety_unsafe_threshold=0.5,
+            safety_category_threshold=0.3,
+        ),
         injection_predictor=_OnnxInjectionModel(_TailGraph(injection)),
         safety_predictor=_OnnxSafetyModel(_TailGraph(safety)),
-        injection_threshold=0.662,
-        safety_unsafe_threshold=0.5,
-        safety_category_threshold=0.3,
     )
 
 
@@ -520,11 +531,13 @@ def test_invalid_model_digest_is_rejected() -> None:
 )
 def test_real_ensemble_separates_injection_privacy_and_public_prompts() -> None:
     classifier_ = SensitivityClassifier(
-        injection_model_path=str(INJECTION_GRAPH),
-        safety_model_path=str(SAFETY_GRAPH),
-        injection_threshold=0.5,
-        safety_unsafe_threshold=0.5,
-        safety_category_threshold=0.3,
+        ClassifierConfig(
+            injection=GuardConfig(model_path=str(INJECTION_GRAPH)),
+            safety=GuardConfig(model_path=str(SAFETY_GRAPH)),
+            injection_threshold=0.5,
+            safety_unsafe_threshold=0.5,
+            safety_category_threshold=0.3,
+        )
     )
 
     injection = classifier_.classify(

@@ -191,24 +191,11 @@ def _force_provider(provider: str) -> None:
 
 
 def build_classifier() -> Any:
-    from agent.routing.classifier import SensitivityClassifier
+    from agent.routing.classifier import ClassifierConfig, SensitivityClassifier
     from settings import get_settings
 
     settings = get_settings()
-    return SensitivityClassifier(
-        injection_model_path=settings.classifier_injection_model_path,
-        injection_tokenizer_path=settings.classifier_injection_tokenizer_path,
-        safety_model_path=settings.classifier_safety_model_path,
-        safety_tokenizer_path=settings.classifier_safety_tokenizer_path,
-        injection_max_tokens=settings.classifier_injection_max_tokens,
-        safety_max_tokens=settings.classifier_safety_max_tokens,
-        injection_threshold=settings.injection_threshold,
-        safety_unsafe_threshold=settings.classifier_safety_unsafe_threshold,
-        safety_category_threshold=settings.classifier_safety_category_threshold,
-        injection_model_sha256=settings.classifier_injection_model_sha256,
-        safety_model_sha256=settings.classifier_safety_model_sha256,
-        rules_floor=settings.classifier_rules_floor,
-    )
+    return SensitivityClassifier(ClassifierConfig.from_settings(settings))
 
 
 def _session_providers(classifier: Any) -> list[str]:

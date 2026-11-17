@@ -19,12 +19,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Final
 
 from agent.routing.classifier import (
     CATEGORY_REASONS,
+    ClassifierConfig,
     ClassifierConfigurationError,
     EnsembleThresholds,
     SensitivityClassifier,
@@ -281,11 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     try:
         classifier = SensitivityClassifier(
-            injection_model_path=settings.classifier_injection_model_path,
-            injection_tokenizer_path=settings.classifier_injection_tokenizer_path,
-            safety_model_path=settings.classifier_safety_model_path,
-            safety_tokenizer_path=settings.classifier_safety_tokenizer_path,
-            rules_floor=False,
+            replace(ClassifierConfig.from_settings(settings), rules_floor=False)
         )
     except ClassifierConfigurationError as exc:
         print(f"classifier unavailable: {exc}", file=sys.stderr)
@@ -297,8 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     goldens = load_goldens(GOLDENS)
     scored = score_all(classifier, goldens)
     rules = SensitivityClassifier(
-        model_path=None,
-        threshold=settings.classifier_confidence_threshold,
+        ClassifierConfig(model_path=None, threshold=settings.classifier_confidence_threshold)
     )
 
     injection_positives = [value for value in scored if value.golden.category == "injection"]
