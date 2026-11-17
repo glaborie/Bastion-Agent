@@ -12,7 +12,10 @@
       "version": "3.11"
     },
     "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers/features/docker-in-docker:1": {} // Use if your stack needs Docker
+    // Moby packages are not published for Ubuntu 24.04 (noble); install Docker CE instead
+    "ghcr.io/devcontainers/features/docker-in-docker:1": {
+      "moby": false
+    }
   },
 
   // Set the correct non-root user for this slim base image
