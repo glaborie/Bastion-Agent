@@ -64,6 +64,7 @@ from db.audit import append_audit_event
 from db.models import AuditEventType, EscrowKind
 from db.session import get_db_session
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
+from gateway.auth.roles import CHAT_ROLES
 from gateway.rate_limit import rate_limit
 from settings import Settings, get_settings
 from telemetry import annotate_span, span_attributes
@@ -756,7 +757,7 @@ async def _delivery_stage(
 )
 async def chat(
     request: ChatRequest,
-    context: AuthContext = Depends(require_roles("operator", "analyst", "admin")),
+    context: AuthContext = Depends(require_roles(CHAT_ROLES)),
     _csrf: AuthContext = Depends(require_csrf),
     session: AsyncSession = Depends(get_db_session),
     model_router: ModelRouter = Depends(get_chat_router),

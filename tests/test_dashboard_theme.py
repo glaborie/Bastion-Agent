@@ -275,16 +275,17 @@ async def test_a_stale_htmx_form_is_told_to_reload(
     assert response.headers["HX-Redirect"] == "/dashboard"
 
 
-async def test_a_principal_without_dashboard_access_cannot_set_a_theme(
+async def test_a_viewer_keeps_its_own_colour_preference(
     client: tuple[httpx.AsyncClient, dict[str, Any]],
 ) -> None:
+    """ADR-007 decision 9: the theme cookie is display state, not tenant data."""
     http, state = client
     state["context"] = session_context(READONLY)
 
     response = await http.post("/dashboard/theme", data={"theme": "dark", "csrf_token": CSRF_TOKEN})
 
-    assert response.status_code == 403
-    assert "set-cookie" not in response.headers
+    assert response.status_code == 303
+    assert "set-cookie" in response.headers
 
 
 async def test_the_theme_script_is_first_party_and_touches_no_html(

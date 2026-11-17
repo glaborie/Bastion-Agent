@@ -35,6 +35,7 @@ from gateway.audit_service import (
     session_timeline,
 )
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
+from gateway.auth.roles import READ_ROLES
 from gateway.dashboard.templating import render
 from gateway.rate_limit import rate_limit
 from gateway.web import is_htmx
@@ -83,7 +84,7 @@ async def list_audit(
     session_id: str | None = Query(default=None, max_length=128),
     before_id: int | None = Query(default=None, ge=1),
     limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(READ_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> Any:
     filters = _filters(
@@ -118,7 +119,7 @@ async def verify_chain(
     request: Request,
     limit: int = Query(default=MAX_VERIFY_RECORDS, ge=1, le=MAX_VERIFY_RECORDS),
     context: AuthContext = Depends(require_csrf),
-    _authorized: AuthContext = Depends(require_roles("operator", "admin")),
+    _authorized: AuthContext = Depends(require_roles(READ_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> Any:
     """Verify the caller's tenant records in a bounded window (ADR-015).
@@ -210,7 +211,7 @@ async def read_escrow(
 async def timeline(
     session_id: str,
     request: Request,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(READ_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> Any:
     if not session_id or len(session_id) > 128:

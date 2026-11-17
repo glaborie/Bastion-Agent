@@ -9,6 +9,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, cast
 
@@ -121,10 +122,15 @@ def session_context(principal: Principal, *, csrf_token: str = "csrf-token") -> 
     return AuthContext(principal=principal, method="session", session=record)
 
 
-@pytest_asyncio.fixture
-async def api(
+@asynccontextmanager
+async def dashboard_app(
     db_engine: AsyncEngine,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, dict[str, AuthContext]]]:
+    """The dashboard app with the DB and auth dependencies overridden.
+
+    Shared with ``tests/test_dashboard_roles.py``, whose matrix needs the same
+    app under a different set of principals.
+    """
     app = create_app()
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
 
@@ -148,6 +154,15 @@ async def api(
         follow_redirects=False,
     ) as client:
         yield client, state
+
+
+@pytest_asyncio.fixture
+async def api(
+    db_engine: AsyncEngine,
+) -> AsyncIterator[tuple[httpx.AsyncClient, dict[str, AuthContext]]]:
+    # pylint: disable=contextmanager-generator-missing-cleanup  # astroid misreads async with
+    async with dashboard_app(db_engine) as pair:
+        yield pair
 
 
 async def test_dashboard_renders_the_approval_queue(api: tuple[httpx.AsyncClient, Any]) -> None:
@@ -303,12 +318,21 @@ async def test_expired_ticket_cannot_be_decided(
 
 
 @pytest.mark.parametrize("principal", [CAROL, DAVE])
-async def test_roles_without_operator_access_are_forbidden(
-    api: tuple[httpx.AsyncClient, Any], principal: Principal
+async def test_a_viewer_reads_the_approval_queue_but_cannot_decide(
+    api: tuple[httpx.AsyncClient, Any], principal: Principal, db_engine: AsyncEngine
 ) -> None:
+    """ADR-007 decision 9: analyst and readonly see the list, never the action."""
     client, state = api
-    state["context"] = AuthContext(principal=principal, method="bearer")
-    assert (await client.get("/api/approvals")).status_code == 403
+    ticket_id = await seed_ticket(db_engine, build_ticket())
+    state["context"] = session_context(principal)
+
+    assert (await client.get("/api/approvals")).status_code == 200
+    decision = await client.post(
+        f"/api/approvals/{ticket_id}/action",
+        data={"action": "approve"},
+        headers={"X-CSRF-Token": "csrf-token"},
+    )
+    assert decision.status_code == 403
 
 
 async def test_session_auth_requires_csrf(
@@ -488,12 +512,13 @@ async def test_incident_panel_fragment_and_empty_state(
     assert 'hx-trigger="every 15s' in filled.text
 
 
-async def test_incident_panel_requires_operator_or_admin(
-    api: tuple[httpx.AsyncClient, Any],
+@pytest.mark.parametrize("principal", [CAROL, DAVE])
+async def test_a_viewer_reads_the_incident_panel(
+    api: tuple[httpx.AsyncClient, Any], principal: Principal
 ) -> None:
     client, state = api
-    state["context"] = session_context(CAROL)
-    assert (await client.get("/api/incidents")).status_code == 403
+    state["context"] = session_context(principal)
+    assert (await client.get("/api/incidents")).status_code == 200
 
 
 async def test_an_analyst_signed_in_gets_a_sign_out_on_the_403_page(
@@ -534,13 +559,17 @@ async def test_an_analyst_signed_in_gets_a_sign_out_on_the_403_page(
     monkeypatch.setattr("gateway.auth.rbac.get_session_manager", lambda: manager)
     client.cookies.set(get_settings().session_cookie_name, record.session_id)
 
-    response = await client.get("/dashboard")
+    # The demo console starts write scenarios, so it stays operator/admin and is
+    # the page an analyst still sees a refusal on (ADR-007 decision 9).
+    response = await client.get("/dashboard/demo")
 
     assert response.status_code == 403
     assert "Not authorized" in response.text
     assert CAROL.display_name in response.text
     assert 'action="/auth/logout"' in response.text
-    assert "Back to Command Control" not in response.text
+    # The refusal is on a page an analyst may not open, and the link back now
+    # lands somewhere that works for them.
+    assert "Back to Command Control" in response.text
 
 
 async def _seed_handoff(db_engine: AsyncEngine, conversation_id: str = "conv-ack") -> None:
@@ -795,13 +824,16 @@ async def test_chat_page_renders_suggested_prompts_and_a_scoped_conversation(
     assert first_id.group(1) != second_id.group(1)
 
 
-async def test_chat_page_requires_operator_or_admin(
+async def test_the_chat_page_follows_the_api_role_set(
     api: tuple[httpx.AsyncClient, Any],
 ) -> None:
+    """ADR-007 decision 9: analyst may chat (the API already allows it), readonly not."""
     client, state = api
     state["context"] = session_context(CAROL)
-    response = await client.get("/dashboard/chat")
-    assert response.status_code == 403
+    assert (await client.get("/dashboard/chat")).status_code == 200
+
+    state["context"] = session_context(DAVE)
+    assert (await client.get("/dashboard/chat")).status_code == 403
 
 
 async def test_dashboard_navigates_to_chat(api: tuple[httpx.AsyncClient, Any]) -> None:

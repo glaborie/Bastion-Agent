@@ -33,6 +33,7 @@ from agent.demo.runs import (
 from agent.demo.scenarios import DemoScenario, UnknownScenarioError, get_scenario
 from db.redis import get_redis
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
+from gateway.auth.roles import WRITE_ROLES
 from gateway.dashboard.templating import render, render_error
 from gateway.queue import enqueue_demo_run
 from gateway.rate_limit import rate_limit
@@ -64,7 +65,7 @@ async def start_demo_run(
     request: Request,
     scenario_id: str = Form(..., max_length=64),
     context: AuthContext = Depends(require_csrf),
-    _authorized: AuthContext = Depends(require_roles("operator", "admin")),
+    _authorized: AuthContext = Depends(require_roles(WRITE_ROLES)),
     redis: Redis = Depends(get_demo_redis),
 ) -> HTMLResponse:
     """Start one registry scenario as the signed-in principal."""
@@ -154,7 +155,7 @@ async def start_demo_run(
 async def demo_run_status(
     request: Request,
     run_id: str,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(WRITE_ROLES)),
     redis: Redis = Depends(get_demo_redis),
 ) -> HTMLResponse:
     """Poll one run; the partial stops polling itself once it is terminal."""
