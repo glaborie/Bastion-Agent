@@ -84,8 +84,10 @@ preflight: ## Drop containers whose network the daemon deleted, so up can recrea
 	uv run python scripts/dev/compose_preflight.py
 
 .PHONY: up
-up: preflight ## Start the full stack (requires Vault)
-	$(COMPOSE) up -d
+up: preflight ## Start the full stack, rebuilding app images (requires Vault)
+	# --build: `compose up` alone reuses the tagged image, so code merged since the
+	# last build never reached the container.
+	$(COMPOSE) up -d --build
 
 .PHONY: down
 down: ## Stop the full stack
