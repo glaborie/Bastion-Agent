@@ -8,6 +8,7 @@ from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from agent.warmup import guards_are_warm
 from db.session import ping
 from settings import get_settings
 
@@ -44,7 +45,7 @@ async def liveness() -> LivenessResponse:
 )
 async def readiness() -> JSONResponse:
     """Deep check: dependencies required to serve traffic are reachable."""
-    checks = {"database": await ping()}
+    checks = {"database": await ping(), "guards": guards_are_warm()}
     healthy = all(checks.values())
     payload = ReadinessResponse(
         status="ready" if healthy else "degraded",
