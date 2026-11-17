@@ -1,6 +1,6 @@
 ### IDEA-070: Detect paraphrased frustration, not just lexicon phrases
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.4
 - area: agent
