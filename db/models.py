@@ -138,6 +138,10 @@ class AuditEventType(StrEnum):
     #: never the conversation text. Appended last so the DDL guard below widens
     #: existing rows.
     HANDOFF_REQUIRED = "HANDOFF_REQUIRED"
+    #: An operator took ownership of a queued handoff (ADR-022 decision 9).
+    #: Metadata carries the conversation id and verdict; the actor and timestamp
+    #: are the row's own. One row per conversation, so a repeat call is a no-op.
+    HANDOFF_ACKNOWLEDGED = "HANDOFF_ACKNOWLEDGED"
 
 
 class EscrowKind(StrEnum):
@@ -380,7 +384,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'ck_audit_logs_audit_event_type'
-          AND pg_get_constraintdef(oid) LIKE '%HANDOFF_REQUIRED%'
+          AND pg_get_constraintdef(oid) LIKE '%HANDOFF_ACKNOWLEDGED%'
     ) THEN
         ALTER TABLE audit_logs
             DROP CONSTRAINT IF EXISTS ck_audit_logs_audit_event_type;
@@ -400,7 +404,8 @@ BEGIN
                 'ESCROW_ACCESSED',
                 'RESPONSE_SENT',
                 'APPROVAL_EXPIRED',
-                'HANDOFF_REQUIRED'
+                'HANDOFF_REQUIRED',
+                'HANDOFF_ACKNOWLEDGED'
             ));
     END IF;
 END

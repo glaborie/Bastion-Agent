@@ -1,6 +1,6 @@
 ### IDEA-071: Let an operator acknowledge a handoff and read its transcript
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.4
 - area: gateway
@@ -46,16 +46,17 @@ creates a live chat channel or changes the caller's turn.
 
 **Acceptance**
 
-- [ ] `POST`/`PATCH` acknowledge endpoint exists under `require_roles("operator", "admin")`, is tenant-scoped, records actor id and timestamp, is idempotent (a second call is a no-op that does not duplicate the record), and the panel renders the acknowledged state
-- [ ] The decision on how acknowledgement is recorded is in the ADR — a new `HANDOFF_ACKNOWLEDGED` member under the ADR-007 decision 7 exception, or metadata on `HANDOFF_REQUIRED` with the append-only and hash-chain consequences spelled out; either way the chain still verifies
-- [ ] Transcript view: shown only when a `payload_escrow` row exists for the conversation's `INPUT_RECEIVED` and/or `RESPONSE_SENT` record, read through the existing admin escrow path with its `ESCROW_ACCESSED` audit row, rendered as text (never HTML), and the plaintext is not written to the ledger, the trace or logs
-- [ ] With escrow off or expired the panel says the transcript is unavailable and offers no control, asserted by a test with no escrow row
-- [ ] Role tests: `readonly` and `analyst` cannot acknowledge (403) and cannot read a transcript even when their session is valid; `admin` in a different tenant cannot either (tenant scoping)
-- [ ] `scripts/gate.sh` is green, `check_adrs.py` passes, and README's handoff section documents acknowledge and the escrow dependency
+- [x] `POST`/`PATCH` acknowledge endpoint exists under `require_roles("operator", "admin")`, is tenant-scoped, records actor id and timestamp, is idempotent (a second call is a no-op that does not duplicate the record), and the panel renders the acknowledged state
+- [x] The decision on how acknowledgement is recorded is in the ADR — a new `HANDOFF_ACKNOWLEDGED` member under the ADR-007 decision 7 exception, or metadata on `HANDOFF_REQUIRED` with the append-only and hash-chain consequences spelled out; either way the chain still verifies
+- [x] Transcript view: shown only when a `payload_escrow` row exists for the conversation's `INPUT_RECEIVED` and/or `RESPONSE_SENT` record, read through the existing admin escrow path with its `ESCROW_ACCESSED` audit row, rendered as text (never HTML), and the plaintext is not written to the ledger, the trace or logs
+- [x] With escrow off or expired the panel says the transcript is unavailable and offers no control, asserted by a test with no escrow row
+- [x] Role tests: `readonly` and `analyst` cannot acknowledge (403) and cannot read a transcript even when their session is valid; `admin` in a different tenant cannot either (tenant scoping)
+- [x] `scripts/gate.sh` is green, `check_adrs.py` passes, and README's handoff section documents acknowledge and the escrow dependency
 
 **Notes**
 
-- Live evidence: row 854 (`HANDOFF_REQUIRED`, `24709be1-b652-46d1-a0c9-30baad1b10e0`, `escalating_language`); escrow verified on the same stack by decrypting rows 857/861 through `db.escrow.read_payload_escrow`, so the data path exists even though no acme admin can read it over HTTP.
-- The tenant/role gap is real and worth deciding with this item: escrow read is `admin`-only and tenant-scoped, and the seeded realm has `breakglass` (admin, `platform`), `alice`/`bob` (`acme` operator/analyst) and `carol` (`globex` analyst). Either an acme admin is granted (realm change) or the acknowledge action stays operator-visible while the transcript requires an admin from the same tenant.
-- Acknowledge is not "resolved": with no live channel (ADR-022 decision 6) there is nothing to close, so the item deliberately stops at "someone owns this now" and leaves resolution/assignment out.
-- Out of scope: SLA timers, assignment to a named operator, notifying the caller, editing or replying to the conversation, and any transcript retention beyond the escrow TTL.
+- Implementation: `POST /api/handoffs/{conversation_id}/acknowledge` (operator/admin, CSRF on a session, tenant-scoped) appends one `HANDOFF_ACKNOWLEDGED` row and re-renders the panel; `POST /api/handoffs/{conversation_id}/transcript` (admin, CSRF) reads the newest escrowed `INPUT_RECEIVED` and `RESPONSE_SENT` rows through `read_payload_escrow`, appends one `ESCROW_ACCESSED` per read, and renders the turns in an auto-escaped `<pre>`. The panel offers the transcript control only when `payload_escrow` still holds the request row, and shows "transcript unavailable (escrow off or expired)" otherwise; an operator never sees that control because the read is admin-only (ADR-005 decision 7).
+- Recording decision: a new `HANDOFF_ACKNOWLEDGED` ledger member, because the ledger is append-only and a flag on the handoff row would be a mutable record. ADR-022 decision 9 records it, ADR-007 decision 7's exception paragraph names it, and `AUDIT_EVENT_VOCABULARY_DDL` widens the CHECK constraint by looking for the new member so an existing database is upgraded on boot. One acknowledgement per conversation; a second call is a no-op.
+- Tests: `tests/test_dashboard.py` +4 (acknowledge once and idempotent with actor/verdict metadata; analyst/readonly 403 and a cross-tenant admin 404 with no row; transcript 403 for operator/analyst/readonly and the unavailable message without escrow; transcript reads escrow and writes exactly two `ESCROW_ACCESSED` rows while the text never lands in them) and `tests/test_handoffs_panel.py` +3 (acknowledge form, acknowledged badge with short actor hash, admin-only transcript control and the unavailable note). The JSON queue now carries `acknowledged`/`acknowledged_at`, and the existing key-set assertion was updated.
+- Live verification on the rebuilt stack: acknowledging `e486c4a8-e40c-4e82-af22-6b3d560ca592` returned 200 and exactly one row, a second call returned 200 with the count still one, `/api/handoffs` showed `acknowledged: true` with a timestamp, the admin transcript returned the conversation's "still not working" turns, and the same transcript call as an operator returned 403. A conversation with no handoff row returned 404, which is why the first live attempt against `f41974de…` failed: that conversation was never flagged (IDEA-070), it only has escrow rows.
+- `scripts/gate.sh` 13/13; `check_adrs.py` OK with 23 ADRs; DB-backed `tests/test_dashboard.py` 32 passed against a throwaway PostgreSQL.

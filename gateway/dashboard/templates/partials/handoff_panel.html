@@ -5,15 +5,19 @@
         <th scope="col">Time</th>
         <th scope="col">Verdict</th>
         <th scope="col">Conversation</th>
+        <th scope="col">State</th>
+        {% if is_admin %}<th scope="col">Transcript</th>{% endif %}
       </tr>
     </thead>
     <tbody>
       {% for handoff in handoffs %}
         {% set metadata = handoff.metadata_json or {} %}
         {% set verdict = metadata.get("verdict", "unknown") %}
+        {% set ack = acknowledgements.get(handoff.session_id) %}
         <tr data-handoff-id="{{ handoff.session_id }}"
             data-handoff-verdict="{{ verdict }}"
-            data-handoff-created="{{ handoff.timestamp | utc_ts }}">
+            data-handoff-created="{{ handoff.timestamp | utc_ts }}"
+            {% if ack %}data-handoff-acknowledged="true"{% endif %}>
           <td><small>{{ handoff.timestamp | utc_ts }}</small></td>
           <td><span class="badge badge-warn">{{ verdict }}</span></td>
           <td>
@@ -21,10 +25,40 @@
               <code>{{ handoff.session_id | short_hash(16) }}</code>
             </a>
           </td>
+          <td>
+            {% if ack %}
+              <span class="badge badge-ok">acknowledged</span>
+              <small class="muted">
+                {{ ack.timestamp | utc_ts }} · {{ ack.actor_id | short_hash(8) }}
+              </small>
+            {% else %}
+              <form hx-post="/api/handoffs/{{ handoff.session_id }}/acknowledge"
+                    hx-target="#handoff-slot"
+                    hx-swap="innerHTML">
+                <button type="submit" class="secondary outline">Acknowledge</button>
+              </form>
+            {% endif %}
+          </td>
+          {% if is_admin %}
+            <td>
+              {% if handoff.session_id in transcript_ready %}
+                <button type="button"
+                        class="secondary outline"
+                        hx-post="/api/handoffs/{{ handoff.session_id }}/transcript"
+                        hx-target="#handoff-transcript"
+                        hx-swap="innerHTML">Show transcript</button>
+              {% else %}
+                <small class="muted">
+                  transcript unavailable (escrow off or expired)
+                </small>
+              {% endif %}
+            </td>
+          {% endif %}
         </tr>
       {% endfor %}
     </tbody>
   </table>
+  <div id="handoff-transcript" aria-live="polite"></div>
 {% else %}
   <p>
     <small class="muted">

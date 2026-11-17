@@ -1,0 +1,19 @@
+{% if turns %}
+  <article class="handoff-transcript">
+    <header>
+      <small>
+        Transcript · <code>{{ conversation_id | short_hash(16) }}</code> ·
+        read from the pre-production escrow (ADR-005 decision 7)
+      </small>
+    </header>
+    <pre>{% for role, content in turns %}{{ role }}: {{ content }}
+{% endfor %}</pre>
+  </article>
+{% else %}
+  <p>
+    <small class="muted">
+      Transcript unavailable: escrow is off for this turn, or its 24-hour entry
+      has expired (ADR-005 decision 7). The ledger keeps the hashes either way.
+    </small>
+  </p>
+{% endif %}
