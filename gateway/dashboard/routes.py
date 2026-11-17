@@ -38,6 +38,7 @@ from gateway.audit_service import (
     session_timeline,
 )
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
+from gateway.auth.roles import CHAT_ROLES, READ_ROLES, WRITE_ROLES
 from gateway.auth.session import safe_next_path
 from gateway.dashboard.templating import render, render_error
 from gateway.dashboard.theme import apply_theme_cookie, normalise_theme
@@ -86,7 +87,7 @@ async def index() -> RedirectResponse:
 async def set_theme(
     request: Request,
     _csrf: AuthContext = Depends(require_csrf),
-    _authorized: AuthContext = Depends(require_roles("operator", "admin")),
+    _authorized: AuthContext = Depends(require_roles(READ_ROLES)),
 ) -> Response:
     """Persist the colour-scheme preference and return to the page that asked.
 
@@ -111,7 +112,7 @@ async def set_theme(
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(
     request: Request,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(READ_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     settings = get_settings()
@@ -139,7 +140,7 @@ async def dashboard_page(
 
 @router.get("/api/handoffs")
 async def handoff_queue(
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(WRITE_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[dict[str, object]]:
     """Recent conversations waiting for a human (ADR-022).
@@ -171,7 +172,7 @@ async def handoff_queue(
 @router.get("/api/handoffs/panel", response_class=HTMLResponse)
 async def handoff_panel(
     request: Request,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(WRITE_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     """Live handoff queue fragment polled by every dashboard page (ADR-022).
@@ -218,7 +219,7 @@ async def acknowledge_handoff(
     request: Request,
     conversation_id: str = Path(max_length=128),
     context: AuthContext = Depends(require_csrf),
-    _authorized: AuthContext = Depends(require_roles("operator", "admin")),
+    _authorized: AuthContext = Depends(require_roles(WRITE_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     """Take ownership of one queued handoff (ADR-022 decision 9).
@@ -322,7 +323,7 @@ async def handoff_transcript(
 @router.get("/api/incidents", response_class=HTMLResponse)
 async def incidents_panel(
     request: Request,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(READ_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     """Live ``SECURITY_INCIDENT`` panel fragment polled by the dashboard (ADR-012)."""
@@ -341,7 +342,7 @@ async def incidents_panel(
 @router.get("/dashboard/chat", response_class=HTMLResponse)
 async def chat_page(
     request: Request,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(CHAT_ROLES)),
 ) -> HTMLResponse:
     """Guarded chat UI (ADR-012). The browser calls POST /v1/chat directly."""
     return render(
@@ -359,7 +360,7 @@ async def chat_page(
 @router.get("/dashboard/demo", response_class=HTMLResponse)
 async def demo_page(
     request: Request,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(WRITE_ROLES)),
 ) -> HTMLResponse:
     """One card per script: the control it exercises and the evidence to expect.
 
@@ -386,7 +387,7 @@ async def audit_page(
     session_id: str | None = Query(default=None, max_length=128),
     before_id: int | None = Query(default=None, ge=1),
     limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(READ_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     try:
@@ -428,7 +429,7 @@ async def audit_page(
 async def session_page(
     request: Request,
     session_id: str,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(READ_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     if not session_id or len(session_id) > 128:

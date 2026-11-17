@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 
 from gateway.auth.rbac import AuthContext, require_roles
+from gateway.auth.roles import READ_ROLES
 from gateway.dashboard.templating import render
 from gateway.evals import EvalReport, load_latest_report
 from gateway.rate_limit import rate_limit
@@ -22,7 +23,7 @@ router = APIRouter(
 @router.get("/api/evals/latest", summary="Latest DeepEval run summary")
 async def latest_report(
     request: Request,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(READ_ROLES)),
 ) -> Any:
     report = load_latest_report(get_settings().eval_report_path)
     if is_htmx(request):

@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from gateway.auth.rbac import session_principal
-from gateway.auth.roles import any_satisfied
+from gateway.auth.roles import CHAT_ROLES, READ_ROLES, WRITE_ROLES, any_satisfied
 from gateway.dashboard.theme import theme_from_request
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -31,9 +31,21 @@ def _utc_timestamp(value: object) -> str:
     return "—"
 
 
+def _has_role(principal: object, roles: tuple[str, ...]) -> bool:
+    """Template-side check against the same role sets the routes enforce."""
+    granted: frozenset[str] = getattr(principal, "roles", frozenset())
+    return bool(granted) and any_satisfied(granted, roles)
+
+
 templates.env.filters["short_hash"] = _short_hash
 templates.env.filters["utc_ts"] = _utc_timestamp
 templates.env.globals["app_title"] = "Bastion-Agent"
+#: The role sets are the routes' own, so a link and the page behind it cannot
+#: disagree (ADR-007 decision 9).
+templates.env.globals["has_role"] = _has_role
+templates.env.globals["READ_ROLES"] = READ_ROLES
+templates.env.globals["WRITE_ROLES"] = WRITE_ROLES
+templates.env.globals["CHAT_ROLES"] = CHAT_ROLES
 
 
 def render(
@@ -72,7 +84,7 @@ async def render_error(
     to a route that will refuse them again.
     """
     principal, csrf_token = await session_principal(request)
-    authorized = principal is not None and any_satisfied(principal.roles, ("operator", "admin"))
+    authorized = principal is not None and any_satisfied(principal.roles, READ_ROLES)
     return render(
         request,
         "error.html",

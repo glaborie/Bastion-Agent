@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from enum import StrEnum
+from typing import Final
 
 
 class Role(StrEnum):
@@ -21,6 +22,28 @@ class Role(StrEnum):
 
 
 ROLE_NAMES: frozenset[str] = frozenset(member.value for member in Role)
+
+#: Read surfaces of the control plane: the dashboard and its pages, the audit
+#: ledger and its chain check, the session inspector, the incident panel and the
+#: approval queue as a list. Every known role may look (ADR-007 decision 9).
+READ_ROLES: Final[tuple[str, ...]] = (
+    Role.ADMIN.value,
+    Role.OPERATOR.value,
+    Role.ANALYST.value,
+    Role.READONLY.value,
+)
+
+#: Acting: the four-eyes decision, the demo console, the handoff queue and its
+#: acknowledgement. An action always needs an operator or the admin superset.
+WRITE_ROLES: Final[tuple[str, ...]] = (Role.ADMIN.value, Role.OPERATOR.value)
+
+#: Chat, on the API and the page alike: an analyst may ask the assistant a
+#: question, a readonly principal may not spend tokens or write a turn.
+CHAT_ROLES: Final[tuple[str, ...]] = (
+    Role.ADMIN.value,
+    Role.OPERATOR.value,
+    Role.ANALYST.value,
+)
 
 #: ``admin`` is a superset by definition (break-glass operator). The other three
 #: are independent grants: ``operator`` is *not* implicitly ``analyst``.

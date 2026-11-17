@@ -25,6 +25,7 @@ from gateway.approvals import (
     utc_isoformat,
 )
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
+from gateway.auth.roles import READ_ROLES, WRITE_ROLES
 from gateway.dashboard.templating import render
 from gateway.queue import enqueue_tool_resume
 from gateway.rate_limit import rate_limit
@@ -112,7 +113,7 @@ async def _queue_view(
 @router.get("/api/approvals", summary="Pending approvals")
 async def list_approvals(
     request: Request,
-    context: AuthContext = Depends(require_roles("operator", "admin")),
+    context: AuthContext = Depends(require_roles(READ_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> Any:
     """List open tickets. htmx receives the polling partial instead of JSON."""
@@ -132,7 +133,7 @@ async def decide_approval(
     action: str = Form(..., max_length=16),
     reason: str | None = Form(default=None, max_length=1024),
     context: AuthContext = Depends(require_csrf),
-    _authorized: AuthContext = Depends(require_roles("operator", "admin")),
+    _authorized: AuthContext = Depends(require_roles(WRITE_ROLES)),
     session: AsyncSession = Depends(get_db_session),
 ) -> Any:
     """Decide one ticket. The row lock and DB constraint back up the checks here."""

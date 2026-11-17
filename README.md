@@ -120,8 +120,20 @@ dev-only credential. Rotate or delete these users before exposing the stack.
 | `alice` | `operator` | Initiator of the demo write requests |
 | `admin` | `admin` | Dedicated acme administrator: the admin-only escrow read (ADR-005 decision 7) and any other admin-gated surface, so the demo operator stays unprivileged |
 | `bob` | `operator`, `analyst` | The second operator who decides tickets |
-| `carol` | `analyst` | Read/analysis only; dashboard is forbidden |
-| `dave` | `readonly` | API read-only; dashboard is forbidden |
+| `carol` | `analyst` | Reads the dashboard, audit, sessions and incidents and may chat; cannot decide a ticket, run a demo or acknowledge a handoff |
+| `dave` | `readonly` | Pure viewer: the same read surfaces as `carol`, no chat, no action |
+
+**What each role sees.** Every signed-in role — `admin`, `operator`, `analyst`,
+`readonly` — may read the dashboard, the audit ledger and its chain check, the
+session inspector, the incident panel, the evaluation health and the approval
+queue as a list. Acting stays `operator`/`admin`: approving a ticket, running a
+demo scenario, acknowledging a handoff. `analyst` may also use chat (`/v1/chat`
+already allowed it) but not the demo console; `readonly` gets no chat and no
+action at all. The escrow transcript and the escrow API remain `admin`-only
+(ADR-005 decision 7), and the handoff queue remains an operator queue (ADR-022).
+The matrix, with the reason for each cell, is ADR-007 decision 9, and
+`tests/test_dashboard.py` iterates roles × routes so a new page cannot land
+without one.
 
 Open **`http://localhost:8000/dashboard`** in a browser (use `localhost`, not
 `127.0.0.1`, because the registered redirect URI and Keycloak's secure cookies
