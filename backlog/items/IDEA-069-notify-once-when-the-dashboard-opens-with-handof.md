@@ -1,6 +1,6 @@
 ### IDEA-069: Notify once when the dashboard opens with handoffs already queued
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.4
 - area: gateway

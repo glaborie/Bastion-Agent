@@ -1,6 +1,6 @@
 ### IDEA-067: Warm the DLP and classifier before the first chat turn
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.4
 - area: gateway
