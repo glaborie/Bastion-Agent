@@ -1,6 +1,6 @@
 ### IDEA-028: Route prompts to a model tier by classified complexity
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.4
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-004
 - created: 2026-11-12
-- updated: 2026-11-12
+- updated: 2026-11-17
 - source: session request on 2026-11-12 ("add a prompt classifier to route to the appropriate model based on complexity")
 
 **Problem**

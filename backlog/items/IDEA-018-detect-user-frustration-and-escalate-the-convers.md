@@ -1,6 +1,6 @@
 ### IDEA-018: Detect user frustration and escalate the conversation to a human operator
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.4
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-11
-- updated: 2026-11-11
+- updated: 2026-11-17
 - source: session request on 2026-11-11 ("sentiment analysis and escalation to human when frustration detected")
 
 **Problem**

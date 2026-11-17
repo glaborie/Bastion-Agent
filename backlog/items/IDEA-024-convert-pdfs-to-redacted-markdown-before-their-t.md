@@ -1,6 +1,6 @@
 ### IDEA-024: Convert PDFs to redacted Markdown before their text reaches a model
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.4
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-11
-- updated: 2026-11-11
+- updated: 2026-11-17
 - source: session request on 2026-11-11 ("create a tool to convert pdf as markdown with PII redaction before sharing with a LLM; use an existing tool such as microsoft/markitdown")
 
 **Problem**
