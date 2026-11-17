@@ -59,6 +59,7 @@ from agent.routing.client import (
     RoutingError,
     get_model_router,
 )
+from agent.sentiment import assess as assess_frustration
 from db.audit import append_audit_event
 from db.models import AuditEventType, EscrowKind
 from db.session import get_db_session
@@ -415,6 +416,40 @@ async def _routing_stage(
     return decision
 
 
+async def _handoff_stage(state: _Turn, request: ChatRequest) -> None:
+    """ADR-022: record a handoff when the caller's own turns read as frustrated.
+
+    The stage observes the turn and changes nothing: the route, the canary, the
+    egress verdict and the delivered answer are identical with it enabled or
+    disabled. Only ``user`` turns are read, so an escalation demand inside
+    fenced tool output cannot create a handoff.
+    """
+    if not get_settings().sentiment_detection_enabled:
+        return
+    verdict = assess_frustration([(turn.role, turn.content) for turn in request.messages])
+    if verdict is None:
+        return
+    await _record(
+        state.session,
+        actor_id=state.actor_id,
+        tenant_id=state.tenant_id,
+        event_type=AuditEventType.HANDOFF_REQUIRED,
+        conversation_id=state.conversation_id,
+        metadata={
+            "conversation_id": state.conversation_id,
+            "verdict": verdict.reason,
+            "markers": len(verdict.markers),
+            "user_turns": verdict.user_turns,
+        },
+    )
+    _annotate(
+        {
+            "bastion.handoff.required": True,
+            "bastion.handoff.verdict": verdict.reason,
+        }
+    )
+
+
 async def _preflight(state: _Turn, sanitizer: EgressSanitizer) -> str:
     """Stage 3: clear the circuit breaker and mint the session canary."""
     try:
@@ -736,6 +771,7 @@ async def chat(
     await _ingress(state, request)
     redacted, entity_count = await _dlp_stage(state, dlp, request)
     decision = await _routing_stage(state, model_router, request, entity_count)
+    await _handoff_stage(state, request)
     canary = await _preflight(state, sanitizer)
     if (blocked := await _injection_gate(state, decision)) is not None:
         return blocked

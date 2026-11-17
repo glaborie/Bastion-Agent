@@ -19,6 +19,7 @@ from gateway.audit_service import (
     event_type_choices,
     list_records,
     next_page_url,
+    recent_handoffs,
     recent_security_incidents,
     session_timeline,
 )
@@ -117,6 +118,27 @@ async def dashboard_page(
             "report": load_latest_report(settings.eval_report_path),
         },
     )
+
+
+@router.get("/api/handoffs")
+async def handoff_queue(
+    context: AuthContext = Depends(require_roles("operator", "admin")),
+    session: AsyncSession = Depends(get_db_session),
+) -> list[dict[str, object]]:
+    """Recent conversations waiting for a human (ADR-022).
+
+    Metadata only: the verdict, the conversation id and when it fired. The
+    transcript stays in the ledger and its retention rules (IDEA-016).
+    """
+    rows = await recent_handoffs(session, tenant_id=context.tenant_id)
+    return [
+        {
+            "conversation_id": row.session_id,
+            "verdict": (row.metadata_json or {}).get("verdict"),
+            "created_at": row.timestamp.isoformat(),
+        }
+        for row in rows
+    ]
 
 
 @router.get("/api/incidents", response_class=HTMLResponse)

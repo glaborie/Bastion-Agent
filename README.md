@@ -554,6 +554,19 @@ After the canary scan, `{{ENTITY:…}}` markers are restored only through the
 caller's vault session. A marker whose entry expired stays visible and is
 counted; it is never guessed.
 
+### Frustration handoff (UX signal)
+
+`agent/sentiment.py` scans the **caller's own** turns for a fixed marker lexicon
+plus a repeated complaint. When they fire, the turn writes one
+`HANDOFF_REQUIRED` row — conversation id, verdict and counts, never the text —
+and `GET /api/handoffs` lists the twenty newest for `operator`/`admin`, with
+`readonly` and `analyst` refused (ADR-022). Detection is local and
+deterministic: no model, no network, and the answer, route, DLP verdict and
+four-eyes outcome are unchanged. This is a UX signal, not a security control —
+security escalation remains the `SECURITY_INCIDENT` tiers in `SECURITY.md` — and
+there is no live human chat channel in the stack: the handoff is a queue an
+operator reads.
+
 ### Demo
 
 The canary is deterministic, so the demo feeds the sanitizer the exact text the

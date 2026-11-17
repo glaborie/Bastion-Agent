@@ -26,6 +26,7 @@ a file in this directory; this page is the index and the process guide.
 | 019 | East-West Mutual TLS with an Internal Step-CA | Accepted |
 | 020 | Per-Principal Inference Token Budget | Proposed |
 | 021 | A HashiCorp Vault Dev Overlay for Infra Credentials | Accepted |
+| 022 | Frustration Detection and the Operator Handoff Queue | Accepted |
 
 ---
 
