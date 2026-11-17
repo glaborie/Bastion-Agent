@@ -416,9 +416,12 @@ services:
   #            `cloud-primary` -> OpenRouter)
   # ---------------------------------------------------------------------------
   omniroute:
-    # Upstream image runs as root and writes /root/.omniroute; re-owning it is
-    # not supported without upstream changes. Compensated by cap_drop + no
-    # published port beyond loopback.
+    # Upstream image runs as uid 1000 (`node`) and keeps its SQLite store in
+    # `DATA_DIR`, which 3.8.53 sets to /app/data. The volume used to be mounted
+    # at /root/.omniroute, the pre-upgrade location: nothing the app read lived
+    # there, so every recreated container started with an empty store — no
+    # providers, combos or API keys — and the gateway's key answered
+    # 401 AUTH_002. Compensated by cap_drop + no published port beyond loopback.
     image: ${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:3.8.53@sha256:b52a17661a1aff42ffb78f349f423e986dfc55b57274f28559f8387622ef8ee4}
     container_name: bastion-omniroute
     environment:
@@ -432,7 +435,7 @@ services:
       # Bearer token OmniRoute uses for the `local-llama` upstream.
       LLAMA_API_KEY: ${LLAMA_API_KEY:-dev-only-llama-api-key}
     volumes:
-      - omniroute_data:/root/.omniroute
+      - omniroute_data:/app/data
       - ./config/omniroute:/config:ro
     ports:
       - "127.0.0.1:${OMNIROUTE_PORT:-8001}:20128"

@@ -131,6 +131,34 @@ docker compose up -d --build gateway worker
 The ledger cannot reconstruct the lost conversation: `INPUT_RECEIVED` stores a
 digest, not the text, and the escrow that could decrypt it is off by default
 (README, "Pre-production payload escrow").
+## The dashboard says the upstream model is unavailable (OmniRoute 401 AUTH_002)
+
+**Symptom.** `/v1/chat` returns 502 and the gateway logs
+`agent.routing.client` "OmniRoute rejected the completion", model
+`cloud-primary`, status `401`, code `AUTH_002` "Invalid API key". The OmniRoute
+UI shows no keys, providers or combos, and its container log holds only startup
+migration lines, so there is nothing to inspect upstream.
+
+**Cause.** OmniRoute 3.8.53 keeps its SQLite store in `DATA_DIR` (`/app/data`).
+The compose volume was mounted at `/root/.omniroute`, the pre-upgrade location,
+so nothing the router read was persisted: its state lived in the container's
+writable layer and every recreated container came up empty.
+
+**Fix.** The volume is mounted at `/app/data` now. Recreate the router and
+reconcile the contract:
+
+```bash
+docker compose up -d omniroute
+uv run python scripts/omniroute_bootstrap.py --write-env   # rotates OMNIROUTE_API_KEY
+docker compose up -d gateway worker
+```
+
+The bootstrap rewrites `OMNIROUTE_API_KEY` in `.env` and smoke-tests both
+aliases, so a passing run says the router answers `local-llama` and
+`cloud-primary`. A container created before the fix keeps a volume whose root
+holds the old layout; remove it (`docker compose rm -sf omniroute`, then
+`docker volume rm bastion-agent_omniroute_data`) rather than mounting it at the
+new path, where the app's uid cannot write it.
 
 ## Host processes get `Connection reset by peer` from Postgres, Redis or MinIO
 
