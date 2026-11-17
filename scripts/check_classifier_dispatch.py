@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Any, Final
 
-from agent.routing.classifier import SensitivityClassifier
+from agent.routing.classifier import ClassifierConfig, GuardConfig, SensitivityClassifier
 from agent.routing.dispatch import (
     CALIBRATED_ON,
     CALIBRATION_HOST,
@@ -59,12 +59,14 @@ def build_classifier(injection: Path, safety: Path) -> SensitivityClassifier:
     # pydantic-settings accepts _env_file at runtime; its declared __init__ omits it.
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
     return SensitivityClassifier(
-        injection_model_path=str(injection),
-        safety_model_path=str(safety),
-        injection_threshold=settings.injection_threshold,
-        safety_unsafe_threshold=settings.classifier_safety_unsafe_threshold,
-        safety_category_threshold=settings.classifier_safety_category_threshold,
-        rules_floor=settings.classifier_rules_floor,
+        ClassifierConfig(
+            injection=GuardConfig(model_path=str(injection)),
+            safety=GuardConfig(model_path=str(safety)),
+            injection_threshold=settings.injection_threshold,
+            safety_unsafe_threshold=settings.classifier_safety_unsafe_threshold,
+            safety_category_threshold=settings.classifier_safety_category_threshold,
+            rules_floor=settings.classifier_rules_floor,
+        )
     )
 
 

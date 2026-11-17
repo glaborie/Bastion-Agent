@@ -1,6 +1,6 @@
 ### IDEA-037: Replace the classifier's 24-keyword constructor with a guard configuration object
 
-- status: active
+- status: done
 - priority: P3
 - phase: v0.3
 - area: agent
@@ -21,12 +21,12 @@ The constructor takes one frozen configuration object plus the two optional pred
 
 **Acceptance**
 
-- [ ] `SensitivityClassifier.__init__` takes at most 6 parameters excluding `self` (the config object, `injection_predictor`, `safety_predictor`, and any keyword-only validation switches that remain), asserted by a test using `inspect.signature` so the count cannot drift back
-- [ ] `uv run pytest tests/test_classifier.py tests/test_classifier_evals.py -q` passes after adapting only direct constructor calls; no assertion is deleted, loosened or skipped to make it pass
-- [ ] The existing configuration-error assertions keep their message text: `model not found`, `tokenizer not found`, `threshold`, `max_tokens`, `configured together`, `no classifier model`
-- [ ] Every direct call site is migrated (`tests/test_classifier.py`, `tests/test_classifier_evals.py`, `scripts/demo_classifier.py`, `scripts/tune_classifier.py`, `scripts/measure_classifier_latency.py`, `scripts/check_classifier_dispatch.py`), and `grep -rn "SensitivityClassifier(" --include=*.py agent tests scripts` shows no remaining argument-by-argument construction
-- [ ] `uv run mypy agent/routing/classifier.py` and `uv run ruff check agent/routing/classifier.py scripts tests` pass
-- [ ] A CUDA provider selection with no GPU graph configured still keeps the configured CPU graph and the configured `unsafe` default, proven by the existing GPU operating-point test
+- [x] `SensitivityClassifier.__init__` takes at most 6 parameters excluding `self` (the config object, `injection_predictor`, `safety_predictor`, and any keyword-only validation switches that remain), asserted by a test using `inspect.signature` so the count cannot drift back
+- [x] `uv run pytest tests/test_classifier.py tests/test_classifier_evals.py -q` passes after adapting only direct constructor calls; no assertion is deleted, loosened or skipped to make it pass
+- [x] The existing configuration-error assertions keep their message text: `model not found`, `tokenizer not found`, `threshold`, `max_tokens`, `configured together`, `no classifier model`
+- [x] Every direct call site is migrated (`tests/test_classifier.py`, `tests/test_classifier_evals.py`, `scripts/demo_classifier.py`, `scripts/tune_classifier.py`, `scripts/measure_classifier_latency.py`, `scripts/check_classifier_dispatch.py`), and `grep -rn "SensitivityClassifier(" --include=*.py agent tests scripts` shows no remaining argument-by-argument construction
+- [x] `uv run mypy agent/routing/classifier.py` and `uv run ruff check agent/routing/classifier.py scripts tests` pass
+- [x] A CUDA provider selection with no GPU graph configured still keeps the configured CPU graph and the configured `unsafe` default, proven by the existing GPU operating-point test
 
 **Notes**
 

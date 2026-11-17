@@ -22,6 +22,8 @@ import pytest
 from agent.routing.classifier import (
     CATEGORY_REASONS,
     Classification,
+    ClassifierConfig,
+    GuardConfig,
     Sensitivity,
     SensitivityClassifier,
 )
@@ -118,12 +120,14 @@ def test_coded_thresholds_match_the_tuned_values() -> None:
 def _real_classifier() -> SensitivityClassifier:
     settings = Settings(_env_file=None)
     return SensitivityClassifier(
-        injection_model_path=str(INJECTION_GRAPH),
-        safety_model_path=str(SAFETY_GRAPH),
-        injection_threshold=settings.injection_threshold,
-        safety_unsafe_threshold=settings.classifier_safety_unsafe_threshold,
-        safety_category_threshold=settings.classifier_safety_category_threshold,
-        rules_floor=settings.classifier_rules_floor,
+        ClassifierConfig(
+            injection=GuardConfig(model_path=str(INJECTION_GRAPH)),
+            safety=GuardConfig(model_path=str(SAFETY_GRAPH)),
+            injection_threshold=settings.injection_threshold,
+            safety_unsafe_threshold=settings.classifier_safety_unsafe_threshold,
+            safety_category_threshold=settings.classifier_safety_category_threshold,
+            rules_floor=settings.classifier_rules_floor,
+        )
     )
 
 
@@ -223,7 +227,9 @@ def test_the_rules_floor_keeps_its_measured_recall_and_false_positive_budget() -
     not move a benign row off the cloud, and must not silently shrink coverage.
     """
     rules = SensitivityClassifier(
-        model_path=None, threshold=Settings(_env_file=None).classifier_confidence_threshold
+        ClassifierConfig(
+            model_path=None, threshold=Settings(_env_file=None).classifier_confidence_threshold
+        )
     )
     positives = [
         golden
@@ -256,8 +262,10 @@ def test_unmarked_corporate_content_is_gated_by_the_rules_floor() -> None:
     """
     classifier = _real_classifier()
     floor = SensitivityClassifier(
-        model_path=None,
-        threshold=Settings(_env_file=None).classifier_confidence_threshold,
+        ClassifierConfig(
+            model_path=None,
+            threshold=Settings(_env_file=None).classifier_confidence_threshold,
+        )
     )
     for ident in UNMARKED_CORPORATE_ROWS:
         golden = next(row for row in GOLDENS if row.ident == ident)

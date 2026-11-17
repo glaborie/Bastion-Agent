@@ -23,9 +23,10 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from agent.routing.classifier import (
+    ClassifierConfig,
     ClassifierConfigurationError,
     SensitivityClassifier,
     get_classifier,
@@ -86,13 +87,8 @@ def build_classifier(no_rules_floor: bool) -> SensitivityClassifier:
         return get_classifier()
     # Rebuild from settings so the demo can show the model-only decision. The
     # ensemble is still real; only the deterministic floor is switched off.
-    settings = get_settings()
     return SensitivityClassifier(
-        injection_model_path=settings.classifier_injection_model_path,
-        injection_tokenizer_path=settings.classifier_injection_tokenizer_path,
-        safety_model_path=settings.classifier_safety_model_path,
-        safety_tokenizer_path=settings.classifier_safety_tokenizer_path,
-        rules_floor=False,
+        replace(ClassifierConfig.from_settings(get_settings()), rules_floor=False)
     )
 
 

@@ -26,7 +26,7 @@ import hashlib
 import logging
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Protocol
@@ -34,7 +34,7 @@ from typing import Any, Final, Protocol
 import numpy as np
 from anyio import to_thread
 
-from settings import get_settings
+from settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -432,115 +432,146 @@ class _OnnxSafetyModel:
         return {label: float(value) for label, value in zip(SAFETY_LABELS, stacked, strict=True)}
 
 
+@dataclass(frozen=True, slots=True)
+class GuardConfig:
+    """One guard's graph, digest and token budget; both guards share the shape."""
+
+    model_path: str | None = None
+    tokenizer_path: str | None = None
+    max_tokens: int | None = None
+    sha256: str | None = None
+    gpu_path: str | None = None
+    gpu_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ClassifierConfig:
+    """Everything the classifier needs to build its guards, resolved once.
+
+    ``None`` means "use the settings default", exactly as the constructor's old
+    per-field keywords did; :meth:`from_settings` fills every field from
+    ``Settings`` so the gateway passes one object.
+    """
+
+    model_path: str | None = None
+    tokenizer_path: str | None = None
+    max_tokens: int | None = None
+    threshold: float | None = None
+    injection: GuardConfig = field(default_factory=GuardConfig)
+    safety: GuardConfig = field(default_factory=GuardConfig)
+    injection_threshold: float | None = None
+    safety_unsafe_threshold: float | None = None
+    safety_unsafe_threshold_gpu: float | None = None
+    safety_category_threshold: float | None = None
+    rules_floor: bool = True
+    require_models: bool = False
+
+    @classmethod
+    def from_settings(cls, settings: Settings | None = None) -> ClassifierConfig:
+        """The configuration ADR-011 decision 6 derives from settings."""
+        resolved = settings or get_settings()
+        return cls(
+            model_path=resolved.classifier_model_path,
+            tokenizer_path=resolved.classifier_tokenizer_path,
+            max_tokens=resolved.classifier_max_tokens,
+            threshold=resolved.classifier_confidence_threshold,
+            injection=GuardConfig(
+                model_path=resolved.classifier_injection_model_path,
+                tokenizer_path=resolved.classifier_injection_tokenizer_path,
+                max_tokens=resolved.classifier_injection_max_tokens,
+                sha256=resolved.classifier_injection_model_sha256,
+                gpu_path=resolved.classifier_injection_model_gpu_path,
+                gpu_sha256=resolved.classifier_injection_model_gpu_sha256,
+            ),
+            safety=GuardConfig(
+                model_path=resolved.classifier_safety_model_path,
+                tokenizer_path=resolved.classifier_safety_tokenizer_path,
+                max_tokens=resolved.classifier_safety_max_tokens,
+                sha256=resolved.classifier_safety_model_sha256,
+                gpu_path=resolved.classifier_safety_model_gpu_path,
+                gpu_sha256=resolved.classifier_safety_model_gpu_sha256,
+            ),
+            injection_threshold=resolved.injection_threshold,
+            safety_unsafe_threshold_gpu=resolved.classifier_safety_unsafe_threshold_gpu,
+            safety_category_threshold=resolved.classifier_safety_category_threshold,
+            rules_floor=resolved.classifier_rules_floor,
+            require_models=resolved.environment != "local",
+        )
+
+
 class SensitivityClassifier:
     """Confidentiality classifier: ensemble, single graph, or rule fallback."""
 
     def __init__(
         self,
+        config: ClassifierConfig | None = None,
         *,
-        model_path: str | None = None,
-        tokenizer_path: str | None = None,
-        max_tokens: int | None = None,
-        threshold: float | None = None,
-        injection_model_path: str | None = None,
-        injection_tokenizer_path: str | None = None,
-        safety_model_path: str | None = None,
-        safety_tokenizer_path: str | None = None,
-        injection_max_tokens: int | None = None,
-        safety_max_tokens: int | None = None,
-        injection_threshold: float | None = None,
-        safety_unsafe_threshold: float | None = None,
-        safety_unsafe_threshold_gpu: float | None = None,
-        safety_category_threshold: float | None = None,
-        injection_model_sha256: str | None = None,
-        safety_model_sha256: str | None = None,
-        injection_model_gpu_path: str | None = None,
-        safety_model_gpu_path: str | None = None,
-        injection_model_gpu_sha256: str | None = None,
-        safety_model_gpu_sha256: str | None = None,
         injection_predictor: _InjectionPredictor | None = None,
         safety_predictor: _SafetyPredictor | None = None,
-        rules_floor: bool = True,
-        require_models: bool = False,
     ) -> None:
+        config = config or ClassifierConfig.from_settings()
         settings = get_settings()
-        self._model_path = Path(model_path).expanduser() if model_path else None
-        self._tokenizer_path = Path(tokenizer_path).expanduser() if tokenizer_path else None
-        self._max_tokens = settings.classifier_max_tokens if max_tokens is None else max_tokens
+        self._model_path = Path(config.model_path).expanduser() if config.model_path else None
+        self._tokenizer_path = (
+            Path(config.tokenizer_path).expanduser() if config.tokenizer_path else None
+        )
+        self._max_tokens = (
+            settings.classifier_max_tokens if config.max_tokens is None else config.max_tokens
+        )
         self._threshold = (
-            settings.classifier_confidence_threshold if threshold is None else threshold
+            settings.classifier_confidence_threshold
+            if config.threshold is None
+            else config.threshold
         )
         self._injection = injection_predictor
         self._safety = safety_predictor
-        self._rules_floor = rules_floor
+        self._rules_floor = config.rules_floor
         # A CUDA session runs the fp32 graphs: the int8 matmuls have no CUDA
         # kernel, and the fp32 ones are what meet the budget on the device
         # (ADR-011, measured 2026-11-11). The provider is resolved once, before
         # the thresholds, because the fp32 graph has its own unsafe operating
         # point: it scores the benign prompt-engineering explainer 0.570 against
         # the int8 graph's 0.364.
-        builds = (injection_predictor is None and injection_model_path is not None) or (
-            safety_predictor is None and safety_model_path is not None
+        builds = (injection_predictor is None and config.injection.model_path is not None) or (
+            safety_predictor is None and config.safety.model_path is not None
         )
         provider = _provider_choice() if builds else None
         unsafe = _operating_unsafe_threshold(
             provider=provider,
-            gpu_graph_configured=safety_model_gpu_path is not None,
-            explicit=safety_unsafe_threshold,
-            gpu=safety_unsafe_threshold_gpu,
+            gpu_graph_configured=config.safety.gpu_path is not None,
+            explicit=config.safety_unsafe_threshold,
+            gpu=config.safety_unsafe_threshold_gpu,
             default=settings.classifier_safety_unsafe_threshold,
         )
         self._thresholds = EnsembleThresholds(
             injection=settings.injection_threshold
-            if injection_threshold is None
-            else injection_threshold,
+            if config.injection_threshold is None
+            else config.injection_threshold,
             unsafe=unsafe,
             category=settings.classifier_safety_category_threshold
-            if safety_category_threshold is None
-            else safety_category_threshold,
+            if config.safety_category_threshold is None
+            else config.safety_category_threshold,
         )
         _validate_operating_points(self._threshold, self._thresholds)
         if self._max_tokens <= 0:
             raise ValueError("max_tokens must be positive")
 
-        if self._injection is None and injection_model_path is not None:
-            injection_model_path, injection_model_sha256 = _graph_for_provider(
-                provider=provider if provider is not None else "cpu",
-                cpu_path=injection_model_path,
-                cpu_sha256=injection_model_sha256,
-                gpu_path=injection_model_gpu_path,
-                gpu_sha256=injection_model_gpu_sha256,
-            )
-        if self._safety is None and safety_model_path is not None:
-            safety_model_path, safety_model_sha256 = _graph_for_provider(
-                provider=provider if provider is not None else "cpu",
-                cpu_path=safety_model_path,
-                cpu_sha256=safety_model_sha256,
-                gpu_path=safety_model_gpu_path,
-                gpu_sha256=safety_model_gpu_sha256,
-            )
-        if self._injection is None and injection_model_path is not None:
+        if self._injection is None and config.injection.model_path is not None:
             self._injection = _OnnxInjectionModel(
-                self._build_graph(
+                self._build_guard(
                     graph="injection-guard",
-                    model_path=injection_model_path,
-                    tokenizer_path=injection_tokenizer_path,
-                    max_tokens=settings.classifier_injection_max_tokens
-                    if injection_max_tokens is None
-                    else injection_max_tokens,
-                    expected_sha256=injection_model_sha256,
+                    guard=config.injection,
+                    provider=provider,
+                    default_max_tokens=settings.classifier_injection_max_tokens,
                 )
             )
-        if self._safety is None and safety_model_path is not None:
+        if self._safety is None and config.safety.model_path is not None:
             self._safety = _OnnxSafetyModel(
-                self._build_graph(
+                self._build_guard(
                     graph="safety-guard",
-                    model_path=safety_model_path,
-                    tokenizer_path=safety_tokenizer_path,
-                    max_tokens=settings.classifier_safety_max_tokens
-                    if safety_max_tokens is None
-                    else safety_max_tokens,
-                    expected_sha256=safety_model_sha256,
+                    guard=config.safety,
+                    provider=provider,
+                    default_max_tokens=settings.classifier_safety_max_tokens,
                 )
             )
         if (self._injection is None) != (self._safety is None):
@@ -553,7 +584,7 @@ class SensitivityClassifier:
         if self._injection is None and self._model_path is not None:
             self._load_onnx()
 
-        if require_models and not self.uses_model:
+        if config.require_models and not self.uses_model:
             raise ClassifierConfigurationError(
                 "no classifier model configured outside ENVIRONMENT=local; set "
                 "CLASSIFIER_INJECTION_MODEL_PATH and CLASSIFIER_SAFETY_MODEL_PATH "
@@ -623,6 +654,30 @@ class SensitivityClassifier:
         # learned notion of harm. The rules can only add CONFIDENTIAL.
         rule_decision = self._classify_rules(text)
         return rule_decision if rule_decision.is_confidential else decision
+
+    def _build_guard(
+        self,
+        *,
+        graph: str,
+        guard: GuardConfig,
+        provider: str | None,
+        default_max_tokens: int,
+    ) -> _OnnxGraph:
+        """Pick the graph for the resolved provider and load it for one guard."""
+        model_path, sha256 = _graph_for_provider(
+            provider=provider if provider is not None else "cpu",
+            cpu_path=guard.model_path or "",
+            cpu_sha256=guard.sha256,
+            gpu_path=guard.gpu_path,
+            gpu_sha256=guard.gpu_sha256,
+        )
+        return self._build_graph(
+            graph=graph,
+            model_path=model_path,
+            tokenizer_path=guard.tokenizer_path,
+            max_tokens=default_max_tokens if guard.max_tokens is None else guard.max_tokens,
+            expected_sha256=sha256,
+        )
 
     @staticmethod
     def _build_graph(
@@ -895,27 +950,4 @@ def _sigmoid(logits: np.ndarray) -> np.ndarray:
 @functools.lru_cache(maxsize=1)
 def get_classifier() -> SensitivityClassifier:
     """Process-wide classifier from configuration."""
-    settings = get_settings()
-    return SensitivityClassifier(
-        model_path=settings.classifier_model_path,
-        tokenizer_path=settings.classifier_tokenizer_path,
-        max_tokens=settings.classifier_max_tokens,
-        threshold=settings.classifier_confidence_threshold,
-        injection_model_path=settings.classifier_injection_model_path,
-        injection_tokenizer_path=settings.classifier_injection_tokenizer_path,
-        safety_model_path=settings.classifier_safety_model_path,
-        safety_tokenizer_path=settings.classifier_safety_tokenizer_path,
-        injection_max_tokens=settings.classifier_injection_max_tokens,
-        safety_max_tokens=settings.classifier_safety_max_tokens,
-        injection_threshold=settings.injection_threshold,
-        safety_unsafe_threshold_gpu=settings.classifier_safety_unsafe_threshold_gpu,
-        safety_category_threshold=settings.classifier_safety_category_threshold,
-        injection_model_sha256=settings.classifier_injection_model_sha256,
-        safety_model_sha256=settings.classifier_safety_model_sha256,
-        injection_model_gpu_path=settings.classifier_injection_model_gpu_path,
-        safety_model_gpu_path=settings.classifier_safety_model_gpu_path,
-        injection_model_gpu_sha256=settings.classifier_injection_model_gpu_sha256,
-        safety_model_gpu_sha256=settings.classifier_safety_model_gpu_sha256,
-        rules_floor=settings.classifier_rules_floor,
-        require_models=settings.environment != "local",
-    )
+    return SensitivityClassifier(ClassifierConfig.from_settings())
