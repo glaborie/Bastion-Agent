@@ -1,6 +1,6 @@
 ### IDEA-028: Route prompts to a model tier by classified complexity
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.4
 - area: agent
