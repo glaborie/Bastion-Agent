@@ -122,7 +122,8 @@ docker compose exec gateway python -c "import agent.sentiment"   # ModuleNotFoun
 docker images bastion-agent:local --format '{{.CreatedAt}}'      # older than the merge
 ```
 
-**Fix.** `make up` builds now. For a stack that is already running:
+**Fix.** `make up` builds now, and a `docker compose up -d` you run yourself
+needs `--build`. For a stack that is already running:
 
 ```bash
 docker compose up -d --build gateway worker
@@ -131,6 +132,7 @@ docker compose up -d --build gateway worker
 The ledger cannot reconstruct the lost conversation: `INPUT_RECEIVED` stores a
 digest, not the text, and the escrow that could decrypt it is off by default
 (README, "Pre-production payload escrow").
+
 ## The dashboard says the upstream model is unavailable (OmniRoute 401 AUTH_002)
 
 **Symptom.** `/v1/chat` returns 502 and the gateway logs
