@@ -25,7 +25,6 @@ response.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 import uuid
@@ -36,7 +35,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from agent.dlp.vault import TOKEN_PATTERN, TokenVault, VaultError, get_vault
-from db.redis import get_redis
+from db.redis import get_redis, session_digest
 from db.tenancy import normalise_tenant_id
 from settings import CANARY_PREFIX_MIN_LENGTH, get_settings
 
@@ -45,7 +44,6 @@ logger = logging.getLogger(__name__)
 _FENCE_TAG: Final[str] = "untrusted_content"
 _FENCE_BREAKOUT: Final[re.Pattern[str]] = re.compile(r"<\s*/?\s*untrusted_content", re.IGNORECASE)
 _MARKER_PLACEHOLDER: Final[str] = "[redacted-security-marker]"
-_MAX_SESSION_ID_LENGTH: Final[int] = 256
 _SOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"[^A-Za-z0-9._-]")
 
 #: First-person claims that the model is disclosing its instructions. The canary
@@ -282,13 +280,8 @@ class EgressSanitizer:
 
     # -- internals ---------------------------------------------------------
     def _key(self, tenant_id: str, kind: str, session_id: str) -> str:
-        if not isinstance(session_id, str) or not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        if len(session_id) > _MAX_SESSION_ID_LENGTH:
-            raise ValueError(f"session_id must be at most {_MAX_SESSION_ID_LENGTH} characters")
         tenant = normalise_tenant_id(tenant_id)
-        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        return f"egress:{tenant}:{kind}:{digest}"
+        return f"egress:{tenant}:{kind}:{session_digest(session_id)}"
 
     async def _redis_get(self, key: str) -> str | None:
         try:

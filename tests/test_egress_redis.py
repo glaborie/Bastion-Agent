@@ -17,7 +17,6 @@ subsystem's data.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -29,6 +28,7 @@ from redis.asyncio import Redis
 
 from agent.dlp.vault import TokenVault
 from agent.egress.sanitizer import EgressSanitizer
+from db.redis import session_digest
 from db.tenancy import normalise_tenant_id
 
 REDIS_TEST_URL: Final[str] = os.getenv("REDIS_TEST_URL", "")
@@ -45,8 +45,7 @@ pytestmark = [pytest.mark.redis_integration, requires_redis]
 
 def _key(kind: str, session_id: str, tenant_id: str = "acme") -> str:
     """Recompute the tenant-scoped sanitizer key without touching a private method."""
-    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-    return f"egress:{normalise_tenant_id(tenant_id)}:{kind}:{digest}"
+    return f"egress:{normalise_tenant_id(tenant_id)}:{kind}:{session_digest(session_id)}"
 
 
 @pytest_asyncio.fixture

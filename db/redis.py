@@ -13,8 +13,9 @@ in plaintext, which is the whole point of the ``pki`` profile.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from arq.connections import RedisSettings
 from redis.asyncio import Redis
@@ -22,6 +23,23 @@ from redis.asyncio import Redis
 from settings import Settings, get_settings
 
 _redis: Redis | None = None
+
+#: Both session-scoped key shapes (vault and egress) validate against this.
+_MAX_SESSION_ID_LENGTH: Final[int] = 256
+
+
+def session_digest(session_id: str) -> str:
+    """Validate a session id and return the digest both key shapes embed.
+
+    ADR-015 decision 2 fixes ``vault:<tenant>:<sha256(session)>`` and
+    ``egress:<tenant>:<kind>:<sha256(session)>`` on one digest, so the limit,
+    the error text and the hash must exist once.
+    """
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("session_id must be a non-empty string")
+    if len(session_id) > _MAX_SESSION_ID_LENGTH:
+        raise ValueError(f"session_id must be at most {_MAX_SESSION_ID_LENGTH} characters")
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
 
 
 def _require_file(path: str, purpose: str) -> str:

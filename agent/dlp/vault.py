@@ -32,7 +32,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from redis.asyncio import Redis
 
-from db.redis import get_redis
+from db.redis import get_redis, session_digest
 from db.tenancy import normalise_tenant_id
 from settings import get_settings
 
@@ -43,7 +43,6 @@ TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\{\{ENTITY:([A-Z][A-Z0-9_]{0,31})_(\d{1,9})\}\}"
 )
 _ENTITY_TYPE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Z][A-Z0-9_]{0,31}$")
-_MAX_SESSION_ID_LENGTH: Final[int] = 256
 _NONCE_BYTES: Final[int] = 12
 
 
@@ -181,8 +180,7 @@ class TokenVault:
 
     # -- internals --------------------------------------------------------
     def _keys(self, tenant_id: str, session_id: str) -> tuple[str, str, str]:
-        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        base = f"{self._prefix}{normalise_tenant_id(tenant_id)}:{digest}"
+        base = f"{self._prefix}{normalise_tenant_id(tenant_id)}:{session_digest(session_id)}"
         return base, f"{base}:rev", f"{base}:seq"
 
     def _value_digest(self, entity_type: str, value: str) -> str:
@@ -228,10 +226,7 @@ class TokenVault:
 
     @staticmethod
     def _validate_session(session_id: str) -> None:
-        if not isinstance(session_id, str) or not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        if len(session_id) > _MAX_SESSION_ID_LENGTH:
-            raise ValueError(f"session_id must be at most {_MAX_SESSION_ID_LENGTH} characters")
+        session_digest(session_id)
 
     @staticmethod
     def _validate_entity_type(entity_type: str) -> str:
