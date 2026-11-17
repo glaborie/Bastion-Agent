@@ -1,4 +1,4 @@
-### IDEA-066: Prove the gateway's fail-closed contract with a deterministic fault-injection suite
+### IDEA-072: Prove the gateway's fail-closed contract with a deterministic fault-injection suite
 
 - status: inbox
 - priority: P2
