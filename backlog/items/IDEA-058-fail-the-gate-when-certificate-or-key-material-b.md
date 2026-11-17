@@ -1,6 +1,6 @@
 ### IDEA-058: Fail the gate when certificate or key material becomes trackable
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.3
 - area: security
@@ -45,12 +45,12 @@ an explicit, commented allowlist that the check itself reports.
 
 **Acceptance**
 
-- [ ] `uv run python scripts/check_secret_material.py` exits 0 on `master`, and its rule is what `git ls-files | grep -E '\.(crt|key|pem|p12|pfx|jks)$'` finds: nothing is tracked today, so an empty result must be an assertion inside the check rather than a command a reviewer has to remember
-- [ ] A tracked key fails: `tests/test_secret_material.py` builds a git repository in a temporary directory (or calls the check with an explicit path list), commits `dummy.key` and `leaf.crt`, and asserts a non-zero exit whose output contains both paths and contains neither a byte nor a line of the file's content
-- [ ] Unignored generated material fails, reproducing the incident: in a temporary copy of the tree with the `vault/certs/` line removed from `.gitignore` and a key placed in `vault/certs/`, the check exits non-zero and names `vault/certs/` and the missing ignore rule; restoring the line makes it pass
-- [ ] `scripts/gate.sh` runs it through `add_step` beside `adrs` and `rbac` (`scripts/gate.sh:213-221`), `.github/workflows/ci.yml` runs the same command in the quality job, and `ci-ok` still requires that job, so the check is merge-blocking rather than advisory
-- [ ] No false positive on material the repo keeps on purpose: an allowlisted fixture path (for example a future `tests/fixtures/` key needed to test TLS refusal) passes, the allowlist entry carries a justification comment, an unjustified entry fails, and `--verbose` prints the allowlist so a reviewer can see what is exempt
-- [ ] The documents that describe the control point at it: the `.gitignore` headers for `pki/`, `secrets/` and `vault/certs/` name the check, and `docs/PKI.md` or `SECURITY.md` §Secrets Management states what the guard covers, how to add legitimate material, and that pattern matching does not catch a key renamed to a non-matching extension
+- [x] `uv run python scripts/check_secret_material.py` exits 0 on `master`, and its rule is what `git ls-files | grep -E '\.(crt|key|pem|p12|pfx|jks)$'` finds: nothing is tracked today, so an empty result must be an assertion inside the check rather than a command a reviewer has to remember
+- [x] A tracked key fails: `tests/test_secret_material.py` builds a git repository in a temporary directory (or calls the check with an explicit path list), commits `dummy.key` and `leaf.crt`, and asserts a non-zero exit whose output contains both paths and contains neither a byte nor a line of the file's content
+- [x] Unignored generated material fails, reproducing the incident: in a temporary copy of the tree with the `vault/certs/` line removed from `.gitignore` and a key placed in `vault/certs/`, the check exits non-zero and names `vault/certs/` and the missing ignore rule; restoring the line makes it pass
+- [x] `scripts/gate.sh` runs it through `add_step` beside `adrs` and `rbac` (`scripts/gate.sh:213-221`), `.github/workflows/ci.yml` runs the same command in the quality job, and `ci-ok` still requires that job, so the check is merge-blocking rather than advisory
+- [x] No false positive on material the repo keeps on purpose: an allowlisted fixture path (for example a future `tests/fixtures/` key needed to test TLS refusal) passes, the allowlist entry carries a justification comment, an unjustified entry fails, and `--verbose` prints the allowlist so a reviewer can see what is exempt
+- [x] The documents that describe the control point at it: the `.gitignore` headers for `pki/`, `secrets/` and `vault/certs/` name the check, and `docs/PKI.md` or `SECURITY.md` §Secrets Management states what the guard covers, how to add legitimate material, and that pattern matching does not catch a key renamed to a non-matching extension
 
 **Notes**
 
@@ -59,3 +59,4 @@ an explicit, commented allowlist that the check itself reports.
 - Scope boundary: this is not a full secret scanner. Gitleaks-style content matching over the whole tree has its own false-positive budget and its own capture; this item is the narrower invariant "no certificate or key material is trackable, and generated material stays ignored". Naming that boundary keeps the first slice small enough to land.
 - Honest limit to state in the check's own docstring: extension and ignore-rule matching misses a key copied to `notes.txt` or pasted into a Markdown file, so the guard raises the floor and does not replace review.
 - The id was allocated as IDEA-055 because this worktree's base predates the `backlog/vault-overlay-gaps` capture that already holds IDEA-055..057; renamed to the next free id so the two branches cannot merge as duplicate ids. `depends-on: -` remains literal.
+- 2026-11-17: `THREAT_MODEL.md` T11 still lists "IaC or secret scanning" as PARTIAL and roadmap item 5 as planned. This guard covers certificate and key material only, so the row was left untouched; naming the new step and what a content scanner would still add is follow-up triage, not this item.

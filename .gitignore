@@ -6,15 +6,14 @@
 # --- Trivy database cache restored by CI --------------------------------------
 .cache/
 
-# --- East-west PKI (ADR-019) -------------------------------------------------
-# The CA root key, issued certificates and the compose secret files are
-# generated per host by scripts/pki/bootstrap.sh and must never be committed.
+# --- Generated certificate and key material (ADR-019, ADR-021) ----------------
+# The CA root key, issued certificates, the compose secret files and the Vault
+# dev TLS pair are generated per host by scripts/pki/bootstrap.sh and
+# `make vault-up`; never commit them. scripts/check_secret_material.py fails the
+# gate when any of this becomes trackable, so a fixture that must be committed
+# goes in its allowlist with a justification rather than as a rule here.
 pki/
 secrets/
-vault/certs/
-
-# --- Vault overlay TLS material ----------------------------------------------
-# Self-signed dev cert/key, generated per host; never committed.
 vault/certs/
 
 # --- Python ------------------------------------------------------------------
