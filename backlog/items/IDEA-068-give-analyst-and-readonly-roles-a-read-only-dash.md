@@ -1,6 +1,6 @@
 ### IDEA-068: Give analyst and readonly roles a read-only dashboard
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.4
 - area: gateway
