@@ -105,6 +105,32 @@ make models                              # verifies, and fixes the modes
 docker compose restart gateway worker
 ```
 
+## A merged feature does not exist at runtime
+
+**Symptom.** Something that is on `master` — a module, an audit event, an
+endpoint — never happens on the running stack, while the checkout and its tests
+have it. A concrete case: a frustrated conversation writes no
+`HANDOFF_REQUIRED` row and `/api/handoffs` stays empty, because
+`agent.sentiment` is not in the image at all.
+
+**Cause.** `make up` used to run `docker compose up -d`, which reuses whatever
+image is tagged `bastion-agent:local`; it never rebuilt. A stack started after a
+merge therefore ran code from before it. The giveaway:
+
+```bash
+docker compose exec gateway python -c "import agent.sentiment"   # ModuleNotFoundError
+docker images bastion-agent:local --format '{{.CreatedAt}}'      # older than the merge
+```
+
+**Fix.** `make up` builds now. For a stack that is already running:
+
+```bash
+docker compose up -d --build gateway worker
+```
+
+The ledger cannot reconstruct the lost conversation: `INPUT_RECEIVED` stores a
+digest, not the text, and the escrow that could decrypt it is off by default
+(README, "Pre-production payload escrow").
 ## The dashboard says the upstream model is unavailable (OmniRoute 401 AUTH_002)
 
 **Symptom.** `/v1/chat` returns 502 and the gateway logs
