@@ -1,6 +1,6 @@
 ### IDEA-035: Share session-scoped Redis key derivation between the vault and the egress sanitizer
 
-- status: ready
+- status: done
 - priority: P3
 - phase: v0.3
 - area: db
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-015
 - created: 2026-11-12
-- updated: 2026-11-16
+- updated: 2026-11-17
 - source: review of agent/dlp/vault.py and agent/egress/sanitizer.py
 
 **Problem**
@@ -35,10 +35,10 @@ single description of the key grammar.
 
 **Acceptance**
 
-- [ ] A unit test covers a 256-character and a 257-character session id and asserts the vault and the sanitizer accept the first, reject the second with the shared error text, and derive the same digest for the same session id
-- [ ] `uv run pytest tests/test_vault.py tests/test_egress_sanitizer.py -q` passes
-- [ ] `grep -rn "_MAX_SESSION_ID_LENGTH" --include=*.py agent/ db/ gateway/` returns exactly one definition, in the shared helper
-- [ ] `uv run mypy agent/dlp/vault.py agent/egress/sanitizer.py db/redis.py` is clean
+- [x] A unit test covers a 256-character and a 257-character session id and asserts the vault and the sanitizer accept the first, reject the second with the shared error text, and derive the same digest for the same session id
+- [x] `uv run pytest tests/test_vault.py tests/test_egress_sanitizer.py -q` passes
+- [x] `grep -rn "_MAX_SESSION_ID_LENGTH" --include=*.py agent/ db/ gateway/` returns exactly one definition, in the shared helper
+- [x] `uv run mypy agent/dlp/vault.py agent/egress/sanitizer.py db/redis.py` is clean
 
 **Notes**
 
