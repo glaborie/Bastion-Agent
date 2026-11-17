@@ -419,3 +419,4 @@ async def close_model_router() -> None:
     if get_model_router.cache_info().currsize:
         await get_model_router().client.aclose()
     get_model_router.cache_clear()
+    get_classifier.cache_clear()

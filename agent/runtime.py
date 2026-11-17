@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, ClassVar
 
+from anyio import to_thread
 from arq import cron
 from arq.connections import RedisSettings
 from opentelemetry import trace
@@ -81,6 +82,7 @@ from agent.tools.execution import (
     request_tool_execution,
     resume_approved_tool,
 )
+from agent.warmup import warm_guards
 from db.escrow import purge_expired_escrow
 from db.export import export_ledger
 from db.models import AuditEventType
@@ -104,6 +106,9 @@ async def startup(ctx: dict[str, Any]) -> None:
     configure_tracing(settings)
     # Gate 1: refuse to run with a registered tool the catalog has not approved.
     verify_registry()
+    # IDEA-067: the worker also runs the DLP and classifier; build them here so
+    # the first job does not pay for a cold Presidio or ONNX session.
+    await to_thread.run_sync(warm_guards)
     logger.info(
         "Bastion-Agent worker ready",
         extra={

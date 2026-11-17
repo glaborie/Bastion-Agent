@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from anyio import to_thread
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler as default_http_exception_handler
 from fastapi.responses import RedirectResponse, Response
@@ -20,6 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from agent.routing.client import close_model_router
 from agent.tools.decorator import verify_registry
+from agent.warmup import warm_guards
 from db.session import dispose_engine
 from gateway.auth.rbac import shutdown_auth
 from gateway.auth.session import safe_next_path
@@ -70,6 +72,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # the gateway instead of being silently reachable. The check runs before the
     # database so a misconfigured deployment fails fast.
     verify_registry()
+    # IDEA-067: build the DLP analyzer and the ONNX ensemble here, not inside
+    # the first request. A guard that cannot be built is a startup failure; the
+    # server does not accept traffic until this returns, so readiness is honest.
+    await to_thread.run_sync(warm_guards)
     # Schema and the runtime role are provisioned by the one-shot `migrate`
     # service (IDEA-062); the gateway never holds the owner credential.
     try:
