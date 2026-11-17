@@ -1,6 +1,6 @@
 ### IDEA-071: Let an operator acknowledge a handoff and read its transcript
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.4
 - area: gateway
