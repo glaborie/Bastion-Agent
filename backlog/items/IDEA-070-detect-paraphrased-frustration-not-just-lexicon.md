@@ -1,6 +1,6 @@
 ### IDEA-070: Detect paraphrased frustration, not just lexicon phrases
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.4
 - area: agent
@@ -68,12 +68,12 @@ measurement and recorded in ADR-022 (amended) before the code lands.
 
 **Acceptance**
 
-- [ ] The live miss is reproduced as a test: the `f41974de…` transcript (quoted above, committed as a fixture) yields a verdict after the change, and a neutral three-turn transcript of the same length yields none; the `1eb81829…` conversation must also fire once its wording is known
-- [ ] A committed labelled set exists (at least 20 positive and 20 negative transcripts, English, with the real phrasings an operator sees) and the measured recall and false-positive rate are quoted in the ADR and in the item Notes; the thresholds are chosen from that table
-- [ ] The overlapping-marker defect is fixed or explicitly documented: `"still does not work"` no longer counts as two markers, and a test pins the count for a phrase that contains another
-- [ ] Tool output still cannot create a handoff (`<untrusted_content>` case from IDEA-018 stays green), the stage still makes no network or model call unless the ADR records a local-model decision, and DLP/route/canary/egress behaviour is unchanged
-- [ ] ADR-022 decision 2 and its Consequences are amended with the new rule's measured limits, and `README.md`'s "Frustration handoff" section matches
-- [ ] `scripts/gate.sh` is green, and the existing `tests/test_sentiment.py` expectations are updated only where the new rule intentionally changes them
+- [x] The live miss is reproduced as a test: the `f41974de…` transcript (quoted above, committed as a fixture) yields a verdict after the change, and a neutral three-turn transcript of the same length yields none; the `1eb81829…` conversation must also fire once its wording is known
+- [x] A committed labelled set exists (at least 20 positive and 20 negative transcripts, English, with the real phrasings an operator sees) and the measured recall and false-positive rate are quoted in the ADR and in the item Notes; the thresholds are chosen from that table
+- [x] The overlapping-marker defect is fixed or explicitly documented: `"still does not work"` no longer counts as two markers, and a test pins the count for a phrase that contains another
+- [x] Tool output still cannot create a handoff (`<untrusted_content>` case from IDEA-018 stays green), the stage still makes no network or model call unless the ADR records a local-model decision, and DLP/route/canary/egress behaviour is unchanged
+- [x] ADR-022 decision 2 and its Consequences are amended with the new rule's measured limits, and `README.md`'s "Frustration handoff" section matches
+- [x] `scripts/gate.sh` is green, and the existing `tests/test_sentiment.py` expectations are updated only where the new rule intentionally changes them
 
 **Notes**
 
@@ -84,3 +84,10 @@ measurement and recorded in ADR-022 (amended) before the code lands.
 - The current rule is `len(markers) >= 2 or (markers and repeated)` with a 0.9 Jaccard threshold on word sets (`agent/sentiment.py`); the repeat arm also misses a restated complaint with one new sentence, which the labelled set should cover.
 - This is the recall twin of IDEA-066 (the injection guard refusing "say OK"): both are calibration problems on a local model/rule pair, and both should be measured against a corpus rather than patched with a special case.
 - Out of scope: sentiment-driven routing or model selection (ADR-022 decision 1 forbids acting on the turn), multilingual lexicons beyond English unless the ADR buys them, and any live human chat channel.
+- Implementation: `agent/sentiment.py` now matches every marker as a **span**, longest phrase first and non-overlapping, so `"still does not work"` is one piece of evidence even though it contains `"does not work"` — the defect that made one sentence fire alone. Repetition is **containment of the shorter turn in the longer** (>= 0.7) instead of 0.9 Jaccard over the union: the two live complaints restate with a tail (`the button is not working` / `the button is not working, again` is 1.0 containment and 0.83 Jaccard), and the escalated version shares only 0.17/0.06 of its vocabulary. A verdict now needs one of: a marker that is a request for a human (`speak to a human`), a marker that is unambiguous alone (`i am frustrated`, `this is useless`), two distinct markers, or one marker plus a restatement. The two verdict names are unchanged, so the ledger vocabulary did not move.
+- Labelled set: `tests/data/frustration.jsonl` — 24 complaint transcripts (including the two live ones, `pos-live-button-f419` and `pos-live-button-2619`) and 29 neutral conversations that bait the vocabulary (`broken link`, `frustrated customer`, `when should i escalate a ticket to a human?`, `what does 'not working' mean in the error log?`). Measured on 2026-11-17, and pinned at zero tolerance by `tests/test_sentiment_evals.py`: shipped rule **24/24 detected, 0/29 neutral flagged**.
+- The table behind the choice, quoted in ADR-022 decision 2: shipped-before 5/24 and 0/29; widened lexicon 19/24 and 0/29; adding span counting 18/24 and 0/29 (one point of recall came *from* the double counting, which is exactly why it had to go); containment repeat 20/24; handoff request fires alone 21/24; strong markers fire alone 24/24. Each step was measured on the same set rather than assumed.
+- The residual limit is lexical and recorded: a complaint phrased entirely outside the vocabulary and without a restatement stays silent, and the lexicon is English. `"frustrated"` in the third person is why that word is weak while `"i am frustrated"` is strong — the measured false positive of the strong-marker arm was `how should i handle a frustrated customer?`, and it is a labelled negative.
+- `1eb81829…` is still unknown: it predates payload escrow, so its wording cannot be recovered, and it is covered in the set by equivalent phrasings rather than by its own transcript. The two `f41974de…` / `2619c318…` transcripts are in the corpus verbatim.
+- Tests: `tests/test_sentiment.py` gained five cases (the recovered transcript fires with both `not working` and `frustrated`; the restated complaint fires as `repeated_complaint`; `still does not work` counts once and a single such sentence stays silent; an explicit request for a human fires alone; the third-person `frustrated customer` stays silent) and no existing expectation changed. `tests/test_sentiment_evals.py` is the zero-tolerance gate over the corpus. The no-network test, the fenced-tool-output test and the stage tests are unchanged and green, as are the chat-level handoff tests (22 passed against a throwaway PostgreSQL).
+- `docs/adr/ADR-022.md` decision 2 and its Cons bullet carry the rule, the table and the limits; `README.md`'s "Frustration handoff" section matches.

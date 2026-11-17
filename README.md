@@ -565,8 +565,13 @@ counted; it is never guessed.
 
 ### Frustration handoff (UX signal)
 
-`agent/sentiment.py` scans the **caller's own** turns for a fixed marker lexicon
-plus a repeated complaint. When they fire, the turn writes one
+`agent/sentiment.py` scans the **caller's own** turns for a marker lexicon plus a
+restated complaint. A verdict needs an explicit request for a human, a marker
+that is unambiguous on its own, two distinct markers, or one marker with a
+restatement; markers are matched as non-overlapping phrases, so one sentence
+counts once. The rule is calibrated on a labelled set (`tests/data/frustration.jsonl`,
+24 complaints and 29 neutral conversations, 24/24 and 0/29 at the shipped
+setting — ADR-022 decision 2). When it fires, the turn writes one
 `HANDOFF_REQUIRED` row — conversation id, verdict and counts, never the text —
 and `GET /api/handoffs` lists the twenty newest for `operator`/`admin`, with
 `readonly` and `analyst` refused (ADR-022). Detection is local and
