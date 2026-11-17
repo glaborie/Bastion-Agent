@@ -1,4 +1,4 @@
-### IDEA-067: Bound the chat request deadline and retry budget under upstream latency
+### IDEA-073: Bound the chat request deadline and retry budget under upstream latency
 
 - status: inbox
 - priority: P2
