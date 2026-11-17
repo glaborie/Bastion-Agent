@@ -600,8 +600,7 @@ Two rollout checks need an external service. The Redis one runs as a gate in CI
 
 ```bash
 # Redis TTL expiry, shared canary and quarantine keys (Redis 7)
-docker run --rm -d --name bastion-test-redis -p 56379:6379 redis:7-alpine
-REDIS_TEST_URL=redis://localhost:56379/0 uv run pytest -m redis_integration
+make test-redis   # starts redis:7-alpine, runs the suite, removes the container
 
 # Real model extraction probe through the sanitizer
 LLAMA_CPP_BASE_URL=http://localhost:8002 \
@@ -882,6 +881,10 @@ uv run python scripts/check_threat_model.py --check
 uv run pytest -m "not integration"   # unit tests (no database required)
 ```
 
+`make test` runs the unit suite and `make test-integration`, `make test-redis`,
+`make test-witness`, `make test-model` and `make test-evals` wrap the rest;
+`make help` lists every target.
+
 `scripts/gate.sh` runs that set in one shot — adding the ruff format check and
 the backlog validator — and prints a metrics table plus one verdict line:
 
@@ -907,8 +910,10 @@ drives pytest itself — `--integration` runs the database-backed tests (require
 `TEST_DATABASE_URL`), `--no-tests` skips pytest, `--verbose` streams each step
 prefixed with its name.
 
-Database-backed tests need a disposable PostgreSQL 16 instance. The suite
-refuses to run against a database whose name does not contain `test`:
+`make test-integration` starts a disposable PostgreSQL 16, runs the suite with
+the two database URLs set, and removes the container afterwards. The suite
+refuses to run against a database whose name does not contain `test`; the manual
+form is the same three steps:
 
 ```bash
 docker run --rm -d --name bastion-test-db -p 55433:5432 \
