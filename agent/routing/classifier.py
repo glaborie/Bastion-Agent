@@ -34,6 +34,7 @@ from typing import Any, Final, Protocol
 import numpy as np
 from anyio import to_thread
 
+from agent.routing.injection import instruction_marker
 from settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -109,17 +110,25 @@ class Classification:
 
 @dataclass(frozen=True, slots=True)
 class EnsembleThresholds:
-    """The three ADR-011 operating points, all tunable without a code change."""
+    """The ADR-011 operating points, all tunable without a code change."""
 
     injection: float
     unsafe: float
     category: float
+    #: Injection cut for a prompt at or below ``short_prompt_tokens``. On very
+    #: short text the guard scores benign imperatives ("say OK", "just
+    #: escalate") as high as short jailbreaks, so a detection there needs this
+    #: cut or a deterministic instruction-shape marker (decision 3).
+    short_injection: float = 0.99
+    short_prompt_tokens: int = 64
 
 
 class _InjectionPredictor(Protocol):
     """Returns the probability that the text attempts prompt injection."""
 
     def predict(self, text: str) -> float: ...
+
+    def token_count(self, text: str) -> int: ...
 
 
 class _SafetyPredictor(Protocol):
@@ -132,14 +141,27 @@ def decide_ensemble(
     injection_probability: float,
     safety_scores: Mapping[str, float],
     thresholds: EnsembleThresholds,
+    *,
+    prompt_tokens: int | None = None,
+    has_instruction_marker: bool = False,
 ) -> Classification:
     """Apply the ADR-011 decision table to raw model scores.
 
     This is a pure function so the routing policy can be tested without an
     ONNX session: injection is evaluated first and cannot be overridden, then
     the aggregate ``unsafe`` gate, then the four confidentiality categories.
+
+    A prompt of at most ``short_prompt_tokens`` tokens raises the injection cut
+    to ``short_injection``, and still detects at the profile cut when the text
+    carries an instruction-shape marker. ``prompt_tokens=None`` keeps the plain
+    profile threshold, which is what the tuning scripts score against.
     """
-    if injection_probability >= thresholds.injection:
+    short = prompt_tokens is not None and prompt_tokens <= thresholds.short_prompt_tokens
+    cut = max(thresholds.injection, thresholds.short_injection) if short else thresholds.injection
+    detected = injection_probability >= cut or (
+        short and has_instruction_marker and injection_probability >= thresholds.injection
+    )
+    if detected:
         return Classification(
             label=Sensitivity.CONFIDENTIAL,
             confidence=round(injection_probability, 4),
@@ -371,6 +393,10 @@ class _OnnxGraph:
             },
         )
 
+    def token_count(self, text: str) -> int:
+        """Token count of ``text`` under this graph's tokenizer."""
+        return len(self._tokenizer.encode(text or "").ids)
+
     def logits_windows(self, text: str) -> list[np.ndarray]:
         """Return one flattened logit array per sliding window."""
         encoding = self._tokenizer.encode(text or "")
@@ -414,6 +440,9 @@ class _OnnxInjectionModel:
             _softmax(window)[_INJECTION_INDEX] for window in self._graph.logits_windows(text)
         ]
         return float(max(probabilities))
+
+    def token_count(self, text: str) -> int:
+        return self._graph.token_count(text)
 
 
 class _OnnxSafetyModel:
@@ -551,6 +580,8 @@ class SensitivityClassifier:
             category=settings.classifier_safety_category_threshold
             if config.safety_category_threshold is None
             else config.safety_category_threshold,
+            short_injection=settings.classifier_short_injection_threshold,
+            short_prompt_tokens=settings.classifier_short_prompt_tokens,
         )
         _validate_operating_points(self._threshold, self._thresholds)
         if self._max_tokens <= 0:
@@ -645,7 +676,13 @@ class SensitivityClassifier:
                 model="ensemble",
                 reason="classifier_error",
             )
-        decision = decide_ensemble(injection_probability, safety_scores, self._thresholds)
+        decision = decide_ensemble(
+            injection_probability,
+            safety_scores,
+            self._thresholds,
+            prompt_tokens=self._injection.token_count(text),
+            has_instruction_marker=instruction_marker(text),
+        )
         if decision.is_confidential or not self._rules_floor:
             return decision
         # Deterministic floor: the safety guard models harm, not corporate
@@ -803,6 +840,7 @@ def _validate_operating_points(threshold: float, ensemble: EnsembleThresholds) -
     for name, value in (
         ("threshold", threshold),
         ("injection_threshold", ensemble.injection),
+        ("short_injection_threshold", ensemble.short_injection),
         ("safety_unsafe_threshold", ensemble.unsafe),
         ("safety_category_threshold", ensemble.category),
     ):

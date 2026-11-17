@@ -45,13 +45,17 @@ def classifier(threshold: float = 0.55) -> SensitivityClassifier:
 
 
 class _InjectionStub:
-    def __init__(self, value: float | Exception) -> None:
+    def __init__(self, value: float | Exception, tokens: int | None = None) -> None:
         self._value = value
+        self._tokens = tokens
 
     def predict(self, text: str) -> float:
         if isinstance(self._value, Exception):
             raise self._value
         return self._value
+
+    def token_count(self, text: str) -> int:
+        return len(text.split()) if self._tokens is None else self._tokens
 
 
 class _SafetyStub:

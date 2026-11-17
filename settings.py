@@ -245,6 +245,14 @@ class Settings(BaseSettings):
     #: Explicit override for the injection threshold. Leave empty to take the
     #: value implied by ``classifier_injection_profile``.
     classifier_injection_threshold: float | None = None
+    #: A prompt at or below this many tokens is "short": the guard has too little
+    #: context for its injection verdict to stand alone, so a detection needs the
+    #: cut below or a deterministic instruction-shape marker (ADR-011 decision 3).
+    classifier_short_prompt_tokens: int = 64
+    #: Injection cut for a short prompt. Measured 2026-11-17: benign short
+    #: imperatives reach 0.962 on the int8 graph while short jailbreaks start at
+    #: 0.965, so the profile threshold refuses ordinary support chat.
+    classifier_short_injection_threshold: float = 0.99
     #: ``unsafe >= 0.5`` flags the prompt for review (ADR-011).
     classifier_safety_unsafe_threshold: float = 0.5
     #: Operating point for the fp32 GPU graph, calibrated separately: the fp32
@@ -443,6 +451,7 @@ class Settings(BaseSettings):
         "dlp_score_threshold",
         "dlp_language_min_confidence",
         "complexity_threshold",
+        "classifier_short_injection_threshold",
     )
     @classmethod
     def _validate_ratio(cls, value: float | None) -> float | None:
