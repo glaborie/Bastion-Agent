@@ -116,6 +116,12 @@ x-app-build: &app-build
   build:
     context: .
     dockerfile: Dockerfile
+    # The Dockerfile's last stage is `runtime-gpu`, and Compose defaults to the
+    # last stage, so without this the base stack silently built the CUDA image
+    # (onnxruntime removed, onnxruntime-gpu installed) on hosts that never
+    # reserve a device. ADR-011 decision 8: the base is the CPU deployment, and
+    # docker-compose.gpu.yml overrides this target for the opt-in GPU image.
+    target: runtime
   image: bastion-agent:${BASTION_IMAGE_TAG:-local}
   env_file:
     - path: .env
