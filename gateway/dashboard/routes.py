@@ -141,6 +141,26 @@ async def handoff_queue(
     ]
 
 
+@router.get("/api/handoffs/panel", response_class=HTMLResponse)
+async def handoff_panel(
+    request: Request,
+    context: AuthContext = Depends(require_roles("operator", "admin")),
+    session: AsyncSession = Depends(get_db_session),
+) -> HTMLResponse:
+    """Live handoff queue fragment polled by every dashboard page (ADR-022).
+
+    Metadata only, like the JSON endpoint: the fragment carries the
+    conversation id, verdict and timestamp as data attributes so the browser
+    can raise one notification per new handoff without ever receiving text.
+    """
+    handoffs = await recent_handoffs(session, tenant_id=context.tenant_id)
+    return render(
+        request,
+        "partials/handoff_panel.html",
+        context={"handoffs": handoffs},
+    )
+
+
 @router.get("/api/incidents", response_class=HTMLResponse)
 async def incidents_panel(
     request: Request,

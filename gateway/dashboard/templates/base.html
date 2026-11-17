@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/vendor/htmx-2.0.4.min.js" defer></script>
     <script src="/static/theme.js" defer></script>
+    <script src="/static/handoffs.js" defer></script>
     {% block head_extra %}{% endblock %}
   </head>
   <body hx-headers='{"X-CSRF-Token": "{{ csrf_token or "" }}"}'>
@@ -68,6 +69,27 @@
     </header>
 
     <main class="container">
+      {% if principal and ('operator' in principal.roles or 'admin' in principal.roles) %}
+        <section id="handoffs" aria-live="polite">
+          <header class="row-between">
+            <h2>Operator handoffs</h2>
+            <span class="operator-actions">
+              <button type="button" class="secondary outline" id="handoff-enable" hidden>
+                Enable browser alerts
+              </button>
+              <a href="/dashboard/audit?event_type=HANDOFF_REQUIRED">
+                <small>Full handoff ledger</small>
+              </a>
+            </span>
+          </header>
+          <div id="handoff-slot"
+               hx-get="/api/handoffs/panel"
+               hx-trigger="load, every 15s, visibilitychange from:document, focus from:window"
+               hx-swap="innerHTML">
+            <p><small class="muted">Checking the handoff queue…</small></p>
+          </div>
+        </section>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
 

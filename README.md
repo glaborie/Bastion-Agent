@@ -570,6 +570,17 @@ security escalation remains the `SECURITY_INCIDENT` tiers in `SECURITY.md` — a
 there is no live human chat channel in the stack: the handoff is a queue an
 operator reads.
 
+Every dashboard page carries an **Operator handoffs** panel for `operator` and
+`admin` sessions: it polls `GET /api/handoffs/panel` (the same rows as the JSON
+queue, never the marker count or the text) and links each row to the session
+inspector. A browser signed in as e.g. `breakglass` in a second window is also
+notified: click **Enable browser alerts** once, and each newly queued handoff
+raises one `Notification` built from the conversation id, verdict and timestamp.
+The first poll primes the page, so rows queued before you opened it do not
+arrive as a burst, and permission-denied degrades to the panel. The channel is
+that tab — no service worker, no push service, no key — so a closed browser
+learns nothing (ADR-022 decision 8).
+
 ### Demo
 
 The canary is deterministic, so the demo feeds the sanitizer the exact text the

@@ -483,6 +483,71 @@ async def test_incident_panel_requires_operator_or_admin(
     assert (await client.get("/api/incidents")).status_code == 403
 
 
+async def test_handoff_panel_lists_rows_queued_between_polls(
+    api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
+) -> None:
+    client, state = api
+    state["context"] = session_context(BOB)
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+
+    empty = await client.get("/api/handoffs/panel", headers={"HX-Request": "true"})
+    assert empty.status_code == 200
+    assert "No handoffs queued" in empty.text
+
+    async with factory() as session:
+        await append_audit_event(
+            session,
+            actor_id="alice-sub",
+            tenant_id="acme",
+            event_type=AuditEventType.HANDOFF_REQUIRED,
+            session_id="conv-handoff-1",
+            metadata_json={"verdict": "escalating_language", "markers": 3},
+        )
+        await session.commit()
+
+    first = await client.get("/api/handoffs/panel", headers={"HX-Request": "true"})
+    assert 'data-handoff-id="conv-handoff-1"' in first.text
+    assert 'data-handoff-verdict="escalating_language"' in first.text
+    # The panel is metadata only: the marker count stays in the ledger.
+    assert "markers" not in first.text
+
+    async with factory() as session:
+        await append_audit_event(
+            session,
+            actor_id="alice-sub",
+            tenant_id="acme",
+            event_type=AuditEventType.HANDOFF_REQUIRED,
+            session_id="conv-handoff-2",
+            metadata_json={"verdict": "repeated_complaint"},
+        )
+        await session.commit()
+
+    second = await client.get("/api/handoffs/panel", headers={"HX-Request": "true"})
+    assert "conv-handoff-1" in second.text
+    assert "conv-handoff-2" in second.text
+
+    queue = await client.get("/api/handoffs")
+    assert set(queue.json()[0]) == {"conversation_id", "verdict", "created_at"}
+
+
+async def test_handoff_panel_is_operator_only(
+    api: tuple[httpx.AsyncClient, Any],
+) -> None:
+    client, state = api
+
+    state["context"] = session_context(BOB)
+    operator_page = await client.get("/dashboard")
+    assert 'id="handoff-slot"' in operator_page.text
+    assert 'hx-get="/api/handoffs/panel"' in operator_page.text
+
+    for principal in (CAROL, DAVE):
+        state["context"] = session_context(principal)
+        assert (await client.get("/api/handoffs/panel")).status_code == 403
+        page = await client.get("/dashboard")
+        if page.status_code == 200:
+            assert 'id="handoff-slot"' not in page.text
+
+
 async def test_chat_page_renders_suggested_prompts_and_a_scoped_conversation(
     api: tuple[httpx.AsyncClient, Any],
 ) -> None:
