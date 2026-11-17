@@ -1,6 +1,6 @@
 ### IDEA-018: Detect user frustration and escalate the conversation to a human operator
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.4
 - area: agent
