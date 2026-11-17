@@ -986,6 +986,12 @@ def _sigmoid(logits: np.ndarray) -> np.ndarray:
 
 
 @functools.lru_cache(maxsize=1)
+@functools.lru_cache(maxsize=1)
 def get_classifier() -> SensitivityClassifier:
-    """Process-wide classifier from configuration."""
+    """Process-wide classifier from configuration.
+
+    Cached so startup warm-up and the request path share one instance: the ONNX
+    sessions are the expensive part and a second build would pay for them again
+    on the first turn (IDEA-067).
+    """
     return SensitivityClassifier(ClassifierConfig.from_settings())

@@ -105,6 +105,29 @@ make models                              # verifies, and fixes the modes
 docker compose restart gateway worker
 ```
 
+## The first chat turn after a restart is slow
+
+**Symptom.** The first `POST /v1/chat` after `docker compose up -d gateway`
+takes seconds longer than every later turn, and the ledger shows the gap
+between `INPUT_RECEIVED` and `DLP_REDACTION` — not between `DLP_REDACTION` and
+`RESPONSE_SENT`. Before IDEA-067 the gateway log also showed `Loaded recognizer:
+…` and `Presidio analyzer ready` *inside* the first request, 3-4 s after it
+arrived.
+
+**Cause.** The DLP analyzer (Presidio plus the spaCy pipelines per modelled
+language) and the ONNX ensemble are expensive to build and used to be built by
+whichever request arrived first.
+
+**Fix.** Startup now builds both (`agent/warmup.py`, called from the gateway
+`lifespan` and the worker `startup`), and the server does not accept traffic
+until that returns: `/health/ready` reports `checks.guards` and a guard that
+cannot be built aborts startup with `GuardWarmUpError: <guard> warm-up failed:
+<ExceptionType>` instead of failing the first request. So this signature
+appearing again means the process did not go through warm-up — a script that
+builds its own DLP, or a code path that bypasses `create_app` — not a slow
+model. If warm-up itself fails, read the step above it: a missing graph is the
+`injection-guard model not found` failure, and `make models` repairs it.
+
 ## A merged feature does not exist at runtime
 
 **Symptom.** Something that is on `master` — a module, an audit event, an
