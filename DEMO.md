@@ -73,12 +73,13 @@ Open **`http://localhost:8000/dashboard`** and authenticate through Keycloak.
 | User | Roles | Use in this demo |
 |---|---|---|
 | `breakglass` | `admin` | Break-glass superset; tour the dashboard |
-| `alice` | `operator`, `admin` | Initiator of the write request; the acme tenant's admin, so she can read a handoff transcript through the escrow API |
+| `alice` | `operator` | Initiator of the write request |
+| `admin` | `admin` | Dedicated acme administrator: reads a handoff transcript through the admin-only escrow API |
 | `bob` | `operator`, `analyst` | Second operator who approves it |
 | `carol` | `analyst` | Proves a write is denied by RBAC |
 | `dave` | `readonly` | Proves the dashboard is closed to `readonly` |
 
-All five share the dev-only password **`Bastion-dev-2026!`**.
+All six share the dev-only password **`Bastion-dev-2026!`**.
 
 > Use `localhost`, not `127.0.0.1` (the registered redirect URI and Keycloak's
 > secure cookies are scoped to that host).

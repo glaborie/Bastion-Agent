@@ -117,7 +117,8 @@ dev-only credential. Rotate or delete these users before exposing the stack.
 | User | Realm roles | Purpose |
 |------|-------------|---------|
 | `breakglass` | `admin` | Break-glass superset (satisfies every requirement) |
-| `alice` | `operator`, `admin` | Initiator of the demo write requests; the acme tenant's admin, so the admin-only escrow read works for a real person (ADR-005 decision 7) |
+| `alice` | `operator` | Initiator of the demo write requests |
+| `admin` | `admin` | Dedicated acme administrator: the admin-only escrow read (ADR-005 decision 7) and any other admin-gated surface, so the demo operator stays unprivileged |
 | `bob` | `operator`, `analyst` | The second operator who decides tickets |
 | `carol` | `analyst` | Read/analysis only; dashboard is forbidden |
 | `dave` | `readonly` | API read-only; dashboard is forbidden |
