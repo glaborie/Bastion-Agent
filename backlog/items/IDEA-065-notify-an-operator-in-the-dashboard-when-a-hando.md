@@ -1,6 +1,6 @@
 ### IDEA-065: Notify an operator in the dashboard when a handoff is queued
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.4
 - area: gateway
