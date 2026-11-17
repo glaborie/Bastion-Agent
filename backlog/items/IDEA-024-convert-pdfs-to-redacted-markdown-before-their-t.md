@@ -1,6 +1,6 @@
 ### IDEA-024: Convert PDFs to redacted Markdown before their text reaches a model
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.4
 - area: agent
@@ -21,15 +21,15 @@ One documented local command (`docker compose exec gateway python -m agent.inges
 
 **Acceptance**
 
-- [ ] `uv run pytest tests/test_document_ingest.py -q` converts a committed fixture PDF whose text carries a person name, an email and an IBAN, and asserts the artifact contains the three `{{ENTITY:...}}` markers, contains none of the three plaintext values, and contains neither the fixture's `/Author` nor its `/Title` metadata string
-- [ ] Fail-closed, each case writing no output file and exiting non-zero: an encrypted PDF, a truncated PDF, a PNG renamed to `.pdf`, a file over the size ceiling, and an image-only PDF that yields no text — all five covered in `tests/test_document_ingest.py` against a temporary output path, so a pre-existing file is not overwritten either
-- [ ] The conversion cannot reach the network: an httpx request recorder observes zero outbound requests during a conversion, and a test asserts the adapter constructs `MarkItDown(enable_plugins=False)` with no `docintel_endpoint`, no `docintel_credential` and no `llm_client`, and that no settings key exists for any of them
-- [ ] The redactor is the shipped `PresidioDLP.redact()` with a tenant and a session, not a second implementation: a test passes the same text through the module and through `redact()` and asserts byte-identical markers, and asserts no plaintext value or model-bound text appears in the run's log records
-- [ ] Restore is scoped and honest: markers restore only for the same tenant and session, a different tenant or session leaves them untouched, and once the 30-minute `VAULT_TTL_SECONDS` (1800) lapses the command reports the markers as expired instead of printing them unchanged — all three asserted, using the fakeredis TTL path the vault tests already use
-- [ ] `markitdown[pdf]` is pinned in `pyproject.toml` (the narrow extra, not `[all]`) with `uv.lock` regenerated, the adapter lives in one module (`agent/ingest/document.py`) with the extractor injectable behind a protocol, and `mypy` and `pylint` stay clean
-- [ ] The size ceiling and the parse timeout are settings keys with documented defaults in `.env.example`, and a test with a deliberately slow extractor proves the timeout aborts the run and writes no artifact
-- [ ] `README.md` documents the command, the PDF-only input allow-list, the 30-minute restore window and the de-identification boundary sentence, and the ingestion trust boundary (untrusted binary parser in-process, format allow-list, extraction-failure policy, no OCR or Document Intelligence in this slice) is recorded in `docs/adr/ADR-002.md` or a new ADR; `uv run python scripts/check_adrs.py` passes
-- [ ] No new surface ships with it: `grep -rn "markitdown" docs/tools/v1.json docker-compose.yml gateway/` returns nothing, `docker compose config` is unchanged, and no gateway route, compose service or `.env` key becomes required
+- [x] `uv run pytest tests/test_document_ingest.py -q` converts a committed fixture PDF whose text carries a person name, an email and an IBAN, and asserts the artifact contains the three `{{ENTITY:...}}` markers, contains none of the three plaintext values, and contains neither the fixture's `/Author` nor its `/Title` metadata string
+- [x] Fail-closed, each case writing no output file and exiting non-zero: an encrypted PDF, a truncated PDF, a PNG renamed to `.pdf`, a file over the size ceiling, and an image-only PDF that yields no text — all five covered in `tests/test_document_ingest.py` against a temporary output path, so a pre-existing file is not overwritten either
+- [x] The conversion cannot reach the network: an httpx request recorder observes zero outbound requests during a conversion, and a test asserts the adapter constructs `MarkItDown(enable_plugins=False)` with no `docintel_endpoint`, no `docintel_credential` and no `llm_client`, and that no settings key exists for any of them
+- [x] The redactor is the shipped `PresidioDLP.redact()` with a tenant and a session, not a second implementation: a test passes the same text through the module and through `redact()` and asserts byte-identical markers, and asserts no plaintext value or model-bound text appears in the run's log records
+- [x] Restore is scoped and honest: markers restore only for the same tenant and session, a different tenant or session leaves them untouched, and once the 30-minute `VAULT_TTL_SECONDS` (1800) lapses the command reports the markers as expired instead of printing them unchanged — all three asserted, using the fakeredis TTL path the vault tests already use
+- [x] `markitdown[pdf]` is pinned in `pyproject.toml` (the narrow extra, not `[all]`) with `uv.lock` regenerated, the adapter lives in one module (`agent/ingest/document.py`) with the extractor injectable behind a protocol, and `mypy` and `pylint` stay clean
+- [x] The size ceiling and the parse timeout are settings keys with documented defaults in `.env.example`, and a test with a deliberately slow extractor proves the timeout aborts the run and writes no artifact
+- [x] `README.md` documents the command, the PDF-only input allow-list, the 30-minute restore window and the de-identification boundary sentence, and the ingestion trust boundary (untrusted binary parser in-process, format allow-list, extraction-failure policy, no OCR or Document Intelligence in this slice) is recorded in `docs/adr/ADR-002.md` or a new ADR; `uv run python scripts/check_adrs.py` passes
+- [x] No new surface ships with it: `grep -rn "markitdown" docs/tools/v1.json docker-compose.yml gateway/` returns nothing, `docker compose config` is unchanged, and no gateway route, compose service or `.env` key becomes required
 
 **Notes**
 

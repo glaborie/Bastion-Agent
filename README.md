@@ -632,6 +632,47 @@ The model test asserts the invariant, not the model's politeness: a refusal
 passes, while a raw marker in the answer must be blocked with `canary_leak`,
 delivered as empty text and quarantined.
 
+## Document Ingestion: PDF to Redacted Markdown (ADR-023)
+
+A PDF enters the pipeline through one local command, never through the chat
+endpoint, and its text is redacted before anything else sees it:
+
+```bash
+docker compose exec gateway python -m agent.ingest.cli convert dossier.pdf \
+  --tenant acme --actor alice --output dossier.redacted.md
+# host checkout, same module:
+uv run python -m agent.ingest.cli convert dossier.pdf \
+  --tenant acme --actor alice --output dossier.redacted.md
+```
+
+The artifact carries the same `{{ENTITY:…}}` vault markers chat produces, scoped
+to `ingest:<tenant, actor, sha256(file)>`, and the command prints a one-line
+summary — page count, entity count and entity types, extractor — never a value.
+Restoring is the same scope, for the 30-minute vault TTL:
+
+```bash
+uv run python -m agent.ingest.cli restore dossier.redacted.md \
+  --tenant acme --actor alice --source dossier.pdf --output dossier.txt
+```
+
+After the TTL the command reports the markers as expired and leaves them in place.
+
+Input is `.pdf` only, checked by suffix and by the `%PDF-` magic number; an
+encrypted, truncated, mislabelled or oversized file, and an image-only PDF that
+yields no text, exit non-zero and write no artifact. Extraction is
+`markitdown[pdf]` pinned in `pyproject.toml`, constructed with
+`enable_plugins=False` and no Document Intelligence or OCR client, so the
+conversion cannot reach the network or a model; `DOCUMENT_MAX_BYTES` and
+`DOCUMENT_PARSE_TIMEOUT_SECONDS` bound the in-process parser. Metadata
+(`/Author`, `/Title`) and embedded attachments never reach the artifact.
+
+**De-identification is not declassification.** A redacted document is still
+confidential by content: the classifier still decides its route, and DLP recall
+bounds what the markers cover — an out-of-vocabulary name or a postal address
+behaves here exactly as it does in chat. The trust boundary and its limits (no
+sandbox around the parser, no OCR, partial text from a damaged file) are recorded
+in ADR-023.
+
 ## Guarded Tools & Four-Eyes HITL (Milestone 4)
 
 ### Modules

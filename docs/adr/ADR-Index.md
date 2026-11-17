@@ -27,6 +27,7 @@ a file in this directory; this page is the index and the process guide.
 | 020 | Per-Principal Inference Token Budget | Proposed |
 | 021 | A HashiCorp Vault Dev Overlay for Infra Credentials | Accepted |
 | 022 | Frustration Detection and the Operator Handoff Queue | Accepted |
+| 023 | Local PDF Ingestion with DLP Redaction Before the Model | Accepted |
 
 ---
 
