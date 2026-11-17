@@ -103,12 +103,30 @@ test: ## Unit tests: no database, no models, no network
 	uv run pytest -m "not integration"
 
 .PHONY: test-integration
-test-integration: ## Database-backed tests (needs TEST_DATABASE_URL)
-	uv run pytest -m integration
+test-integration: ## Database tests: starts a throwaway PostgreSQL 16, then removes it
+	@set -euo pipefail; \
+	name=bastion-test-db; port=55433; \
+	trap 'docker rm -f "$$name" >/dev/null 2>&1 || true' EXIT INT TERM; \
+	docker rm -f "$$name" >/dev/null 2>&1 || true; \
+	docker run --rm -d --name "$$name" -p "$$port:5432" \
+	  -e POSTGRES_USER=bastion -e POSTGRES_PASSWORD=bastion \
+	  -e POSTGRES_DB=bastion_test postgres:16-alpine >/dev/null; \
+	attempt=0; until docker exec "$$name" pg_isready -U bastion -d bastion_test >/dev/null 2>&1; do \
+	  attempt=$$((attempt + 1)); [ $$attempt -lt 60 ] || { echo "test db did not become ready" >&2; exit 1; }; sleep 0.5; done; \
+	TEST_DATABASE_URL="postgresql+asyncpg://bastion:bastion@localhost:$$port/bastion_test" \
+	TEST_DATABASE_APP_URL="postgresql+asyncpg://bastion_app:bastion_app@localhost:$$port/bastion_test" \
+	  uv run pytest -m integration
 
 .PHONY: test-redis
-test-redis: ## Redis-backed tests (needs REDIS_TEST_URL)
-	uv run pytest -m redis_integration
+test-redis: ## Redis tests: starts a throwaway Redis 7, then removes it
+	@set -euo pipefail; \
+	name=bastion-test-redis; port=56379; \
+	trap 'docker rm -f "$$name" >/dev/null 2>&1 || true' EXIT INT TERM; \
+	docker rm -f "$$name" >/dev/null 2>&1 || true; \
+	docker run --rm -d --name "$$name" -p "$$port:6379" redis:7-alpine >/dev/null; \
+	attempt=0; until docker exec "$$name" redis-cli ping >/dev/null 2>&1; do \
+	  attempt=$$((attempt + 1)); [ $$attempt -lt 60 ] || { echo "test redis did not become ready" >&2; exit 1; }; sleep 0.2; done; \
+	REDIS_TEST_URL="redis://localhost:$$port/0" uv run pytest -m redis_integration
 
 .PHONY: test-witness
 test-witness: ## Audit-witness tests (needs AUDIT_WITNESS_*)
