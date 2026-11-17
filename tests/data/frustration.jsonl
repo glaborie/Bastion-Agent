@@ -1,0 +1,53 @@
+{"id": "pos-live-button-f419", "label": "positive", "turns": ["this button is not working", "no but seriously it's definitely not working, ever", "I'm not sure you understand how frustrated I feel"]}
+{"id": "pos-live-button-2619", "label": "positive", "turns": ["the button is not working", "the button is not working, again"]}
+{"id": "pos-export-broken", "label": "positive", "turns": ["the export is still broken", "this is useless"]}
+{"id": "pos-broken-again", "label": "positive", "turns": ["it is broken again", "nothing helps here"]}
+{"id": "pos-already-told", "label": "positive", "turns": ["i already told you twice", "this is the third time i ask"]}
+{"id": "pos-did-not-help", "label": "positive", "turns": ["that did not help", "no really, it did not help at all"]}
+{"id": "pos-not-fixed", "label": "positive", "turns": ["still not fixed", "why is this so hard"]}
+{"id": "pos-same-error", "label": "positive", "turns": ["i keep getting the same error", "the same error again after the restart"]}
+{"id": "pos-same-problem", "label": "positive", "turns": ["same problem as yesterday, nothing changed", "so nothing was fixed then"]}
+{"id": "pos-crash", "label": "positive", "turns": ["the page keeps crashing", "it crashed again just now"]}
+{"id": "pos-not-working-plain", "label": "positive", "turns": ["not working", "still not working"]}
+{"id": "pos-look-at-this", "label": "positive", "turns": ["can someone finally look at this", "i am getting nowhere with this"]}
+{"id": "pos-speak-human", "label": "positive", "turns": ["i need to speak to a human"]}
+{"id": "pos-escalate-human", "label": "positive", "turns": ["escalate this to a human please", "nobody here can help me"]}
+{"id": "pos-frustrated", "label": "positive", "turns": ["this makes no sense and i am frustrated", "i have been waiting for an hour"]}
+{"id": "pos-not-listening", "label": "positive", "turns": ["you are not listening to me", "did you even read my message"]}
+{"id": "pos-refund", "label": "positive", "turns": ["i want a refund, this never works", "second attempt and it is still broken"]}
+{"id": "pos-waste", "label": "positive", "turns": ["this is a waste of my time", "i am sick of this"]}
+{"id": "pos-furious", "label": "positive", "turns": ["i am furious", "nothing works on this account"]}
+{"id": "pos-ridiculous", "label": "positive", "turns": ["this is ridiculous", "how many times do i have to ask"]}
+{"id": "pos-fed-up", "label": "positive", "turns": ["i am fed up with this", "it still does not work"]}
+{"id": "pos-keeps-happening", "label": "positive", "turns": ["this keeps happening every morning", "and nobody has fixed it"]}
+{"id": "pos-third-attempt", "label": "positive", "turns": ["this is my third attempt", "the upload fails every time"]}
+{"id": "pos-again-and-again", "label": "positive", "turns": ["i have asked again and again", "please just fix the login"]}
+{"id": "neg-export-howto", "label": "negative", "turns": ["how do i export the q3 summary as csv?", "where is the export button?", "can i schedule it for monday?"]}
+{"id": "neg-broken-link", "label": "negative", "turns": ["how do i report a broken link in the wiki?"]}
+{"id": "neg-escalate-policy", "label": "negative", "turns": ["when should i escalate a ticket to a human?", "is there a policy for that?"]}
+{"id": "neg-quoted-error", "label": "negative", "turns": ["what does 'not working' mean in the error log?", "is it a retryable status?"]}
+{"id": "neg-invoice", "label": "negative", "turns": ["the invoice is overdue, can you explain the policy?"]}
+{"id": "neg-retry-policy", "label": "negative", "turns": ["explain how the retry policy works"]}
+{"id": "neg-contract", "label": "negative", "turns": ["summarise the termination clause of this contract"]}
+{"id": "neg-capital", "label": "negative", "turns": ["what is the capital of france?"]}
+{"id": "neg-open-tickets", "label": "negative", "turns": ["list the open tickets for acme", "and their owners"]}
+{"id": "neg-password", "label": "negative", "turns": ["how do i change my password?", "where is the security settings page?"]}
+{"id": "neg-export-done", "label": "negative", "turns": ["the export job finished successfully, send me the link", "thanks, got it"]}
+{"id": "neg-colleague-broken", "label": "negative", "turns": ["my colleague says the report is broken, where do we file that?"]}
+{"id": "neg-plans", "label": "negative", "turns": ["i do not understand the difference between the two plans, please explain"]}
+{"id": "neg-nightly-job", "label": "negative", "turns": ["can you check why the nightly job is slow?", "and when it last ran?"]}
+{"id": "neg-contact-support", "label": "negative", "turns": ["how do i contact support from the dashboard?"]}
+{"id": "neg-status-page", "label": "negative", "turns": ["is there a status page for outages?", "i want to bookmark it"]}
+{"id": "neg-reset-device", "label": "negative", "turns": ["what are the steps to reset a device?", "does it wipe the cache?"]}
+{"id": "neg-previous-request", "label": "negative", "turns": ["did my last request go through?", "i did not get an email"]}
+{"id": "neg-translate", "label": "negative", "turns": ["please translate this message into german"]}
+{"id": "neg-greyed-out", "label": "negative", "turns": ["the button is greyed out, how do i enable it?", "which role do i need?"]}
+{"id": "neg-slow-export", "label": "negative", "turns": ["why is the export slow?", "is there a faster format?"]}
+{"id": "neg-acronym", "label": "negative", "turns": ["what does the acronym dan stand for?", "is it related to prompt injection?"]}
+{"id": "neg-vacation", "label": "negative", "turns": ["how do i request vacation days?", "who approves them?"]}
+{"id": "neg-failed-test", "label": "negative", "turns": ["which test failed in the last run?", "show me the log line"]}
+{"id": "neg-iban", "label": "negative", "turns": ["validate this iban for me", "is the checksum correct?"]}
+{"id": "neg-frustrated-customer", "label": "negative", "turns": ["how should i handle a frustrated customer?", "is there a playbook?"]}
+{"id": "neg-angry-user", "label": "negative", "turns": ["what should i say to an angry user?", "any template?"]}
+{"id": "neg-useless-field", "label": "negative", "turns": ["which fields are useless for the forecast model?", "can we drop them?"]}
+{"id": "neg-crash-report", "label": "negative", "turns": ["where do crash reports get stored?", "how long are they kept?"]}

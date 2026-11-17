@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.sentiment import FrustrationVerdict, assess
+from agent.sentiment import FrustrationVerdict, _markers, assess
 from db.models import AuditEventType
 from gateway.routers import chat as chat_router
 from settings import Settings
@@ -71,6 +71,49 @@ def test_the_detector_makes_no_network_call(monkeypatch: pytest.MonkeyPatch) -> 
     verdict = assess(_turns(FAILURE, FAILURE, "Nothing works."))
 
     assert verdict is not None
+
+
+def test_the_recovered_live_transcript_yields_a_verdict() -> None:
+    """IDEA-070: f41974de…, read back through the escrow, was missed entirely."""
+    verdict = assess(
+        _turns(
+            "this button is not working",
+            "no but seriously it's definitely not working, ever",
+            "I'm not sure you understand how frustrated I feel",
+        )
+    )
+
+    assert isinstance(verdict, FrustrationVerdict)
+    assert "not working" in verdict.markers
+    assert "frustrated" in verdict.markers
+
+
+def test_a_restated_complaint_is_enough() -> None:
+    """IDEA-070: 2619c318… — one marker, restated with a tail, was below 0.9."""
+    verdict = assess(_turns("the button is not working", "the button is not working, again"))
+
+    assert isinstance(verdict, FrustrationVerdict)
+    assert verdict.repeated is True
+    assert verdict.reason == "repeated_complaint"
+    assert verdict.markers == ("not working",)
+
+
+def test_a_phrase_that_contains_another_counts_once() -> None:
+    """The old defect: "still does not work" matched two entries and fired alone."""
+    assert _markers("still does not work") == ("still does not work",)
+    assert assess(_turns("Still does not work.")) is None
+
+
+def test_an_explicit_request_for_a_human_fires_alone() -> None:
+    verdict = assess(_turns("Please, I need to speak to a human."))
+
+    assert isinstance(verdict, FrustrationVerdict)
+    assert verdict.reason == "escalating_language"
+
+
+def test_a_third_person_complaint_about_a_customer_stays_silent() -> None:
+    """Measured false positive of the strong-marker arm: "frustrated" alone."""
+    assert assess(_turns("How should I handle a frustrated customer?")) is None
 
 
 def test_fenced_tool_output_cannot_escalate() -> None:
