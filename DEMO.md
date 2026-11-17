@@ -73,7 +73,7 @@ Open **`http://localhost:8000/dashboard`** and authenticate through Keycloak.
 | User | Roles | Use in this demo |
 |---|---|---|
 | `breakglass` | `admin` | Break-glass superset; tour the dashboard |
-| `alice` | `operator` | Initiator of the write request |
+| `alice` | `operator`, `admin` | Initiator of the write request; the acme tenant's admin, so she can read a handoff transcript through the escrow API |
 | `bob` | `operator`, `analyst` | Second operator who approves it |
 | `carol` | `analyst` | Proves a write is denied by RBAC |
 | `dave` | `readonly` | Proves the dashboard is closed to `readonly` |
