@@ -93,13 +93,25 @@ drifted apart: update both in the same change rather than accepting the graph.
 Set `HF_TOKEN` when Hugging Face rate-limits the download. `MODEL_PATH` values
 left empty mean the deterministic rule fallback and no fetch at all.
 
-## Host processes get `Connection reset by peer` from Postgres or Redis
+**If the graphs exist but the gateway still exits with "model not found".**
+`ls -l models/*/onnx/` shows `-rw-------`. The fetcher used to install the graph
+with the mode `tempfile.mkstemp` gave it (0600), so the owner could read it and
+the container's uid 10001 could not. `uv run python scripts/fetch_models.py` (or
+`make models`) now sets 0644 on the graph and its sidecars, including files it
+already verified, so one re-run repairs an existing checkout:
+
+```bash
+make models                              # verifies, and fixes the modes
+docker compose restart gateway worker
+```
+
+## Host processes get `Connection reset by peer` from Postgres, Redis or MinIO
 
 **Symptom.** After a `docker compose restart`, a `docker compose up -d` or a
 Docker daemon restart, everything inside the containers works — `psql`,
 `redis-cli`, healthchecks, the gateway — but Python clients on the host fail with
 `ConnectionResetError: [Errno 104]` during connect or AUTH. `asyncpg`, `redis-py`
-and even a raw socket to `127.0.0.1:5432`/`:26379` are affected. Clients run with
+and even a raw socket to `127.0.0.1:5432`/`:26379`/`:9000` are affected. Clients run with
 `docker run --network host` succeed, which makes it look like a library bug.
 
 **Cause.** The published-port path (the userland proxy / NAT rules) survived the

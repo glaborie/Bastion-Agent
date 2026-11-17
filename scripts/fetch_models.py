@@ -93,6 +93,19 @@ def fetch(url: str, destination: Path, *, token: str | None = None) -> int:
         raise
 
 
+def readable(model: Path, base: Path) -> None:
+    """Give the graph and its sidecars a mode the app's uid can read.
+
+    ``tempfile.mkstemp`` creates 0600 and ``os.replace`` keeps that mode, so a
+    fetch that succeeded still left the graph unreadable from the container
+    (uid 10001). The sweep also repairs a checkout downloaded by an older
+    revision of this script.
+    """
+    for path in (model, *(base / name for name in SIDECARS)):
+        if path.is_file():
+            path.chmod(0o644)
+
+
 def ensure(guard: Guard, root: Path, *, token: str | None = None) -> bool:
     """Materialise one guard's graph and sidecars. Returns True if it fetched."""
     if guard.model_path is None:
@@ -103,7 +116,9 @@ def ensure(guard: Guard, root: Path, *, token: str | None = None) -> bool:
             f"{guard.name}: no pinned digest configured; refusing to fetch an unverified graph"
         )
     model = root / guard.model_path
+    base = model.parent.parent
     if model.is_file() and sha256_of(model) == guard.digest:
+        readable(model, base)
         print(f"{guard.name}: {model} verified")
         return False
     expected = guard.digest
@@ -111,7 +126,6 @@ def ensure(guard: Guard, root: Path, *, token: str | None = None) -> bool:
         raise FetchError(
             f"{guard.name}: {model} digest mismatch: expected {expected}, got {sha256_of(model)}"
         )
-    base = model.parent.parent
     written = fetch(download_url(guard.repo, guard.revision, GRAPH_FILE), model, token=token)
     actual = sha256_of(model)
     if actual != expected:
@@ -122,6 +136,7 @@ def ensure(guard: Guard, root: Path, *, token: str | None = None) -> bool:
     for sidecar in SIDECARS:
         if not (base / sidecar).is_file():
             fetch(download_url(guard.repo, guard.revision, sidecar), base / sidecar, token=token)
+    readable(model, base)
     print(f"{guard.name}: fetched {model} ({written} bytes), digest verified")
     return True
 

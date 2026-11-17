@@ -46,6 +46,30 @@ def test_a_verified_graph_is_kept_without_a_request(
     assert fetch_models.ensure(guard, tmp_path) is False
 
 
+def test_a_fetched_graph_is_readable_by_the_container_uid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkstemp hands back 0600 and os.replace keeps it; the app runs as uid 10001."""
+    guard = _guard("models/guard/onnx/model_quantized.onnx", GOOD_SHA)
+
+    def fake_fetch(url: str, destination: Path, *, token: str | None = None) -> int:
+        del url, token
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(GOOD)
+        destination.chmod(0o600)
+        return len(GOOD)
+
+    monkeypatch.setattr(fetch_models, "fetch", fake_fetch)
+
+    assert fetch_models.ensure(guard, tmp_path) is True
+    for name in (
+        "models/guard/onnx/model_quantized.onnx",
+        "models/guard/tokenizer.json",
+        "models/guard/config.json",
+    ):
+        assert (tmp_path / name).stat().st_mode & 0o777 == 0o644, name
+
+
 def test_a_mismatched_digest_names_the_path_and_both_hashes(tmp_path: Path) -> None:
     model = _write_model(tmp_path, b"swapped-graph")
     guard = _guard("models/guard/onnx/model_quantized.onnx", GOOD_SHA)
