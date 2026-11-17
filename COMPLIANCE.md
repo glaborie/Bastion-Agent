@@ -81,7 +81,7 @@ Bastion-Agent is designed for **Swiss-regulated environments** and aligns with *
 **A:** Bastion-Agent uses canary token injection, XML fence isolation, and egress filtering to detect and block indirect prompt injection. The system is fail-closed by default: if the safety layer is down, requests are blocked. See ADR-002 and `SECURITY.md` §Prompt Injection & Egress Defense.
 
 #### Q: How are secrets managed?
-**A:** Secrets are managed via environment variables (`.env` file, never committed). Key rotation is quarterly for `LLAMA_API_KEY`, `OPENROUTER_API_KEY`, and `REDIS_PASSWORD`. In production, use HashiCorp Vault or Azure Key Vault. See `SECURITY.md` §Secrets Management.
+**A:** Infrastructure credentials (Postgres, Redis, Keycloak admin, MinIO root, audit witness key) come from an opt-in HashiCorp Vault dev overlay and are materialised into a gitignored `.env.vault` by `make vault-export`, with `make vault-check` failing the start when it drifts (ADR-021). Application secrets are still environment variables (`.env` file, never committed), and key rotation is quarterly for `LLAMA_API_KEY`, `OPENROUTER_API_KEY`, and `REDIS_PASSWORD`. A production secret manager is planned, not shipped: `IDEA-020` supersedes the dev overlay with OpenBao, per-service AppRole identities and audit logging. See `SECURITY.md` §Secrets Management.
 
 #### Q: How does the system ensure data residency?
 **A:** Bastion-Agent routes confidential prompts to a local `llama.cpp` instance (Qwen 2.5 7B on RTX 3060 Ti) via OmniRoute. General prompts route to cloud providers. See ADR-004.

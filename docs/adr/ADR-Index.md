@@ -25,6 +25,7 @@ a file in this directory; this page is the index and the process guide.
 | 018 | Signed Job Envelopes for Worker Identity | Accepted |
 | 019 | East-West Mutual TLS with an Internal Step-CA | Accepted |
 | 020 | Per-Principal Inference Token Budget | Proposed |
+| 021 | A HashiCorp Vault Dev Overlay for Infra Credentials | Accepted |
 
 ---
 

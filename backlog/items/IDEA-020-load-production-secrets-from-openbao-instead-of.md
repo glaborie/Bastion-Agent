@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-11
-- updated: 2026-11-14
+- updated: 2026-11-17
 - source: session request on 2026-11-11 ("capture OpenBao as a compliance improvement")
 
 **Problem**
@@ -43,3 +43,4 @@ OpenBao runs as a digest-pinned compose service behind a `secrets` (or `complian
 - Open questions for triage: whether `OMNIROUTE_API_KEY` (today `sk-local-dev`, with no production guard at all) belongs in the first slice or is deferred with the connection strings; and whether the two URL-embedded passwords are in scope for slice one at all, since moving them requires a `str` → `SecretStr` migration of `database_url`/`redis_url` plus URL re-assembly in `db/session.py` and the ARQ bridge, which is a larger change than the four KV reads and may deserve its own item.
 - Scope: intake only. No implementation, no compose, `settings.py`, `.env.example`, document or ADR edit is part of this capture.
 - 2026-11-14: the dev overlay on branch `vault-secrets-overlay` (PR #42) ships HashiCorp Vault, a fixed root token and an on-disk unseal key with KV v2 at `bastion/`; its decision is still unrecorded (IDEA-057) and the dev stack reaches those values through `.env.vault` in the environment rather than this provider (IDEA-056), so read both before implementing this item.
+- 2026-11-17: `docs/adr/ADR-021.md` records the dev Vault overlay's decision (Raft, single node, KV v2 at `bastion/`, per-service ACL policies, `.env.vault` materialisation) and its dev-only limits; this item is the successor decision that replaces that posture with OpenBao, per-service AppRole identities and runtime KV reads.

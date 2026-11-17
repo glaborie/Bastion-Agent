@@ -252,7 +252,8 @@ CREATE TABLE audit_logs (
 - **Key rotation**: Quarterly rotation for `LLAMA_API_KEY`, `OPENROUTER_API_KEY`, `REDIS_PASSWORD`, `APPROVAL_HMAC_SECRET`, `JOB_SIGNING_SECRET`
 - **Job signing key**: Rotating `JOB_SIGNING_SECRET` is a coordinated restart, not a rolling one — drain the queue or expect bounded `bad_signature` refusals (ADR-018)
 - **PKI secrets**: `secrets/ca_password` and `secrets/provisioner_password` are compose secret files, mode `0600`, gitignored; the CA root key stays under `pki/ca` and is mounted only into the CA container
-- **Vault**: Use HashiCorp Vault or Azure Key Vault for production
+- **Vault (dev overlay)**: `docker-compose.vault.yml` runs HashiCorp Vault 1.17 as an opt-in overlay over the default stack — KV v2 at `bastion/`, one ACL policy per service, and the seven infra credentials materialised into a gitignored `.env.vault` by `make vault-export` (ADR-021). It is dev-only: a fixed root token, the unseal key in the data volume and a self-signed certificate are not a production posture
+- **Production secret manager**: planned, not shipped. The app containers still read these credentials from the environment; `IDEA-020` replaces the dev overlay with OpenBao, per-service AppRole identities, runtime KV reads and rotation
 
 ### Health & Readiness
 - **Gateway**: `/health`, `/health/ready`
