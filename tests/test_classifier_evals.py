@@ -210,12 +210,12 @@ UNMARKED_CORPORATE_ROWS: tuple[str, ...] = (
     "corporate-indemnity-clause-085",
 )
 
-#: IDEA-007 measurement over the 85-row corpus, quoted in ADR-011 decision 4.
-#: The floor is deterministic, so these are exact counts; a corpus change
-#: updates them and the ADR together.
-FLOOR_POSITIVES = 42
+#: IDEA-007 measurement, re-run on the 93-row corpus (IDEA-066 added seven
+#: short-prompt rows), quoted in ADR-011 decision 4. The floor is deterministic,
+#: so these are exact counts; a corpus change updates them and the ADR together.
+FLOOR_POSITIVES = 45
 FLOOR_BLOCKED = 18
-FLOOR_BENIGN = 26
+FLOOR_BENIGN = 30
 
 
 def test_the_rules_floor_keeps_its_measured_recall_and_false_positive_budget() -> None:
