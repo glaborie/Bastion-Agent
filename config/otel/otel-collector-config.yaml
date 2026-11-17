@@ -10,7 +10,8 @@
 # Egress is decided by an overlay file, not by this one. docker-compose.yml
 # passes this file as the first --config and one of
 # otel-collector-no-export.yaml (default: local debug only),
-# otel-collector-opik.yaml (debug + Opik Cloud) or
+# otel-collector-opik.yaml (debug + Opik Cloud),
+# otel-collector-langfuse.yaml (debug + Langfuse Cloud only) or
 # otel-collector-export.yaml (debug + Langfuse + Arize) as the second. Maps
 # merge across files, but a list replaces the same path, so the overlay owns
 # the traces pipeline's `exporters` list while everything below stays in one

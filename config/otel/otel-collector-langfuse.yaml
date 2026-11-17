@@ -1,0 +1,22 @@
+# =============================================================================
+# Overlay: fan traces out to Langfuse Cloud only
+# -----------------------------------------------------------------------------
+# Enable with OTEL_REMOTE_EXPORT_CONFIG=otel-collector-langfuse.yaml in .env,
+# then recreate the collector:
+#
+#     docker compose up -d --force-recreate otel-collector
+#
+# It replaces only the traces pipeline's exporter list; the receivers,
+# processors, endpoint/header settings and retry policy all stay in
+# otel-collector-config.yaml, passed as the first --config.
+#
+# Use this instead of otel-collector-export.yaml when Langfuse is the only
+# backend with credentials: that overlay also lists Arize, whose empty
+# ARIZE_SPACE_ID/ARIZE_API_KEY turn every batch into a logged 401. Traces leave
+# the host; ADR-014 decision 3 keeps them free of prompt text.
+# =============================================================================
+
+service:
+  pipelines:
+    traces:
+      exporters: [debug, otlphttp/langfuse]

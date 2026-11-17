@@ -21,6 +21,7 @@ BASE: Final[Path] = OTEL_DIR / "otel-collector-config.yaml"
 EXPORT: Final[Path] = OTEL_DIR / "otel-collector-export.yaml"
 NO_EXPORT: Final[Path] = OTEL_DIR / "otel-collector-no-export.yaml"
 OPIK: Final[Path] = OTEL_DIR / "otel-collector-opik.yaml"
+LANGFUSE: Final[Path] = OTEL_DIR / "otel-collector-langfuse.yaml"
 COMPOSE: Final[Path] = Path("docker-compose.yml")
 
 
@@ -78,7 +79,9 @@ def test_opik_overlay_sends_traces_off_the_host() -> None:
     assert "host.docker.internal" not in text
 
 
-@pytest.mark.parametrize("overlay", [EXPORT, NO_EXPORT, OPIK], ids=["export", "no-export", "opik"])
+@pytest.mark.parametrize(
+    "overlay", [EXPORT, NO_EXPORT, OPIK, LANGFUSE], ids=["export", "no-export", "opik", "langfuse"]
+)
 def test_overlays_only_name_exporters_the_base_defines(overlay: Path) -> None:
     defined = set(load(BASE)["exporters"])
     named = set(pipeline_exporters(load(overlay)))
@@ -91,6 +94,11 @@ def test_overlays_only_name_exporters_the_base_defines(overlay: Path) -> None:
 
 def test_default_overlay_keeps_egress_local() -> None:
     assert pipeline_exporters(load(NO_EXPORT)) == ["debug"]
+
+
+def test_langfuse_overlay_sends_to_langfuse_alone() -> None:
+    """Arize listed here would 401 per batch while its keys are empty."""
+    assert pipeline_exporters(load(LANGFUSE)) == ["debug", "otlphttp/langfuse"]
 
 
 def test_export_overlay_fans_out_to_both_backends() -> None:
