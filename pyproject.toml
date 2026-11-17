@@ -3,7 +3,10 @@ name = "bastion-agent"
 version = "0.1.0"
 description = "High-assurance, zero-trust enterprise AI agent harness and control plane"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+# 3.11.5+ because beautifulsoup4 (via markitdown) selects a soupsieve release
+# with a published GHSA on interpreters older than that; CI and the base image
+# both run the current 3.11 patch.
+requires-python = ">=3.11.5,<3.13"
 license = { text = "Proprietary" }
 authors = [{ name = "Bastion-Agent Engineering" }]
 
