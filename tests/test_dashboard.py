@@ -10,11 +10,12 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
 import pytest_asyncio
+from fakeredis import FakeAsyncRedis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -30,10 +31,11 @@ from db.models import (
     utcnow,
 )
 from db.session import get_db_session
-from gateway.auth.oidc import Principal
+from gateway.auth.oidc import Principal, TokenSet
 from gateway.auth.rbac import AuthContext, get_auth_context
-from gateway.auth.session import SessionRecord
+from gateway.auth.session import SessionManager, SessionRecord
 from gateway.main import create_app
+from settings import get_settings
 from tests.conftest import requires_database
 
 pytestmark = [pytest.mark.integration, requires_database]
@@ -481,6 +483,53 @@ async def test_incident_panel_requires_operator_or_admin(
     client, state = api
     state["context"] = session_context(CAROL)
     assert (await client.get("/api/incidents")).status_code == 403
+
+
+async def test_an_analyst_signed_in_gets_a_sign_out_on_the_403_page(
+    api: tuple[httpx.AsyncClient, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported bug: carol signs in, /dashboard refuses her, no way out.
+
+    The 403 page used to be rendered with no principal, so the header and its
+    Sign out were absent and the only link led back to the same refusal.
+    """
+    client, state = api
+    state["context"] = session_context(CAROL)
+
+    class CarolValidator:
+        async def validate_access_token(self, _token: str) -> Principal:
+            return CAROL
+
+    class NoRefresh:
+        async def refresh(self, *, refresh_token: str) -> TokenSet:
+            raise AssertionError("an unexpired session must not refresh")
+
+    manager = SessionManager(
+        cast(Any, FakeAsyncRedis(decode_responses=True)),
+        validator=cast(Any, CarolValidator()),
+        token_client=cast(Any, NoRefresh()),
+    )
+    record = await manager.create(
+        TokenSet(
+            access_token="access-1",
+            token_type="Bearer",
+            expires_in=300,
+            refresh_token="refresh-1",
+            id_token="id-1",
+        )
+    )
+    # The error page resolves the cookie outside FastAPI's dependency graph, so
+    # the override has to sit on the accessor the helper calls.
+    monkeypatch.setattr("gateway.auth.rbac.get_session_manager", lambda: manager)
+    client.cookies.set(get_settings().session_cookie_name, record.session_id)
+
+    response = await client.get("/dashboard")
+
+    assert response.status_code == 403
+    assert "Not authorized" in response.text
+    assert CAROL.display_name in response.text
+    assert 'action="/auth/logout"' in response.text
+    assert "Back to Command Control" not in response.text
 
 
 async def test_handoff_panel_lists_rows_queued_between_polls(

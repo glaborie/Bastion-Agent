@@ -163,14 +163,14 @@ async def demo_run_status(
     try:
         run = await load_run(redis, run_id)
     except DemoRunUnavailableError as exc:
-        return render_error(
+        return await render_error(
             request,
             title="Run store unavailable",
             detail=str(exc),
             status_code=503,
         )
     if run is None:
-        return render_error(
+        return await render_error(
             request,
             title="Run not found",
             detail="That demo run expired or never existed.",

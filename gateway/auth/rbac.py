@@ -120,6 +120,22 @@ def get_session_manager() -> SessionManager:
     )
 
 
+async def session_principal(request: Request) -> tuple[Principal | None, str | None]:
+    """The signed-in caller and CSRF token behind the session cookie, if any.
+
+    Error pages use it to keep the header (and Sign out) when the caller is
+    authenticated but not authorized for the page; an anonymous request gets
+    ``(None, None)`` and the page stays public.
+    """
+    session_id = request.cookies.get(get_settings().session_cookie_name)
+    if not session_id:
+        return None, None
+    record = await get_session_manager().resolve(session_id)
+    if record is None:
+        return None, None
+    return record.principal, record.csrf_token
+
+
 async def shutdown_auth() -> None:
     """Release HTTP clients and the Redis connection (gateway shutdown)."""
     import asyncio
