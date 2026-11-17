@@ -213,6 +213,7 @@ fi
 add_step adrs "uv run --no-sync python scripts/check_adrs.py"
 add_step tool-catalog "uv run --no-sync python scripts/validate_tool_catalog.py --check"
 add_step rbac "uv run --no-sync python scripts/validate_rbac.py"
+add_step secret-material "uv run --no-sync python scripts/check_secret_material.py"
 if ((RUN_INFRA)) && command -v docker >/dev/null && [[ -f .env ]]; then
     add_step infra "docker compose config -q && docker compose -f docker-compose.yml -f docker-compose.pki.yml --profile pki config -q"
 fi
@@ -220,7 +221,7 @@ add_step dread "uv run --no-sync python scripts/recalculate_dread.py --check"
 add_step threat-model "uv run --no-sync python scripts/check_threat_model.py --check"
 add_step backlog "uv run --no-sync python scripts/check_backlog.py --check"
 
-LAUNCH_ORDER+=(pylint mypy adrs rbac tool-catalog threat-model dread backlog infra ruff-lint ruff-format)
+LAUNCH_ORDER+=(pylint mypy adrs rbac secret-material tool-catalog threat-model dread backlog infra ruff-lint ruff-format)
 ((RUN_TESTS)) && LAUNCH_ORDER+=(pytest)
 EVALS_CMD="uv run --no-sync python scripts/run_evals.py"
 
