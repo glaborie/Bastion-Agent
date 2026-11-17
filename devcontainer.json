@@ -1,0 +1,26 @@
+{
+  "name": "My Slim Project",
+  // Use a slim, official Dev Container base image (not the "universal" one)
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+  // Add only the tools your project actually needs
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:1": {} // Use if your stack needs Docker
+  },
+
+  // Set the correct non-root user for this slim base image
+  "remoteUser": "vscode",
+
+  // Forward any ports your app uses
+  "forwardPorts": [3000, 8000],
+
+  // Run a command after the container is created (e.g., install dependencies)
+  "postCreateCommand": "npm install"
+}
