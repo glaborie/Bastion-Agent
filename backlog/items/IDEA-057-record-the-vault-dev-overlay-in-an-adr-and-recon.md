@@ -1,6 +1,6 @@
 ### IDEA-057: Record the Vault dev overlay in an ADR and reconcile it with IDEA-020
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.3
 - area: docs
@@ -23,12 +23,12 @@ A numbered ADR exists in `docs/adr/` with its `ADR-Index.md` row, and it is the 
 
 **Acceptance**
 
-- [ ] `docs/adr/ADR-<next free>.md` exists with the required shape (`# ADR-XXX: <Title>`, the `**Status:**` / `**Date:**` / `**Last modified:**` block, a `## Context` of at least two paragraphs, a numbered `## Decision`, `## Consequences` with `**Pros**` and `**Cons**`), its row is in `docs/adr/ADR-Index.md` in numeric order, and `uv run python scripts/check_adrs.py` passes
-- [ ] The ADR's `## Decision` names the mechanism concretely enough to be checked mechanically: `grep -in "raft\|8200\|8201\|bastion/\|KV v2\|cap_drop\|IPC_LOCK\|non-root\|vault-bootstrap" docs/adr/ADR-<n>.md` shows each term, and the ADR states that the overlay adds services without modifying any service in `docker-compose.yml`
-- [ ] The ADR carries an explicit limits section stating that `dev-root-token-bastion`, `/vault/data/unseal.key`, the self-signed certificate and the single raft node are dev-only and must not be read as a production posture; `grep -in "dev-only\|fixed root token\|unseal" docs/adr/ADR-<n>.md` shows the fixed token and the unseal key named, and the `**Status:**` line is `Proposed` while the overlay is unmerged (flip it to `Accepted` in the change that merges it, and bump `Last modified`)
-- [ ] The ADR distinguishes its Vault from the PII token vault: `grep -in "TokenVault\|token vault\|ADR-002" docs/adr/ADR-<n>.md` shows the disambiguation, so no later reader takes "the vault" to mean `agent/dlp/vault.py`
-- [ ] `backlog/items/IDEA-020-*.md` gains one `**Notes**` line citing the new ADR as the decision the production design supersedes or extends, with `- updated:` bumped, and no other line of that item changes
-- [ ] `grep -rn "HashiCorp Vault" SECURITY.md COMPLIANCE.md` returns only lines that describe the shipped overlay or label the production claim as planned, and neither file claims a production secret manager that only exists behind a dev overlay
+- [x] `docs/adr/ADR-<next free>.md` exists with the required shape (`# ADR-XXX: <Title>`, the `**Status:**` / `**Date:**` / `**Last modified:**` block, a `## Context` of at least two paragraphs, a numbered `## Decision`, `## Consequences` with `**Pros**` and `**Cons**`), its row is in `docs/adr/ADR-Index.md` in numeric order, and `uv run python scripts/check_adrs.py` passes
+- [x] The ADR's `## Decision` names the mechanism concretely enough to be checked mechanically: `grep -in "raft\|8200\|8201\|bastion/\|KV v2\|cap_drop\|IPC_LOCK\|non-root\|vault-bootstrap" docs/adr/ADR-<n>.md` shows each term, and the ADR states that the overlay adds services without modifying any service in `docker-compose.yml`
+- [x] The ADR carries an explicit limits section stating that `dev-root-token-bastion`, `/vault/data/unseal.key`, the self-signed certificate and the single raft node are dev-only and must not be read as a production posture; `grep -in "dev-only\|fixed root token\|unseal" docs/adr/ADR-<n>.md` shows the fixed token and the unseal key named, and the `**Status:**` line is `Proposed` while the overlay is unmerged (flip it to `Accepted` in the change that merges it, and bump `Last modified`)
+- [x] The ADR distinguishes its Vault from the PII token vault: `grep -in "TokenVault\|token vault\|ADR-002" docs/adr/ADR-<n>.md` shows the disambiguation, so no later reader takes "the vault" to mean `agent/dlp/vault.py`
+- [x] `backlog/items/IDEA-020-*.md` gains one `**Notes**` line citing the new ADR as the decision the production design supersedes or extends, with `- updated:` bumped, and no other line of that item changes
+- [x] `grep -rn "HashiCorp Vault" SECURITY.md COMPLIANCE.md` returns only lines that describe the shipped overlay or label the production claim as planned, and neither file claims a production secret manager that only exists behind a dev overlay
 
 **Notes**
 
