@@ -111,6 +111,11 @@ main.container {
   color: var(--bastion-on-danger);
 }
 
+.badge-warn {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+
 .alert {
   border-left: 4px solid var(--bastion-danger);
   background: color-mix(in srgb, var(--bastion-danger) 10%, transparent);

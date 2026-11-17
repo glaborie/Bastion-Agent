@@ -1,0 +1,35 @@
+{% if handoffs %}
+  <table role="grid">
+    <thead>
+      <tr>
+        <th scope="col">Time</th>
+        <th scope="col">Verdict</th>
+        <th scope="col">Conversation</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for handoff in handoffs %}
+        {% set metadata = handoff.metadata_json or {} %}
+        {% set verdict = metadata.get("verdict", "unknown") %}
+        <tr data-handoff-id="{{ handoff.session_id }}"
+            data-handoff-verdict="{{ verdict }}"
+            data-handoff-created="{{ handoff.timestamp | utc_ts }}">
+          <td><small>{{ handoff.timestamp | utc_ts }}</small></td>
+          <td><span class="badge badge-warn">{{ verdict }}</span></td>
+          <td>
+            <a href="/dashboard/sessions/{{ handoff.session_id }}">
+              <code>{{ handoff.session_id | short_hash(16) }}</code>
+            </a>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>
+    <small class="muted">
+      No handoffs queued. A conversation that reads as frustrated appears here
+      (ADR-022).
+    </small>
+  </p>
+{% endif %}
