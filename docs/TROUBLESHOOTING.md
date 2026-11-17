@@ -63,6 +63,36 @@ uv run python scripts/dev/compose_preflight.py             # remove them
 remembered. Observe the rule: deleting the *network* while containers are up is
 what starts this, so `docker network prune` on a running stack is not safe.
 
+## The gateway exits with `injection-guard model not found`
+
+**Symptom.** `bastion-agent-gateway-1` restarts with
+
+```
+agent.routing.classifier.ClassifierConfigurationError:
+injection-guard model not found: models/prompt-injection-guard-small/onnx/model_quantized.onnx
+```
+
+and `ls models/` shows only the GGUF.
+
+**Cause.** The classifier paths in `.env` point at the two pinned ONNX
+repositories, which are gitignored and mounted read-only into gateway and worker.
+Before IDEA-064 nothing in the stack created them, so a checkout that never ran
+the download started correctly into a fail-closed error.
+
+**Fix.** Let the stack fetch them; `models-init` runs before gateway and worker
+and verifies each graph against `CLASSIFIER_*_MODEL_SHA256`:
+
+```bash
+docker compose up -d models-init          # shows the digest check
+docker compose up -d gateway worker
+```
+
+On the host (tests that need the real graphs) use `make models`. If the fetch
+fails with a digest mismatch, the pinned revision and the digest in `.env` have
+drifted apart: update both in the same change rather than accepting the graph.
+Set `HF_TOKEN` when Hugging Face rate-limits the download. `MODEL_PATH` values
+left empty mean the deterministic rule fallback and no fetch at all.
+
 ## Host processes get `Connection reset by peer` from Postgres or Redis
 
 **Symptom.** After a `docker compose restart`, a `docker compose up -d` or a

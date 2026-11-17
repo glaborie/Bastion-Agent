@@ -42,7 +42,8 @@ uv run python scripts/check_adrs.py
 
 - Docker Engine 24+ with Compose v2.24+
 - NVIDIA Container Toolkit + a CUDA GPU (for the local `llama-cpp` service)
-- A GGUF model in `./models/` (default: `qwen2.5-7b-instruct-q4_k_m.gguf`)
+- A GGUF model in `./models/` (default: `qwen2.5-7b-instruct-q4_k_m.gguf`); the
+  two ONNX guard graphs are fetched by the stack itself (`models-init`)
 
 ```bash
 # 1. Clone & enter directory
@@ -60,9 +61,11 @@ mv models/Qwen2.5-7B-Instruct-Q4_K_M.gguf models/qwen2.5-7b-instruct-q4_k_m.gguf
 ls -lh models/qwen2.5-7b-instruct-q4_k_m.gguf   # must be ~4.7 GB, not 0 bytes
 
 # 4. Start full stack
-#    The one-shot `migrate` service creates the schema as the owner and grants
-#    the non-owner `bastion_app` role that gateway and worker connect as; both
-#    wait for it to finish (ADR-005 decision 3, IDEA-062).
+#    Two one-shot services run before the app tier: `models-init` fetches the two
+#    pinned ONNX guard graphs into ./models and verifies their digests (IDEA-064),
+#    and `migrate` creates the schema as the owner and grants the non-owner
+#    `bastion_app` role gateway and worker connect as (ADR-005 decision 3,
+#    IDEA-062). Both are `service_completed_successfully` dependencies.
 docker compose up -d
 
 # 5. Register the routing aliases (idempotent; writes OMNIROUTE_API_KEY to .env)
