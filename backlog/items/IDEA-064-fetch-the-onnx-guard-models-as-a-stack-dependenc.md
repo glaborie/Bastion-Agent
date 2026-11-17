@@ -1,6 +1,6 @@
 ### IDEA-064: Fetch the ONNX guard models as a stack dependency so the gateway can start
 
-- status: ready
+- status: active
 - priority: P1
 - phase: v0.4
 - area: infra
