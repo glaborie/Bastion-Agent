@@ -3,7 +3,10 @@ name = "bastion-agent"
 version = "0.1.0"
 description = "High-assurance, zero-trust enterprise AI agent harness and control plane"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+# 3.11.5+ because beautifulsoup4 (via markitdown) selects a soupsieve release
+# with a published GHSA on interpreters older than that; CI and the base image
+# both run the current 3.11 patch.
+requires-python = ">=3.11.5,<3.13"
 license = { text = "Proprietary" }
 authors = [{ name = "Bastion-Agent Engineering" }]
 
@@ -49,6 +52,9 @@ dependencies = [
     "opentelemetry-instrumentation-asyncpg>=0.49b0,<1.0.0",
     "opentelemetry-instrumentation-httpx>=0.49b0,<1.0.0",
     "boto3>=1.35,<2.0",
+    # Local, in-process PDF -> Markdown for the ingestion command (ADR-023).
+    # The [pdf] extra is deliberate: no OCR, no Document Intelligence, no plugins.
+    "markitdown[pdf]>=0.1.9,<0.2.0",
 ]
 
 [dependency-groups]
@@ -167,6 +173,10 @@ ignore = [
 "agent/dlp/presidio.py" = ["S105"]
 # Operator CLI scripts print to the terminal and call fixed loopback URLs.
 "scripts/*" = ["T201", "S310"]
+# The document-ingestion command is an operator CLI: its summary and restore
+# output go to the terminal, and it never prints document text to stdout unless
+# the operator asked for it (ADR-023).
+"agent/ingest/cli.py" = ["T201"]
 # One-shot Vault bootstrap: prints progress, shells out to the fixed `vault`
 # binary, and sets the intentionally fixed local dev token.
 "vault/bootstrap.py" = ["T201", "S105", "S603", "S110"]

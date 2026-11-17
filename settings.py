@@ -199,6 +199,11 @@ class Settings(BaseSettings):
     #: an uncapped model hallucination cannot grow the ledger without bound.
     response_store_max_chars: int = 32_768
 
+    #: PDF ingestion (ADR-023). The ceiling is a DoS bound on an untrusted
+    #: binary; the timeout bounds an in-process parser that cannot be cancelled.
+    document_max_bytes: int = 20_000_000
+    document_parse_timeout_seconds: int = 30
+
     #: Frustration detection (ADR-022). A UX signal written to the ledger and
     #: the operator handoff queue; it never changes the answer or the route.
     sentiment_detection_enabled: bool = True
@@ -458,6 +463,8 @@ class Settings(BaseSettings):
         "payload_escrow_ttl_seconds",
         "response_store_max_chars",
         "audit_witness_retention_years",
+        "document_max_bytes",
+        "document_parse_timeout_seconds",
     )
     @classmethod
     def _validate_positive(cls, value: int) -> int:
