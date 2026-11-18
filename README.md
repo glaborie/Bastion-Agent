@@ -1080,17 +1080,22 @@ second run prints `kept` for every monitor already there and adds nothing, so it
 is safe after `docker compose down -v`. The set itself is
 `config/uptime-kuma/monitors.json` — one monitor per probe: `gateway` `/health`
 and `/health/ready`, `db:5432` and `redis:6379` as TCP, Keycloak's management
-`/health` on `:9000`, `omniroute` `/api/health`, and `llama-cpp:8080` with a
-five-minute grace so a model load is not recorded as an outage. The worker and
-`otel-collector` are recorded in the same file as deliberately unmonitored: the
-worker has no listener (its liveness is the Redis queue the `redis` monitor
-already reports) and the collector is distroless and best-effort (ADR-014).
+`/health` on `:9000`, `omniroute` `/api/health`, `llama-cpp:8080` with a
+five-minute grace so a model load is not recorded as an outage, and
+`otel-collector:13133/` — the collector's own `health_check` extension, so its
+distroless image still answers a probe. The worker is recorded in the same file
+as deliberately unmonitored: it has no listener (its liveness is the Redis queue
+the `redis` monitor already reports).
 
 **What is not monitored.** The host, the Docker daemon and this monitor's own
 process: a monitor that shares a host with its targets cannot report that host
-going away, and an external prober is a follow-up. Model quality is not
-availability — OTel traces (ADR-014) and the eval gates remain the detailed
-runtime telemetry and the quality signal.
+going away, and an external prober is a follow-up. Engine-level state — exited,
+restarting, unhealthy, restart counts — is the daemon's view, not a client's;
+`docker compose ps` is that view and the daemon socket is not mounted here
+(ADR-025), so the dashboard's Docker-host dialog answers
+`connect ENOENT /var/run/docker.sock` and that error is expected. Model quality
+is not availability — OTel traces (ADR-014) and the eval gates remain the
+detailed runtime telemetry and the quality signal.
 
 Notifications are optional and configured in the dashboard; the seed and the
 monitor never need a delivery credential. ADR-025 records the profile

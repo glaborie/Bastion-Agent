@@ -59,16 +59,20 @@
       "interval": 60,
       "maxretries": 10,
       "retryInterval": 60
+    },
+    {
+      "name": "otel-collector :13133/",
+      "type": "http",
+      "url": "http://otel-collector:13133/",
+      "interval": 60,
+      "maxretries": 2,
+      "retryInterval": 60
     }
   ],
   "unmonitored": [
     {
       "service": "worker",
-      "reason": "The ARQ worker has no listener to probe and no HTTP surface; its liveness is the Redis queue it consumes, which the `redis :6379` monitor already reports. Deliberately unmonitored instead of accidentally uncovered."
-    },
-    {
-      "service": "otel-collector",
-      "reason": "Distroless image with no shell or HTTP probe helper, and tracing is best-effort (ADR-014)."
+      "reason": "The ARQ worker has no listener to probe and no HTTP surface; its liveness is the Redis queue it consumes, which the `redis :6379` monitor already reports. Engine-level state (exited, restarting, unhealthy) is the Docker daemon's view and would need the socket this monitor deliberately does not mount. Deliberately unmonitored instead of accidentally uncovered."
     }
   ]
 }

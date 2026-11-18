@@ -281,6 +281,22 @@ Two more shapes of the same symptom:
 duplicates. Editing a monitor in the dashboard is not overwritten by a reseed,
 so a retuned monitor keeps its history.
 
+## The monitor logs `connect ENOENT /var/run/docker.sock`
+
+Expected. Uptime Kuma's Docker-host dialog defaults to that socket, and the
+`uptime-kuma` service deliberately does not mount it (ADR-025 decision 2;
+ADR-017 keeps the repository's single socket exception on Falco). The message
+appears when someone opens the Docker host page or presses its "Test" button,
+never at startup and never from the seeded monitors.
+
+**What to do.** Nothing: the seeded probes are the availability signal, and
+`otel-collector:13133/` covers the collector, so only the worker has no probe
+(recorded in `config/uptime-kuma/monitors.json`). Use `docker compose ps` for
+the engine's own view — exited, restarting, unhealthy, restart counts. Taking
+that view inside the monitor means handing it the daemon socket, which is
+host-root-equivalent (`:ro` does not restrict the Docker API) and is why it is
+not done.
+
 ## Local gates are slow
 
 ```bash

@@ -46,6 +46,7 @@ PROBE_NAMES = {
     "keycloak :9000/health",
     "omniroute /api/health",
     "llama-cpp :8080",
+    "otel-collector :13133/",
 }
 
 
