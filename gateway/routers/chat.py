@@ -392,7 +392,15 @@ async def _routing_stage(
     # prompt is not trusted: the request stays on the local model even when the
     # classifier reads it as PUBLIC. That is the control that keeps a record
     # whose name or address Presidio missed off a third-party provider.
-    decision = await model_router.aroute(raw_scan, pii_detected=entity_count > 0)
+    try:
+        decision = await model_router.aroute(raw_scan, pii_detected=entity_count > 0)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Fail closed: without a verdict there is no dependable route, so the
+        # prompt is neither sent upstream nor answered (ADR-004 decision 3).
+        logger.error("Routing classifier failed", extra={"error": type(exc).__name__})
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "routing classifier unavailable"
+        ) from exc
     if force_local and not decision.local:
         # A caller asking for `bastion-local` may only narrow where the prompt
         # goes, never widen it: the turn moves to the local model and the

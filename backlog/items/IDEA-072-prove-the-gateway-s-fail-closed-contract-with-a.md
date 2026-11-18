@@ -1,6 +1,6 @@
 ### IDEA-072: Prove the gateway's fail-closed contract with a deterministic fault-injection suite
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -21,12 +21,12 @@ One merge-blocking pytest module drives `POST /v1/chat` with a fault injected at
 
 **Acceptance**
 
-- [ ] `tests/test_failure_modes.py` injects a timeout, a 500/429, a connection reset and a slow body at the `httpx` transport, and asserts `502`/`503`, `attempts == max_retries + 1`, and that no answer is returned
-- [ ] A PII-bearing turn whose local route fails returns `503` with the `pii_route_local_unavailable` audit row, and the transport records no request to `cloud-primary`
-- [ ] A Redis limiter outage, an egress sanitizer outage and a classifier exception each return `503` from `/v1/chat` and leave no `RESPONSE_SENT` row
-- [ ] A database failure during an intermediate `_record` returns a 5xx, leaves no `RESPONSE_SENT` row and delivers no answer
-- [ ] The suite uses short configured timeouts and a fake clock, so the module finishes in seconds and needs no Toxiproxy, Redis or Postgres container
-- [ ] `docs/TROUBLESHOOTING.md` maps each injected fault to the status a caller sees, and `scripts/gate.sh` stays green
+- [x] `tests/test_failure_modes.py` injects a timeout, a 500/429, a connection reset and a slow body at the `httpx` transport, and asserts `502`/`503`, `attempts == max_retries + 1`, and that no answer is returned
+- [x] A PII-bearing turn whose local route fails returns `503` with the `pii_route_local_unavailable` audit row, and the transport records no request to `cloud-primary`
+- [x] A Redis limiter outage, an egress sanitizer outage and a classifier exception each return `503` from `/v1/chat` and leave no `RESPONSE_SENT` row
+- [x] A database failure during an intermediate `_record` returns a 5xx, leaves no `RESPONSE_SENT` row and delivers no answer
+- [x] The suite uses short configured timeouts and a fake clock, so the module finishes in seconds and needs no Toxiproxy, Redis or Postgres container
+- [x] `docs/TROUBLESHOOTING.md` maps each injected fault to the status a caller sees, and `scripts/gate.sh` stays green
 
 **Notes**
 
@@ -35,3 +35,7 @@ One merge-blocking pytest module drives `POST /v1/chat` with a fault injected at
 - This is the cheap first step before a live harness: a Toxiproxy `chaos` profile (network-level latency and reset between gateway and OmniRoute/Redis/DB) is a separate item because it adds a service, an image pin, a Trivy inventory entry and an ADR under ADR-016, and it tests the same contract more faithfully at much higher cost.
 - Classification: `P2`/`v0.5`. Nothing is broken today and the shipped unit tests cover each stage in isolation, so not `P0`/`P1`; ADR-008 v0.4 is adaptive policy and v0.5 is production readiness, the nearest home for resilience proof. Triage may pull it into v0.4 if the chaos work is wanted now.
 - Intake only: no test, source, config or document change is part of this capture.
+- Implemented: `tests/test_failure_modes.py` (12 cases) drives the real pipeline over an `httpx.MockTransport` provider, a recorder in place of `append_audit_event`, and fakeredis for the vault, canary and quarantine. `OMNIROUTE_TIMEOUT_SECONDS=0.05` and `OMNIROUTE_MAX_RETRIES=2` are set per module; the client is built with zero backoff, so no test sleeps and no fake clock is needed — one test asserts the wall clock stays under 2 s for a stalled body.
+- One source change was required by the third box: an exception from `ModelRouter.aroute` (a classifier that cannot answer) previously escaped as an unhandled 500 with no defined body. `_routing_stage` now logs it and returns `503 routing classifier unavailable`, so no prompt is sent and no `RESPONSE_SENT` row exists. Removing that guard makes the classifier case fail, which the suite proves.
+- Boundary observed while writing the suite: a *non-PII* upstream failure has no terminal audit row — `_complete` logs `Model completion failed` and raises, so the ledger stops at `ROUTING_DECISION`. The suite asserts that shape rather than inventing an incident row, because adding one would change the ledger contract for every provider blip (IDEA-049 covers failed tool calls, not failed completions). The PII path is the one that writes `SECURITY_INCIDENT`.
+- Pre-existing gate defect found on `origin/master` before any change: `scripts/gate.sh` aborts with `step 'infra' is in LAUNCH_ORDER but not registered` whenever the `infra` step is not registered — no `.env` in the checkout, no `docker`, or `--no-infra`. `LAUNCH_ORDER` lists `infra` unconditionally while `add_step infra` is conditional. Reproduced on a pristine `origin/master` worktree with `--no-tests`. CI is unaffected (workflows run the steps directly, not `gate.sh`). Not fixed here: it is a separate tooling defect, and this worktree was verified with a `.env` holding only the compose-required secrets.

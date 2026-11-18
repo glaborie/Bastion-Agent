@@ -185,6 +185,40 @@ holds the old layout; remove it (`docker compose rm -sf omniroute`, then
 `docker volume rm bastion-agent_omniroute_data`) rather than mounting it at the
 new path, where the app's uid cannot write it.
 
+## A chat turn fails closed: what each `/v1/chat` 5xx means
+
+**Symptom.** `/v1/chat` returns a 5xx with no `message` body and you need to know
+whether the turn reached a model, and what the ledger should hold for it.
+
+**Cause.** Every dependency boundary answers fail-closed and on its own. Nothing
+falls back to another alias, and a turn that did not deliver a vetted answer
+writes no `RESPONSE_SENT` row:
+
+| Injected fault | Caller sees | Ledger |
+| --- | --- | --- |
+| OmniRoute connect timeout, stalled body, or connection reset | `502` | `INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION` only |
+| OmniRoute `500`/`429`/`408`/`503`/`504` after `OMNIROUTE_MAX_RETRIES` retries | `502` | same rows; the attempts stay on one alias |
+| the local route failing on a PII-bearing turn | `503` | plus `SECURITY_INCIDENT` with `reason: pii_route_local_unavailable`, `stage: model` |
+| Redis token-budget store down at reservation | `503` `rate limiter unavailable` | no model call, no incident row |
+| egress sanitizer store down at inspection | `503` `egress sanitizer unavailable` | the model answered; the text is discarded, no `RESPONSE_SENT` |
+| classifier raising at request time | `503` `routing classifier unavailable` | no model call, no `RESPONSE_SENT` |
+| audit database failing mid-turn | `500` | the turn stops at the stage that could not be recorded |
+
+**Fix.** Read the gateway log line named by the row (`OmniRoute timeout`,
+`Model completion failed`, `Routing classifier failed`, `Egress filter`). A
+`502` says the provider or the alias is unhealthy — check `/api/health` on
+OmniRoute. A `503` names the store that is down; restore it and retry, because
+nothing was answered. A `500` is the audit database: the turn is refused rather
+than delivered unaudited, and next steps are in "The database-backed suite errors
+at fixture setup".
+
+`tests/test_failure_modes.py` injects each row deterministically over a stubbed
+provider, so the mapping can be re-checked without the stack:
+
+```bash
+uv run pytest tests/test_failure_modes.py -q
+```
+
 ## Host processes get `Connection reset by peer` from Postgres, Redis or MinIO
 
 **Symptom.** After a `docker compose restart`, a `docker compose up -d` or a
