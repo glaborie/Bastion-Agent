@@ -207,6 +207,10 @@ class Settings(BaseSettings):
     #: Frustration detection (ADR-022). A UX signal written to the ledger and
     #: the operator handoff queue; it never changes the answer or the route.
     sentiment_detection_enabled: bool = True
+    #: The most ledger rows one **Show transcript** click may decrypt. Each
+    #: decrypted row appends its own ``ESCROW_ACCESSED`` record, so this bounds
+    #: both the fragment and the ledger noise; the newest rows are the ones kept.
+    handoff_transcript_max_records: int = 50
 
     # -- Two-stage classifier ---------------------------------------------
     #: Legacy single-graph contract: one ONNX file returning two logits ordered
@@ -482,6 +486,7 @@ class Settings(BaseSettings):
         "audit_witness_retention_years",
         "document_max_bytes",
         "document_parse_timeout_seconds",
+        "handoff_transcript_max_records",
     )
     @classmethod
     def _validate_positive(cls, value: int) -> int:

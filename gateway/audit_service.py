@@ -232,29 +232,32 @@ async def handoff_transcript_records(
     *,
     tenant_id: str,
     conversation_id: str,
-) -> tuple[AuditLog | None, AuditLog | None]:
-    """Newest escrowed request and delivered answer for one conversation."""
+    limit: int,
+) -> list[AuditLog]:
+    """Every ``INPUT_RECEIVED``/``RESPONSE_SENT`` row for a conversation, oldest first.
+
+    The newest ``limit`` rows are read and then flipped, so the cap bounds the
+    escrow decrypts (and ``ESCROW_ACCESSED`` rows) one click can cause while the
+    most recent turn always stays in view. The escrow join is deliberately not
+    applied: an expired entry must be visible to the transcript as a gap rather
+    than silently disappear.
+    """
     statement = (
         select(AuditLog)
-        .join(PayloadEscrow, PayloadEscrow.audit_log_id == AuditLog.id)
         .where(
             AuditLog.tenant_id == tenant_id,
             AuditLog.session_id == conversation_id,
             AuditLog.event_type.in_((AuditEventType.INPUT_RECEIVED, AuditEventType.RESPONSE_SENT)),
-            PayloadEscrow.expires_at > utcnow(),
         )
         .order_by(AuditLog.id.desc())
+        .limit(max(1, limit))
     )
-    request_row: AuditLog | None = None
-    answer_row: AuditLog | None = None
-    for row in (await session.execute(statement)).scalars():
-        if row.event_type is AuditEventType.INPUT_RECEIVED and request_row is None:
-            request_row = row
-        elif row.event_type is AuditEventType.RESPONSE_SENT and answer_row is None:
-            answer_row = row
-        if request_row is not None and answer_row is not None:
-            break
-    return request_row, answer_row
+    newest_first = list((await session.execute(statement)).scalars())
+    # Start the window on a request: an answer whose question fell outside the
+    # cap would otherwise render before the history the next request replays.
+    while newest_first and newest_first[-1].event_type is AuditEventType.RESPONSE_SENT:
+        newest_first.pop()
+    return list(reversed(newest_first))
 
 
 async def handoff_record(

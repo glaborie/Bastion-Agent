@@ -268,18 +268,24 @@ async def handoff_transcript(
     shows nothing, rather than failing on click.
     """
     conversation_id = _conversation_id(conversation_id)
-    request_row, answer_row = await handoff_transcript_records(
-        session, tenant_id=context.tenant_id, conversation_id=conversation_id
+    settings = get_settings()
+    rows = await handoff_transcript_records(
+        session,
+        tenant_id=context.tenant_id,
+        conversation_id=conversation_id,
+        limit=settings.handoff_transcript_max_records,
     )
     turns: list[tuple[str, str]] = []
-    for row in (request_row, answer_row):
-        if row is None:
-            continue
+    emitted = 0
+    for row in rows:
         try:
             escrow = await read_payload_escrow(
                 session, audit_log_id=int(row.id), tenant_id=context.tenant_id
             )
         except (EscrowNotFoundError, EscrowExpiredError):
+            # A gap is shown where the turn was, not hidden: the operator needs
+            # to know the transcript is incomplete rather than short.
+            turns.append(("unavailable", f"audit row {int(row.id)}: escrow expired or missing"))
             continue
         except EscrowDecryptionError as exc:
             logger.error(
@@ -303,13 +309,19 @@ async def handoff_transcript(
             metadata_json=evidence,
         )
         if row.event_type is AuditEventType.INPUT_RECEIVED:
-            for message in escrow.payload if isinstance(escrow.payload, list) else []:
+            messages = escrow.payload if isinstance(escrow.payload, list) else []
+            # Each request resends the conversation so far, so emit only the
+            # messages past the last request and let RESPONSE_SENT carry the
+            # assistant side: replaying the whole array would repeat every turn.
+            for message in messages[emitted:]:
                 if (
                     isinstance(message, dict)
                     and isinstance(message.get("role"), str)
+                    and message["role"] != "assistant"
                     and isinstance(message.get("content"), str)
                 ):
                     turns.append((message["role"], message["content"]))
+            emitted = max(emitted, len(messages))
         elif isinstance(escrow.payload, str):
             turns.append(("assistant", escrow.payload))
     await session.commit()
