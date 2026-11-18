@@ -182,6 +182,22 @@ async def test_dashboard_renders_the_approval_queue(api: tuple[httpx.AsyncClient
     assert 'hx-trigger="every 3s' not in response.text
 
 
+async def test_the_operator_bar_names_the_tenant_scope(
+    api: tuple[httpx.AsyncClient, Any],
+) -> None:
+    """A shared browser must say which tenant every page is filtered by (IDEA-075)."""
+    client, state = api
+
+    for principal, tenant in ((ADMIN, "acme"), (GLOBEX_ADMIN, "globex")):
+        other = "globex" if tenant == "acme" else "acme"
+        state["context"] = session_context(principal)
+        for path in ("/dashboard", "/dashboard/audit"):
+            response = await client.get(path)
+            assert response.status_code == 200, f"{path} for {tenant}"
+            assert f"{tenant} · admin" in response.text, f"{path} for {tenant}"
+            assert f"{other} · admin" not in response.text, f"{path} for {tenant}"
+
+
 async def test_json_approvals_respect_four_eyes(
     api: tuple[httpx.AsyncClient, Any], db_engine: AsyncEngine
 ) -> None:

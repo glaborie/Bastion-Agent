@@ -1,6 +1,6 @@
 ### IDEA-075: Show the caller's tenant in the dashboard header
 
-- status: ready
+- status: done
 - priority: P3
 - phase: v0.4
 - area: gateway
@@ -33,8 +33,8 @@ or the session inspector.
 
 **Acceptance**
 
-- [ ] `tests/test_dashboard.py` asserts the operator bar on `/dashboard` and `/dashboard/audit` names the session's tenant (`acme`), and that a session for a second tenant shows that tenant and not `acme`
-- [ ] `scripts/gate.sh` is green
+- [x] `tests/test_dashboard.py` asserts the operator bar on `/dashboard` and `/dashboard/audit` names the session's tenant (`acme`), and that a session for a second tenant shows that tenant and not `acme`
+- [x] `scripts/gate.sh` is green
 
 **Notes**
 
