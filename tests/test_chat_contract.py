@@ -12,9 +12,9 @@ from gateway.routers.chat import (
     MAX_MESSAGE_CHARS,
     MAX_MESSAGES,
     ChatRequest,
-    _completion_attributes,
     _vault_session,
 )
+from gateway.routers.chat_tracing import completion_attributes
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,7 +26,7 @@ def test_completion_attributes_split_provider_and_drop_unset_values() -> None:
     bare id, so the provider prefix belongs in ``gen_ai.system`` instead. A
     ``None`` token count must be omitted rather than exported as null.
     """
-    cloud = _completion_attributes(
+    cloud = completion_attributes(
         ChatCompletion(
             content="hi",
             model="openai/gpt-4o-mini",
@@ -46,7 +46,7 @@ def test_completion_attributes_split_provider_and_drop_unset_values() -> None:
     assert cloud["gen_ai.usage.cost"] == pytest.approx(0.0000851)
     assert cloud["bastion.model.swapped"] is False
 
-    local = _completion_attributes(
+    local = completion_attributes(
         ChatCompletion(content="hi", model="qwen2.5-7b-q4_k_m"),
         requested="qwen2.5-7b-q4_k_m",
     )
@@ -59,7 +59,7 @@ def test_completion_attributes_split_provider_and_drop_unset_values() -> None:
 
 def test_failover_to_another_model_is_marked_not_hidden() -> None:
     """cloud-primary falls back to a second model; the trace must say so."""
-    attributes = _completion_attributes(
+    attributes = completion_attributes(
         ChatCompletion(content="hi", model="openai/gpt-4o-mini"),
         requested="openai/claude-haiku-4.5",
     )

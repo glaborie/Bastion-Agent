@@ -33,13 +33,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
-from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,6 +75,7 @@ from gateway.rate_limit import (
     refusal_headers,
     settled_tokens,
 )
+from gateway.routers.chat_tracing import completion_attributes, split_model
 from settings import Settings, get_settings
 from telemetry import annotate_span, span_attributes
 
@@ -211,49 +211,6 @@ def _vault_session(tenant_id: str, actor_id: str, conversation_id: str) -> str:
     return f"chat:{digest}"
 
 
-def _split_model(model: str) -> tuple[str, str]:
-    """Split ``provider/model`` into its parts; a bare id is assumed local.
-
-    OmniRoute answers ``openai/gpt-4o-mini`` and is configured with
-    ``openrouter/openai/gpt-4o-mini``, so the pinned setting drops the router
-    prefix and this split then yields the provider and the bare model id that
-    backends key their price tables on.
-    """
-    provider, _, bare = model.partition("/")
-    if not bare:
-        return "local", provider
-    return provider, bare
-
-
-def _completion_attributes(
-    completion: ChatCompletion, *, requested: str
-) -> dict[str, AttributeValue]:
-    """GenAI semantic conventions OpenLit reads for model, tokens and cost.
-
-    ``requested`` is the concrete model the alias is configured to use, not the
-    alias itself: an alias is a routing label, and reporting it as a model makes
-    every trace look like an unintended provider swap. When the router fails
-    over to another model the mismatch is recorded as ``bastion.model.swapped``
-    instead of being hidden.
-    """
-    provider, served = _split_model(completion.model)
-    _, pinned = _split_model(requested)
-    return _attributes(
-        {
-            "gen_ai.system": provider,
-            "gen_ai.response.model": served,
-            "bastion.model.swapped": served != pinned if pinned else None,
-            "gen_ai.response.finish_reasons": (
-                [completion.finish_reason] if completion.finish_reason else None
-            ),
-            "gen_ai.usage.input_tokens": completion.prompt_tokens,
-            "gen_ai.usage.output_tokens": completion.completion_tokens,
-            "gen_ai.usage.total_tokens": completion.total_tokens,
-            "gen_ai.usage.cost": completion.cost_usd,
-        }
-    )
-
-
 async def _record(
     session: AsyncSession,
     *,
@@ -326,6 +283,15 @@ class _Turn:
     conversation_id: str
     vault_session: str
     session: AsyncSession
+    #: Keys the canary and the quarantine. Equal to ``vault_session`` for the
+    #: native endpoint; the compat facade pins it to the actor so an ephemeral
+    #: conversation cannot escape a trip (ADR-026).
+    egress_session: str = ""
+
+    @property
+    def egress_key(self) -> str:
+        """The key the canary and the quarantine use."""
+        return self.egress_session or self.vault_session
 
 
 def _cache_prompt(redacted: list[ChatMessage]) -> str | None:
@@ -411,7 +377,12 @@ async def _dlp_stage(
 
 
 async def _routing_stage(
-    state: _Turn, model_router: ModelRouter, request: ChatRequest, entity_count: int
+    state: _Turn,
+    model_router: ModelRouter,
+    request: ChatRequest,
+    entity_count: int,
+    *,
+    force_local: bool = False,
 ) -> RouteDecision:
     """Stage 2: classify the raw text, route, record ``ROUTING_DECISION``."""
     # Never prefix role tags here: "[user] …" reads as a role-injection marker
@@ -422,6 +393,17 @@ async def _routing_stage(
     # classifier reads it as PUBLIC. That is the control that keeps a record
     # whose name or address Presidio missed off a third-party provider.
     decision = await model_router.aroute(raw_scan, pii_detected=entity_count > 0)
+    if force_local and not decision.local:
+        # A caller asking for `bastion-local` may only narrow where the prompt
+        # goes, never widen it: the turn moves to the local model and the
+        # routing row records why (ADR-026).
+        decision = replace(
+            decision,
+            alias=get_settings().model_local_alias,
+            local=True,
+            override="client_alias_local",
+            primary_model=None,
+        )
     classification = decision.classification
     complexity = decision.complexity
     await _record(
@@ -494,8 +476,8 @@ async def _handoff_stage(state: _Turn, request: ChatRequest) -> None:
 async def _preflight(state: _Turn, sanitizer: EgressSanitizer) -> str:
     """Stage 3: clear the circuit breaker and mint the session canary."""
     try:
-        await sanitizer.ensure_available(state.tenant_id, state.vault_session)
-        return await sanitizer.canary_for(state.tenant_id, state.vault_session)
+        await sanitizer.ensure_available(state.tenant_id, state.egress_key)
+        return await sanitizer.canary_for(state.tenant_id, state.egress_key)
     except EgressCircuitOpenError as exc:
         await _record(
             state.session,
@@ -614,7 +596,7 @@ async def _complete(
     settings = get_settings()
     # The worst case of this turn: the text actually sent plus the output cap.
     requested_tokens = estimate_prompt_tokens(upstream) + request.max_tokens
-    requested_provider, requested_model = _split_model(decision.primary_model or decision.alias)
+    requested_provider, requested_model = split_model(decision.primary_model or decision.alias)
     with _tracer.start_as_current_span(
         f"chat {decision.alias}", kind=SpanKind.CLIENT
     ) as model_span:
@@ -705,7 +687,7 @@ async def _complete(
                 ) from exc
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream model unavailable") from exc
         model_span.set_attributes(
-            _completion_attributes(completion, requested=decision.primary_model or decision.alias)
+            completion_attributes(completion, requested=decision.primary_model or decision.alias)
         )
         if reserved:
             # Settlement never fails the turn: the answer is already paid for
@@ -752,7 +734,10 @@ async def _egress_stage(
     """Stage 4: scan the answer, record ``EGRESS_FILTERED``, refuse a leak."""
     try:
         egress = await sanitizer.inspect(
-            completion.content, state.vault_session, tenant_id=state.tenant_id
+            completion.content,
+            state.vault_session,
+            tenant_id=state.tenant_id,
+            egress_session=state.egress_key,
         )
     except EgressUnavailableError as exc:
         raise HTTPException(
@@ -861,41 +846,42 @@ async def _delivery_stage(
     )
 
 
-@router.post(
-    "/v1/chat",
-    response_model=ChatResponse,
-    summary="Guarded chat completion",
-    responses={
-        403: {"description": "Session quarantined by the egress circuit breaker"},
-        413: {"description": "Request exceeds the chat size limits"},
-        502: {"description": "Upstream failure or egress filter block"},
-        503: {"description": "DLP, canary registry or quarantine store unavailable"},
-    },
-)
-async def chat(
+async def run_turn(
     request: ChatRequest,
-    context: AuthContext = Depends(require_roles(CHAT_ROLES)),
-    _csrf: AuthContext = Depends(require_csrf),
-    session: AsyncSession = Depends(get_db_session),
-    model_router: ModelRouter = Depends(get_chat_router),
-    dlp: PresidioDLP = Depends(get_chat_dlp),
-    sanitizer: EgressSanitizer = Depends(get_chat_sanitizer),
-    cache: SemanticCache | None = Depends(get_chat_cache),
-    limiter: RateLimiter = Depends(get_rate_limiter),
+    *,
+    context: AuthContext,
+    session: AsyncSession,
+    model_router: ModelRouter,
+    dlp: PresidioDLP,
+    sanitizer: EgressSanitizer,
+    cache: SemanticCache | None,
+    limiter: RateLimiter,
+    conversation_id: str | None = None,
+    egress_session: str | None = None,
+    force_local: bool = False,
 ) -> ChatResponse:
-    """Run one guarded turn from ingress to sanitized egress."""
-    conversation_id = request.conversation_id or uuid.uuid4().hex
+    """The one guarded pipeline: the native endpoint and the compat facade share it.
+
+    Extracting this is what keeps DLP, routing, the injection gate, egress and
+    audit at exactly one implementation (ADR-026): a second adapter multiplies
+    the call sites, never the stage order.
+    """
+    conversation = conversation_id or request.conversation_id or uuid.uuid4().hex
+    vault_session = _vault_session(context.tenant_id, context.actor_id, conversation)
     state = _Turn(
         actor_id=context.actor_id,
         tenant_id=context.tenant_id,
-        conversation_id=conversation_id,
-        vault_session=_vault_session(context.tenant_id, context.actor_id, conversation_id),
+        conversation_id=conversation,
+        vault_session=vault_session,
+        egress_session=egress_session or vault_session,
         session=session,
     )
 
     await _ingress(state, request)
     redacted, entity_count = await _dlp_stage(state, dlp, request)
-    decision = await _routing_stage(state, model_router, request, entity_count)
+    decision = await _routing_stage(
+        state, model_router, request, entity_count, force_local=force_local
+    )
     await _handoff_stage(state, request)
     canary = await _preflight(state, sanitizer)
     if (blocked := await _injection_gate(state, decision)) is not None:
@@ -940,4 +926,40 @@ async def chat(
         completion,
         decision,
         cache_hit=cached is not None,
+    )
+
+
+@router.post(
+    "/v1/chat",
+    response_model=ChatResponse,
+    summary="Guarded chat completion",
+    responses={
+        403: {"description": "Session quarantined by the egress circuit breaker"},
+        413: {"description": "Request exceeds the chat size limits"},
+        422: {"description": "Unknown model alias or unsupported field"},
+        502: {"description": "Upstream failure or egress filter block"},
+        503: {"description": "DLP, canary registry or quarantine store unavailable"},
+    },
+)
+async def chat(
+    request: ChatRequest,
+    context: AuthContext = Depends(require_roles(CHAT_ROLES)),
+    _csrf: AuthContext = Depends(require_csrf),
+    session: AsyncSession = Depends(get_db_session),
+    model_router: ModelRouter = Depends(get_chat_router),
+    dlp: PresidioDLP = Depends(get_chat_dlp),
+    sanitizer: EgressSanitizer = Depends(get_chat_sanitizer),
+    cache: SemanticCache | None = Depends(get_chat_cache),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+) -> ChatResponse:
+    """Run one guarded turn from ingress to sanitized egress."""
+    return await run_turn(
+        request,
+        context=context,
+        session=session,
+        model_router=model_router,
+        dlp=dlp,
+        sanitizer=sanitizer,
+        cache=cache,
+        limiter=limiter,
     )

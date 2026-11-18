@@ -159,3 +159,41 @@ async def test_clear_removes_only_this_sessions_keys(
         assert await client.exists(_key("canary", other_session)) == 1
     finally:
         await sanitizer.clear("acme", other_session)
+
+
+async def test_an_actor_keyed_trip_quarantines_the_next_ephemeral_session(
+    redis_env: tuple[EgressSanitizer, TokenVault, Redis, str],
+) -> None:
+    """ADR-026: the compat facade trips the actor, not a throwaway conversation.
+
+    Two requests without ``X-Bastion-Conversation-Id`` use different vault
+    sessions, so a trip keyed on the vault session would let the caller start
+    fresh on the very next call. The canary and the trip are keyed on the actor
+    and this passes ``egress_session`` to say so.
+    """
+    sanitizer, _vault, client, first_session = redis_env
+    actor_key = f"ephemeral:acme:{uuid.uuid4()}"
+    second_session = f"{first_session}:next"
+
+    try:
+        canary = await sanitizer.canary_for("acme", actor_key)
+        await sanitizer.trip("acme", actor_key, "canary_leak")
+
+        # A different vault session is still refused, because the quarantine is
+        # keyed on the actor.
+        blocked = await sanitizer.inspect(
+            f"the marker {canary} leaked",
+            second_session,
+            tenant_id="acme",
+            egress_session=actor_key,
+        )
+        assert blocked.blocked is True
+        assert blocked.reason == "circuit_open"
+
+        # A different actor is not affected.
+        free = await sanitizer.inspect("clean text", second_session, tenant_id="acme")
+        assert free.blocked is False
+        assert await client.exists(_key("trip", actor_key)) == 1
+    finally:
+        await sanitizer.clear("acme", actor_key)
+        await sanitizer.clear("acme", second_session)
