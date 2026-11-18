@@ -29,6 +29,7 @@ a file in this directory; this page is the index and the process guide.
 | 022 | Frustration Detection and the Operator Handoff Queue | Accepted |
 | 023 | Local PDF Ingestion with DLP Redaction Before the Model | Accepted |
 | 024 | A Scoped Completion Cache in Front of the Model Call | Accepted |
+| 025 | An Opt-In Availability Monitor Behind the `infra` Profile | Accepted |
 
 ---
 

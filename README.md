@@ -863,6 +863,7 @@ check runs at startup.
 | `scripts/demo_tool_request.py` | Originate a guarded tool call for the demo (see `DEMO.md`) |
 | `scripts/seed_demo_approval.py` | Seed a suspended ticket without a worker |
 | `scripts/omniroute_bootstrap.py` | Register OmniRoute provider aliases and the gateway key |
+| `scripts/seed_uptime_kuma.py` | Create the admin account and apply `config/uptime-kuma/monitors.json` to the opt-in `infra` profile monitor |
 | `scripts/check_adrs.py` | Validate the ADR set and index |
 | `scripts/check_threat_model.py` | Fail when the `THREAT_MODEL.md` control table drifts from the tree |
 
@@ -1053,6 +1054,57 @@ Full rule set, alert contract and limits: `config/falco/README.md`.
 On Docker Desktop the shell, write and egress rules work, but `/proc` metadata
 can be unavailable, so the data-container entrypoint and healthcheck exceptions
 are effective on a native Linux host only. Falco detects; it does not contain.
+
+## Availability monitoring (opt-in)
+
+The healthchecks in `docker-compose.yml` gate startup and colour `docker compose
+ps`; they record nothing. `uptime-kuma` closes that gap: an opt-in sidecar with
+a history of reachability from a client's point of view. It is not a proxy and
+carries no request traffic (ADR-001 decision 1, ADR-025).
+
+```bash
+# 1. The admin credential has no default: set one before starting the profile.
+echo "UPTIME_KUMA_ADMIN_PASSWORD=$(openssl rand -base64 24)" >> .env
+
+# 2. Start the profile and seed the committed monitor set.
+docker compose --profile infra up -d uptime-kuma
+uv run python scripts/seed_uptime_kuma.py
+# Dashboard:   http://127.0.0.1:3002  (loopback only)
+# Status page: http://127.0.0.1:3002/status/bastion
+
+# 3. Or point the seed at another port/host:
+uv run python scripts/seed_uptime_kuma.py --url http://127.0.0.1:3921
+```
+
+The seed creates the admin account on a fresh instance and then converges: a
+second run prints `kept` for every monitor already there and adds nothing, so it
+is safe after `docker compose down -v`. The same run also creates one public
+status page — `slug: bastion`, title and description from the same file — that
+publishes every monitor at http://127.0.0.1:3002/status/bastion, with the eight
+probes grouped under the stack's name. Like the monitors, the page is created
+once: theming or regrouping it in `/manage-status-page` survives a reseed. The set itself is
+`config/uptime-kuma/monitors.json` — one monitor per probe: `gateway` `/health`
+and `/health/ready`, `db:5432` and `redis:6379` as TCP, Keycloak's management
+`/health` on `:9000`, `omniroute` `/api/health`, `llama-cpp:8080` with a
+five-minute grace so a model load is not recorded as an outage, and
+`otel-collector:13133/` — the collector's own `health_check` extension, so its
+distroless image still answers a probe. The worker is recorded in the same file
+as deliberately unmonitored: it has no listener (its liveness is the Redis queue
+the `redis` monitor already reports).
+
+**What is not monitored.** The host, the Docker daemon and this monitor's own
+process: a monitor that shares a host with its targets cannot report that host
+going away, and an external prober is a follow-up. Engine-level state — exited,
+restarting, unhealthy, restart counts — is the daemon's view, not a client's;
+`docker compose ps` is that view and the daemon socket is not mounted here
+(ADR-025), so the dashboard's Docker-host dialog answers
+`connect ENOENT /var/run/docker.sock` and that error is expected. Model quality
+is not availability — OTel traces (ADR-014) and the eval gates remain the
+detailed runtime telemetry and the quality signal.
+
+Notifications are optional and configured in the dashboard; the seed and the
+monitor never need a delivery credential. ADR-025 records the profile
+convention and the socket-free rule.
 
 ## Routing bootstrap (OmniRoute)
 

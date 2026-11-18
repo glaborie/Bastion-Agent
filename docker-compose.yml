@@ -570,6 +570,67 @@ services:
       - bastion-net
 
   # ---------------------------------------------------------------------------
+  # Uptime Kuma: availability monitor (opt-in, `infra` profile).
+  #
+  # The healthchecks in this file gate `depends_on` at startup and colour
+  # `docker compose ps`; nothing records a transition after that. This sidecar
+  # probes the same endpoints a client uses over `bastion-net` — HTTP and TCP,
+  # never engine health — so a container that dies at 03:00 leaves a DOWN
+  # interval instead of waiting for someone to type `ps`. It is not a proxy and
+  # carries no request traffic (ADR-001 decision 1, ADR-025).
+  #
+  # No Docker socket: that mount is host-root-equivalent and ADR-017 already
+  # spends the one exception on Falco. The monitor set lives in
+  # config/uptime-kuma/monitors.json and is applied by
+  # `uv run python scripts/seed_uptime_kuma.py`.
+  # ---------------------------------------------------------------------------
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.5.12@sha256:8e4b6bef96417ec98a35dc103c99cc64fc229a01e584e56d95d9004d2003c02a
+    container_name: bastion-uptime-kuma
+    profiles: [infra]
+    # The image's /app/data is owned by uid 1000. Running as `node` keeps the
+    # service usable under `cap_drop: ALL`: as root, Node's database copy fails
+    # with EPERM once every capability is gone, and granting the chown caps back
+    # would be a wider carve-out than this sidecar needs.
+    user: "${UPTIME_KUMA_UID:-1000}:${UPTIME_KUMA_GID:-1000}"
+    environment:
+      # Without this the container serves its interactive database chooser and
+      # never reaches the socket server; SQLite is the whole store here.
+      UPTIME_KUMA_DB_TYPE: sqlite
+      # The admin credential is deliberately NOT here: the container has no use
+      # for it, and `scripts/seed_uptime_kuma.py` reads it from `.env` on the
+      # host, refusing to run when it is unset. A `${...:?}` here would make
+      # `docker compose config` fail for every clone whose `.env` came from
+      # `.env.example` — the profile is opt-in, the default stack must render.
+    volumes:
+      # Monitor set and heartbeat history; survives `restart` and `recreate`.
+      - uptimekuma_data:/app/data
+    ports:
+      - "127.0.0.1:${UPTIME_KUMA_PORT:-3002}:3001"
+    healthcheck:
+      # The image ships Node (no curl). `/` answers 302 while unauthenticated,
+      # so anything below 500 means the HTTP server is up.
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          fetch("http://127.0.0.1:3001/")
+            .then((r) => process.exit(r.status < 500 ? 0 : 1))
+            .catch(() => process.exit(1));
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - bastion-net
+
+  # ---------------------------------------------------------------------------
   # Audit witness store (opt-in, `compliance` profile).
   #
   # The chain lives in the same database it protects, so an attacker holding the
@@ -735,6 +796,7 @@ volumes:
   omniroute_data:
   trivy_cache:
   miniodata:
+  uptimekuma_data:
 
 networks:
   bastion-net:

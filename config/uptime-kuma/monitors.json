@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "status_page": {
+    "title": "Bastion-Agent",
+    "slug": "bastion",
+    "description": "Availability of the Bastion-Agent stack, probed over bastion-net by the monitor sidecar."
+  },
+  "monitors": [
+    {
+      "name": "gateway /health",
+      "type": "http",
+      "url": "http://gateway:8000/health",
+      "interval": 60,
+      "maxretries": 2,
+      "retryInterval": 60
+    },
+    {
+      "name": "gateway /health/ready",
+      "type": "http",
+      "url": "http://gateway:8000/health/ready",
+      "interval": 60,
+      "maxretries": 2,
+      "retryInterval": 60
+    },
+    {
+      "name": "db :5432",
+      "type": "port",
+      "hostname": "db",
+      "port": 5432,
+      "interval": 30,
+      "maxretries": 1,
+      "retryInterval": 30
+    },
+    {
+      "name": "redis :6379",
+      "type": "port",
+      "hostname": "redis",
+      "port": 6379,
+      "interval": 30,
+      "maxretries": 1,
+      "retryInterval": 30
+    },
+    {
+      "name": "keycloak :9000/health",
+      "type": "http",
+      "url": "http://keycloak:9000/health",
+      "interval": 60,
+      "maxretries": 2,
+      "retryInterval": 60
+    },
+    {
+      "name": "omniroute /api/health",
+      "type": "http",
+      "url": "http://omniroute:20128/api/health",
+      "interval": 60,
+      "maxretries": 2,
+      "retryInterval": 60
+    },
+    {
+      "name": "llama-cpp :8080",
+      "type": "port",
+      "hostname": "llama-cpp",
+      "port": 8080,
+      "interval": 60,
+      "maxretries": 10,
+      "retryInterval": 60
+    },
+    {
+      "name": "otel-collector :13133/",
+      "type": "http",
+      "url": "http://otel-collector:13133/",
+      "interval": 60,
+      "maxretries": 2,
+      "retryInterval": 60
+    }
+  ],
+  "unmonitored": [
+    {
+      "service": "worker",
+      "reason": "The ARQ worker has no listener to probe and no HTTP surface; its liveness is the Redis queue it consumes, which the `redis :6379` monitor already reports. Engine-level state (exited, restarting, unhealthy) is the Docker daemon's view and would need the socket this monitor deliberately does not mount. Deliberately unmonitored instead of accidentally uncovered."
+    }
+  ]
+}

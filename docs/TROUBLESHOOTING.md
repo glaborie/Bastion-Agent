@@ -255,6 +255,48 @@ The east-west TLS tests (`tests/test_db_tls.py`) skip their live half unless the
 `.github/workflows/ci.yml`; a new skip reason must be added there or the `tests`
 job fails on the unexpected-skip gate.
 
+## The `infra` monitor refuses to start, or the seed adds nothing
+
+Compiling the profile fails with `UPTIME_KUMA_ADMIN_PASSWORD` unset, or the seed
+exits `seed: login failed`. The password is intentionally absent from
+`.env.example`: `scripts/seed_uptime_kuma.py` creates the account from `.env` on
+a fresh instance, and a committed default would be a published password.
+
+**Fix.** Set `UPTIME_KUMA_ADMIN_PASSWORD` in `.env` and start the profile again.
+If the instance already exists and the password was rotated in `.env` but not in
+the dashboard, log in with the old one or delete the volume
+(`docker compose --profile infra rm -sf uptime-kuma && docker volume rm
+bastion-agent_uptimekuma_data`) and reseed.
+
+Two more shapes of the same symptom:
+
+- **Every monitor is DOWN and the UI never loads.** The container is likely
+  serving its interactive database chooser because `UPTIME_KUMA_DB_TYPE=sqlite`
+  was dropped; `docker logs bastion-uptime-kuma` shows `Waiting for user action`.
+- **`docker compose up` fails with `Bind for 127.0.0.1:3002 failed`.** Another
+  process owns the port; set `UPTIME_KUMA_PORT` and pass the same value to the
+  seed with `--url http://127.0.0.1:<port>`.
+
+`seed: 0 added, 7 already present` is success: the seed converges and never
+duplicates. Editing a monitor in the dashboard is not overwritten by a reseed,
+so a retuned monitor keeps its history.
+
+## The monitor logs `connect ENOENT /var/run/docker.sock`
+
+Expected. Uptime Kuma's Docker-host dialog defaults to that socket, and the
+`uptime-kuma` service deliberately does not mount it (ADR-025 decision 2;
+ADR-017 keeps the repository's single socket exception on Falco). The message
+appears when someone opens the Docker host page or presses its "Test" button,
+never at startup and never from the seeded monitors.
+
+**What to do.** Nothing: the seeded probes are the availability signal, and
+`otel-collector:13133/` covers the collector, so only the worker has no probe
+(recorded in `config/uptime-kuma/monitors.json`). Use `docker compose ps` for
+the engine's own view — exited, restarting, unhealthy, restart counts. Taking
+that view inside the monitor means handing it the daemon socket, which is
+host-root-equivalent (`:ro` does not restrict the Docker API) and is why it is
+not done.
+
 ## Local gates are slow
 
 ```bash
