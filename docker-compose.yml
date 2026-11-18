@@ -606,7 +606,7 @@ services:
       # Monitor set and heartbeat history; survives `restart` and `recreate`.
       - uptimekuma_data:/app/data
     ports:
-      - "127.0.0.1:${UPTIME_KUMA_PORT:-3001}:3001"
+      - "127.0.0.1:${UPTIME_KUMA_PORT:-3002}:3001"
     healthcheck:
       # The image ships Node (no curl). `/` answers 302 while unauthenticated,
       # so anything below 500 means the HTTP server is up.

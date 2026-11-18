@@ -273,7 +273,7 @@ Two more shapes of the same symptom:
 - **Every monitor is DOWN and the UI never loads.** The container is likely
   serving its interactive database chooser because `UPTIME_KUMA_DB_TYPE=sqlite`
   was dropped; `docker logs bastion-uptime-kuma` shows `Waiting for user action`.
-- **`docker compose up` fails with `Bind for 127.0.0.1:3001 failed`.** Another
+- **`docker compose up` fails with `Bind for 127.0.0.1:3002 failed`.** Another
   process owns the port; set `UPTIME_KUMA_PORT` and pass the same value to the
   seed with `--url http://127.0.0.1:<port>`.
 

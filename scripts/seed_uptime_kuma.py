@@ -36,7 +36,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config" / "uptime-kuma" / "monitors.json"
-DEFAULT_URL = "http://127.0.0.1:3001"
+DEFAULT_URL = "http://127.0.0.1:3002"
 ENV_FILE = ROOT / ".env"
 PACKET_SEPARATOR = "\x1e"
 

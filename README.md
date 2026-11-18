@@ -1069,7 +1069,7 @@ echo "UPTIME_KUMA_ADMIN_PASSWORD=$(openssl rand -base64 24)" >> .env
 # 2. Start the profile and seed the committed monitor set.
 docker compose --profile infra up -d uptime-kuma
 uv run python scripts/seed_uptime_kuma.py
-# Dashboard: http://127.0.0.1:3001  (loopback only)
+# Dashboard: http://127.0.0.1:3002  (loopback only)
 
 # 3. Or point the seed at another port/host:
 uv run python scripts/seed_uptime_kuma.py --url http://127.0.0.1:3921
