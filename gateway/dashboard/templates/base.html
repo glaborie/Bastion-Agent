@@ -46,7 +46,7 @@
         <div class="operator-bar">
           <span>
             <strong>{{ principal.display_name }}</strong>
-            <small>{{ principal.roles | sort | join(", ") }}</small>
+            <small>{{ principal.tenant_id }} · {{ principal.roles | sort | join(", ") }}</small>
           </span>
           <div class="operator-actions">
             <form method="post" action="/dashboard/theme" class="theme-form" data-theme-form>
