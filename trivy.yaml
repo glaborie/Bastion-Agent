@@ -79,3 +79,69 @@ ignore:
     images: [smallstep-step-ca-0.28.4]
     statement: "jackc/pgx v5.7.2 in the step-ca binary; fixed in 5.9.0, reached by the next step-ca release."
     expires: 2026-12-16
+
+  # ---------------------------------------------------------------------------
+  # louislam/uptime-kuma 2.5.12 (IDEA-039). The availability monitor sits behind
+  # the `infra` profile, publishes only a loopback UI, has no request path and
+  # initiates every connection it makes, so a compromised package here reaches
+  # monitoring state, not customer traffic. 2.5.12 is the latest published tag
+  # (verified 2026-11-18); the Node and Go findings below are fixed only in a
+  # newer upstream build we cannot produce, and the Debian packages have no
+  # patched version in the image's suite. Accepted for 90 days, then reviewed
+  # against the next upstream release.
+  - id: CVE-2026-40468
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "gawk 1:5.2.1-2 in the uptime-kuma image's Debian suite has no patched version; the monitor is off the request path and loopback-only."
+    expires: 2027-02-16
+  - id: CVE-2026-40469
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "gawk 1:5.2.1-2 in the uptime-kuma image's Debian suite has no patched version; the monitor is off the request path and loopback-only."
+    expires: 2027-02-16
+  - id: CVE-2026-58016
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "libglib2.0-0 in the uptime-kuma image's Debian suite has no patched version; only the loopback UI loads it and the process is non-root."
+    expires: 2027-02-16
+  - id: CVE-2025-7458
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "libsqlite3-0 and sqlite3 in the uptime-kuma image's Debian suite have no patched version; the store is the monitor's own SQLite volume."
+    expires: 2027-02-16
+  - id: CVE-2026-6653
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "libxml2 in the uptime-kuma image's Debian suite has no patched version; the monitor parses only its own status-page input."
+    expires: 2027-02-16
+  - id: CVE-2026-102267
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "python3-jwt 2.6.0-1+deb12u1 in the uptime-kuma image has no patched version; that package is not on the monitor's request path."
+    expires: 2027-02-16
+  - id: CVE-2026-102268
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "python3-jwt 2.6.0-1+deb12u1 in the uptime-kuma image has no patched version; that package is not on the monitor's request path."
+    expires: 2027-02-16
+  - id: CVE-2023-45853
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "zlib1g in the uptime-kuma image's Debian suite has no patched version; MiniZip is not reachable from the monitor's probes."
+    expires: 2027-02-16
+  - id: CVE-2026-77414
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "jsonata 2.2.0 bundled in uptime-kuma 2.5.12 (latest tag); fixed in 2.2.1, which needs the next upstream release."
+    expires: 2027-02-16
+  - id: CVE-2026-77415
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "jsonata 2.2.0 bundled in uptime-kuma 2.5.12 (latest tag); fixed in 2.2.1, which needs the next upstream release."
+    expires: 2027-02-16
+  - id: CVE-2026-41242
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "protobufjs 7.2.6 bundled in uptime-kuma 2.5.12 (latest tag); fixed in 7.5.5, which needs the next upstream release."
+    expires: 2027-02-16
+  - id: CVE-2026-59873
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "node-tar 6.2.1 bundled in uptime-kuma 2.5.12 (latest tag); fixed in 7.5.19, which needs the next upstream release."
+    expires: 2027-02-16
+  - id: CVE-2024-24790
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "Go stdlib 1.20.5 in a bundled helper binary of uptime-kuma 2.5.12; fixed in 1.21.11, which needs the next upstream release."
+    expires: 2027-02-16
+  - id: CVE-2025-68121
+    images: [louislam-uptime-kuma-2.5.12]
+    statement: "Go stdlib 1.20.5 in a bundled helper binary of uptime-kuma 2.5.12; fixed in 1.22.4, which needs the next upstream release."
+    expires: 2027-02-16
