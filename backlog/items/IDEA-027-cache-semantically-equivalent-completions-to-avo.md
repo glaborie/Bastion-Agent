@@ -1,6 +1,6 @@
 ### IDEA-027: Cache semantically equivalent completions to avoid repeated model calls
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: agent
