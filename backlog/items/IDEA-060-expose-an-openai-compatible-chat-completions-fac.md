@@ -1,6 +1,6 @@
 ### IDEA-060: Expose an OpenAI-compatible chat completions facade
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: gateway
