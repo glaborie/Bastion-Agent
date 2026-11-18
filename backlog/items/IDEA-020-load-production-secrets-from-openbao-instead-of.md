@@ -1,12 +1,13 @@
 ### IDEA-020: Load production secrets from OpenBao instead of the process environment
 
-- status: ready
+- status: blocked
 - priority: P2
 - phase: v0.5
 - area: security
 - tags: secrets, openbao, rotation, audit, config, compliance
 - depends-on: -
 - spec: -
+- blocked-by: acceptance criteria need clarification
 - created: 2026-11-11
 - updated: 2026-11-18
 - source: session request on 2026-11-11 ("capture OpenBao as a compliance improvement")
@@ -44,3 +45,11 @@ OpenBao runs as a digest-pinned compose service behind a `secrets` (or `complian
 - Scope: intake only. No implementation, no compose, `settings.py`, `.env.example`, document or ADR edit is part of this capture.
 - 2026-11-14: the dev overlay on branch `vault-secrets-overlay` (PR #42) ships HashiCorp Vault, a fixed root token and an on-disk unseal key with KV v2 at `bastion/`; its decision is still unrecorded (IDEA-057) and the dev stack reaches those values through `.env.vault` in the environment rather than this provider (IDEA-056), so read both before implementing this item.
 - 2026-11-17: `docs/adr/ADR-021.md` records the dev Vault overlay's decision (Raft, single node, KV v2 at `bastion/`, per-service ACL policies, `.env.vault` materialisation) and its dev-only limits; this item is the successor decision that replaces that posture with OpenBao, per-service AppRole identities and runtime KV reads.
+
+- 2026-11-18: blocked before any code. The item deliberately leaves four choices to the successor ADR ("not preselected here") and two acceptance boxes are written as either/or, so there is no single executable target to build and test against:
+  - **unseal model** — dev mode (unattended start, explicitly non-production) or Shamir shares (an operator unseals after every restart, custody runbook and no unattended restart). ADR-021 fixes the dev answer; this item decides the successor, and the choice decides whether the profile can start unattended at all.
+  - **`VAULT_MASTER_KEY` path** — transit `encrypt`/`decrypt` on every token-vault write (per-turn latency plus a hard OpenBao availability dependency) or one startup unwrap (the 32-byte key resident in the process, rotation needs a restart or re-wrap). Acceptance box 3 says "either the token still decrypts after rotation, or the item ships the re-encryption migration", so its test cannot be written until one is chosen.
+  - **AppRole login transport** — in-process client (a library dependency and a login path inside the app) or a sidecar/agent-injector (an extra container and a token file).
+  - **`worker` identity** — the acceptance asserts distinct AppRoles, but the policy split itself is undecided.
+- Also needed before boxes 1-4 are runnable: the OpenBao version and its digest (box 6 writes `<version>@sha256:…` but names neither), and non-dev secret values to seed KV, because box 5 freezes `_reject_dev_secrets` byte-identical so the dev strings in `.env` cannot be the seed. The `docker inspect` and stopped-OpenBao proofs need the live service; standing a fake provider in for them would break "zero mock shortcuts in core security validation".
+- If those four are delegated ("decide, with these constraints"), the item is implementable next turn. If the provider slice should land before the `worker` split and the URL re-assembly, split the item rather than guess; do not create the new id from this branch.
