@@ -1069,7 +1069,8 @@ echo "UPTIME_KUMA_ADMIN_PASSWORD=$(openssl rand -base64 24)" >> .env
 # 2. Start the profile and seed the committed monitor set.
 docker compose --profile infra up -d uptime-kuma
 uv run python scripts/seed_uptime_kuma.py
-# Dashboard: http://127.0.0.1:3002  (loopback only)
+# Dashboard:   http://127.0.0.1:3002  (loopback only)
+# Status page: http://127.0.0.1:3002/status/bastion
 
 # 3. Or point the seed at another port/host:
 uv run python scripts/seed_uptime_kuma.py --url http://127.0.0.1:3921
@@ -1077,7 +1078,11 @@ uv run python scripts/seed_uptime_kuma.py --url http://127.0.0.1:3921
 
 The seed creates the admin account on a fresh instance and then converges: a
 second run prints `kept` for every monitor already there and adds nothing, so it
-is safe after `docker compose down -v`. The set itself is
+is safe after `docker compose down -v`. The same run also creates one public
+status page — `slug: bastion`, title and description from the same file — that
+publishes every monitor at http://127.0.0.1:3002/status/bastion, with the eight
+probes grouped under the stack's name. Like the monitors, the page is created
+once: theming or regrouping it in `/manage-status-page` survives a reseed. The set itself is
 `config/uptime-kuma/monitors.json` — one monitor per probe: `gateway` `/health`
 and `/health/ready`, `db:5432` and `redis:6379` as TCP, Keycloak's management
 `/health` on `:9000`, `omniroute` `/api/health`, `llama-cpp:8080` with a

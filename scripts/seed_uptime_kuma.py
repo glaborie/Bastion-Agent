@@ -30,7 +30,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import httpx
 
@@ -60,6 +60,25 @@ MONITOR_DEFAULTS: dict[str, Any] = {
     "notificationIDList": {},
 }
 
+# `saveStatusPage` reads these directly; a missing key is stored as undefined.
+STATUS_PAGE_DEFAULTS: dict[str, Any] = {
+    "description": "",
+    "logo": "",
+    "autoRefreshInterval": 300,
+    "theme": "auto",
+    "showTags": False,
+    "footerText": "",
+    "customCSS": "",
+    "showPoweredBy": True,
+    "rssTitle": "",
+    "showOnlyLastHeartbeat": False,
+    "showCertificateExpiry": False,
+    "analyticsId": "",
+    "analyticsScriptUrl": "",
+    "analyticsType": None,
+    "domainNameList": [],
+}
+
 
 class SeedError(RuntimeError):
     """A step the instance refused; the message is Uptime Kuma's own."""
@@ -79,6 +98,19 @@ class MonitorClient(Protocol):
     def add_monitor(self, monitor: dict[str, Any]) -> int:
         """Create one monitor and return its id."""
         ...
+
+    def status_page(self, slug: str) -> dict[str, Any] | None:
+        """The status page with this slug, or ``None`` when it does not exist."""
+        ...
+
+    def create_status_page(self, title: str, slug: str) -> None:
+        """Create an empty status page."""
+        ...
+
+    def save_status_page(
+        self, slug: str, config: dict[str, Any], groups: list[dict[str, Any]]
+    ) -> None:
+        """Apply the page config and its public monitor groups."""
 
 
 class SocketIOClient:
@@ -226,11 +258,27 @@ class UptimeKumaClient:
             raise SeedError(f"add {monitor['name']!r} failed: {reply.get('msg', 'unknown reason')}")
         return int(reply["monitorID"])
 
+    def status_page(self, slug: str) -> dict[str, Any] | None:
+        reply = self._socket.emit("getStatusPage", slug)
+        return dict(reply["config"]) if reply.get("ok") else None
 
-def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
+    def create_status_page(self, title: str, slug: str) -> None:
+        reply = self._socket.emit("addStatusPage", title, slug)
+        if not reply.get("ok"):
+            raise SeedError(f"addStatusPage failed: {reply.get('msg', 'unknown reason')}")
+
+    def save_status_page(
+        self, slug: str, config: dict[str, Any], groups: list[dict[str, Any]]
+    ) -> None:
+        reply = self._socket.emit("saveStatusPage", slug, config, "", groups)
+        if not reply.get("ok"):
+            raise SeedError(f"saveStatusPage failed: {reply.get('msg', 'unknown reason')}")
+
+
+def load_env_file(path: Path | None = None) -> dict[str, str]:
     """The repository ``.env``, read the way the other operator scripts read it."""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = (path or ENV_FILE).read_text(encoding="utf-8").splitlines()
     except OSError:
         return {}
     values: dict[str, str] = {}
@@ -262,22 +310,56 @@ def monitor_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def seed(client: MonitorClient, spec: Mapping[str, Any]) -> tuple[list[str], list[str]]:
-    """Create the missing monitors; return ``(added, kept)`` names."""
+class SeedResult(NamedTuple):
+    """What one run did: monitors added and kept, and the status page touched."""
+
+    added: list[str]
+    kept: list[str]
+    status_page: str = ""
+
+
+def status_page_config(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """The ``status_page`` block as the ``saveStatusPage`` config it takes."""
+    return {
+        **STATUS_PAGE_DEFAULTS,
+        **{key: value for key, value in entry.items() if not key.startswith("_")},
+    }
+
+
+def seed(client: MonitorClient, spec: Mapping[str, Any]) -> SeedResult:
+    """Create the missing monitors and the status page that publishes them."""
     # shortcut: existing monitors are not reconciled — a retuned monitor is
     # left alone rather than overwritten; upgrade to `editMonitor` if drift
     # between this file and the instance becomes a real problem.
     existing = client.monitors()
     added: list[str] = []
     kept: list[str] = []
+    monitor_ids: dict[str, int] = {}
     for entry in spec["monitors"]:
         name = str(entry["name"])
         if name in existing:
             kept.append(name)
+            monitor_ids[name] = int(existing[name]["id"])
             continue
-        client.add_monitor(monitor_payload(entry))
+        monitor_ids[name] = client.add_monitor(monitor_payload(entry))
         added.append(name)
-    return added, kept
+
+    page = spec.get("status_page")
+    if not page:
+        return SeedResult(added, kept)
+    slug = str(page["slug"])
+    if client.status_page(slug) is not None:
+        return SeedResult(added, kept, slug)
+
+    client.create_status_page(str(page["title"]), slug)
+    groups = [
+        {
+            "name": str(page["title"]),
+            "monitorList": [{"id": monitor_id} for monitor_id in monitor_ids.values()],
+        }
+    ]
+    client.save_status_page(slug, status_page_config(page), groups)
+    return SeedResult(added, kept, slug)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -295,18 +377,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     spec = load_config(args.config)
     try:
         with UptimeKumaClient(args.url, args.user, password) as client:
-            added, kept = seed(client, spec)
+            result = seed(client, spec)
     except (SeedError, httpx.HTTPError) as error:
         print(f"seed: {error}", file=sys.stderr)
         return 1
 
-    for name in added:
+    for name in result.added:
         print(f"added  {name}")
-    for name in kept:
+    for name in result.kept:
         print(f"kept   {name}")
+    if result.status_page:
+        print(f"status page  {args.url.rstrip('/')}/status/{result.status_page}")
     for entry in spec.get("unmonitored", []):
         print(f"unmonitored  {entry['service']}: {entry['reason']}")
-    print(f"seed: {len(added)} added, {len(kept)} already present")
+    print(f"seed: {len(result.added)} added, {len(result.kept)} already present")
     return 0
 
 

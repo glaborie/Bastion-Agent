@@ -127,6 +127,9 @@ class RecordingClient:
     def __init__(self) -> None:
         self.known: dict[str, dict[str, Any]] = {}
         self.added: list[str] = []
+        self.pages: dict[str, dict[str, Any]] = {}
+        self.groups: dict[str, list[dict[str, Any]]] = {}
+        self.created_pages: list[str] = []
 
     def connect(self) -> None:
         return
@@ -135,24 +138,59 @@ class RecordingClient:
         return self.known
 
     def add_monitor(self, monitor: dict[str, Any]) -> int:
-        self.known[monitor["name"]] = monitor
+        monitor_id = len(self.known) + 1
+        self.known[monitor["name"]] = {"id": monitor_id, **monitor}
         self.added.append(monitor["name"])
-        return len(self.known)
+        return monitor_id
+
+    def status_page(self, slug: str) -> dict[str, Any] | None:
+        return self.pages.get(slug)
+
+    def create_status_page(self, title: str, slug: str) -> None:
+        self.pages[slug] = {"title": title, "slug": slug}
+        self.created_pages.append(slug)
+
+    def save_status_page(
+        self, slug: str, config: dict[str, Any], groups: list[dict[str, Any]]
+    ) -> None:
+        self.pages[slug] = config
+        self.groups[slug] = groups
 
 
 def test_the_seed_is_idempotent() -> None:
     spec = monitor_file()
     client = RecordingClient()
 
-    added, kept = seed(client, spec)
-    assert added == [entry["name"] for entry in spec["monitors"]]
-    assert not kept
+    first_run = seed(client, spec)
+    assert first_run.added == [entry["name"] for entry in spec["monitors"]]
+    assert not first_run.kept
     first = set(client.known)
+    assert first_run.status_page == "bastion"
+    assert client.created_pages == ["bastion"]
+    published = client.groups["bastion"][0]["monitorList"]
+    assert len(published) == len(first)
 
-    added, kept = seed(client, spec)
-    assert not added
-    assert set(kept) == first
+    second_run = seed(client, spec)
+    assert not second_run.added
+    assert set(second_run.kept) == first
     assert set(client.known) == first
+    # The page exists after the first run, so nothing is created twice.
+    assert client.created_pages == ["bastion"]
+
+
+def test_the_status_page_publishes_every_monitor() -> None:
+    spec = monitor_file()
+    client = RecordingClient()
+
+    seed(client, spec)
+
+    page = client.pages["bastion"]
+    assert page["title"] == spec["status_page"]["title"]
+    assert page["slug"] == "bastion"
+    group = client.groups["bastion"][0]
+    assert group["name"] == spec["status_page"]["title"]
+    ids = {monitor["id"] for monitor in group["monitorList"]}
+    assert ids == set(range(1, len(spec["monitors"]) + 1))
 
 
 def test_the_payload_carries_every_field_add_reads() -> None:

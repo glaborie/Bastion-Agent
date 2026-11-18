@@ -1,5 +1,10 @@
 {
   "version": 1,
+  "status_page": {
+    "title": "Bastion-Agent",
+    "slug": "bastion",
+    "description": "Availability of the Bastion-Agent stack, probed over bastion-net by the monitor sidecar."
+  },
   "monitors": [
     {
       "name": "gateway /health",
