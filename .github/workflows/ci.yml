@@ -258,6 +258,10 @@ jobs:
               # the unit half of tests/test_db_tls.py still runs here.
               "the pki profile is not running",
               "PKI_TEST_REDIS_URL is not set",
+              # The composed-stack half of the OpenAI facade contract (ADR-026)
+              # needs a gateway container serving these routes plus a bearer
+              # token; the ASGI half of tests/test_openai_compat.py runs here.
+              "set GATEWAY_BASE_URL and GATEWAY_TOKEN",
           )
           unexpected = []
           for case in ET.parse("pytest-report.xml").iter("testcase"):
