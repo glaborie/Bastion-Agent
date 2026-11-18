@@ -212,6 +212,17 @@ class Settings(BaseSettings):
     #: both the fragment and the ledger noise; the newest rows are the ones kept.
     handoff_transcript_max_records: int = 50
 
+    #: Semantic completion cache (ADR-024). Off by default: a similarity hit
+    #: serves an earlier answer, so the feature ships behind a flag until the
+    #: measured near-miss behaviour is accepted.
+    semantic_cache_enabled: bool = False
+    #: Jaccard score at or above which two prompts are "the same question".
+    semantic_cache_similarity_threshold: float = 0.9
+    #: Seconds an entry lives, and the most entries one tenant/alias/label
+    #: scope may hold before the oldest is evicted.
+    semantic_cache_ttl_seconds: int = 300
+    semantic_cache_max_entries: int = 50
+
     # -- Two-stage classifier ---------------------------------------------
     #: Legacy single-graph contract: one ONNX file returning two logits ordered
     #: ``[PUBLIC, CONFIDENTIAL]``. It remains supported for a custom model, but
@@ -398,6 +409,13 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("semantic_cache_similarity_threshold")
+    @classmethod
+    def _validate_similarity_threshold(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError("SEMANTIC_CACHE_SIMILARITY_THRESHOLD must be in (0, 1]")
+        return value
+
     @field_validator("tenant_claim")
     @classmethod
     def _validate_tenant_claim(cls, value: str) -> str:
@@ -487,6 +505,8 @@ class Settings(BaseSettings):
         "document_max_bytes",
         "document_parse_timeout_seconds",
         "handoff_transcript_max_records",
+        "semantic_cache_ttl_seconds",
+        "semantic_cache_max_entries",
     )
     @classmethod
     def _validate_positive(cls, value: int) -> int:

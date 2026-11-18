@@ -59,9 +59,11 @@ from agent.routing.client import (
     RoutingError,
     get_model_router,
 )
+from agent.semantic_cache import SemanticCache, TokenSimilarity
 from agent.sentiment import assess as assess_frustration
 from db.audit import append_audit_event
 from db.models import AuditEventType, EscrowKind
+from db.redis import get_redis
 from db.session import get_db_session
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 from gateway.auth.roles import CHAT_ROLES
@@ -171,6 +173,20 @@ def get_chat_dlp() -> PresidioDLP:
 def get_chat_sanitizer() -> EgressSanitizer:
     """Dependency seam for the egress sanitizer."""
     return get_egress_sanitizer()
+
+
+def get_chat_cache() -> SemanticCache | None:
+    """Dependency seam for the completion cache; ``None`` when it is off."""
+    settings = get_settings()
+    if not settings.semantic_cache_enabled:
+        return None
+    return SemanticCache(
+        get_redis(settings.redis_url, max_connections=settings.redis_max_connections),
+        backend=TokenSimilarity(),
+        threshold=settings.semantic_cache_similarity_threshold,
+        ttl_seconds=settings.semantic_cache_ttl_seconds,
+        max_entries=settings.semantic_cache_max_entries,
+    )
 
 
 def _vault_session(tenant_id: str, actor_id: str, conversation_id: str) -> str:
@@ -299,6 +315,14 @@ class _Turn:
     conversation_id: str
     vault_session: str
     session: AsyncSession
+
+
+def _cache_prompt(redacted: list[ChatMessage]) -> str | None:
+    """The current question: the last user turn, after DLP redaction."""
+    for message in reversed(redacted):
+        if message.role == "user":
+            return message.content
+    return None
 
 
 async def _ingress(state: _Turn, request: ChatRequest) -> None:
@@ -700,6 +724,8 @@ async def _delivery_stage(
     egress: EgressResult,
     completion: ChatCompletion,
     decision: RouteDecision,
+    *,
+    cache_hit: bool = False,
 ) -> ChatResponse:
     """Stage 5: record ``RESPONSE_SENT`` for the text that is actually delivered."""
     # The payload is the sanitized text (or its configured prefix), so its
@@ -721,6 +747,7 @@ async def _delivery_stage(
             "chars": len(egress.text),
             "stored_chars": len(stored_answer),
             "truncated": truncated,
+            "cache_hit": cache_hit,
         },
         escrow=True,
         escrow_kind=EscrowKind.EGRESS_DELIVERED,
@@ -729,6 +756,7 @@ async def _delivery_stage(
         {
             "bastion.response.chars": len(egress.text),
             "bastion.response.truncated": truncated,
+            "bastion.cache.hit": cache_hit,
         }
     )
     classification = decision.classification
@@ -763,6 +791,7 @@ async def chat(
     model_router: ModelRouter = Depends(get_chat_router),
     dlp: PresidioDLP = Depends(get_chat_dlp),
     sanitizer: EgressSanitizer = Depends(get_chat_sanitizer),
+    cache: SemanticCache | None = Depends(get_chat_cache),
 ) -> ChatResponse:
     """Run one guarded turn from ingress to sanitized egress."""
     conversation_id = request.conversation_id or uuid.uuid4().hex
@@ -781,8 +810,44 @@ async def chat(
     canary = await _preflight(state, sanitizer)
     if (blocked := await _injection_gate(state, decision)) is not None:
         return blocked
-    completion = await _complete(
-        state, model_router, request, redacted, canary, decision, sanitizer
-    )
+    # The cache sits after DLP and routing so its scope carries the label and
+    # the alias, and a turn that minted DLP markers is never looked up or
+    # stored: those markers belong to this session (ADR-024).
+    prompt = _cache_prompt(redacted)
+    cached: str | None = None
+    if cache is not None and prompt is not None and entity_count == 0:
+        cached = await cache.lookup(
+            tenant_id=state.tenant_id,
+            alias=decision.alias,
+            label=decision.classification.label.value,
+            prompt=prompt,
+        )
+    if cached is not None:
+        completion = ChatCompletion(content=cached, model="semantic-cache")
+    else:
+        completion = await _complete(
+            state, model_router, request, redacted, canary, decision, sanitizer
+        )
     egress = await _egress_stage(state, sanitizer, completion, decision)
-    return await _delivery_stage(state, get_settings(), egress, completion, decision)
+    if (
+        cache is not None
+        and cached is None
+        and prompt is not None
+        and entity_count == 0
+        and egress.unresolved_tokens == 0
+    ):
+        await cache.store(
+            tenant_id=state.tenant_id,
+            alias=decision.alias,
+            label=decision.classification.label.value,
+            prompt=prompt,
+            answer=completion.content,
+        )
+    return await _delivery_stage(
+        state,
+        get_settings(),
+        egress,
+        completion,
+        decision,
+        cache_hit=cached is not None,
+    )
