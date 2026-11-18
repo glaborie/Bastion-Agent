@@ -67,7 +67,15 @@ from db.redis import get_redis
 from db.session import get_db_session
 from gateway.auth.rbac import AuthContext, require_csrf, require_roles
 from gateway.auth.roles import CHAT_ROLES
-from gateway.rate_limit import rate_limit
+from gateway.rate_limit import (
+    RateLimiter,
+    RateLimitUnavailable,
+    estimate_prompt_tokens,
+    get_rate_limiter,
+    rate_limit,
+    refusal_headers,
+    settled_tokens,
+)
 from settings import Settings, get_settings
 from telemetry import annotate_span, span_attributes
 
@@ -127,7 +135,10 @@ class ChatRequest(BaseModel):
     #: the response; it scopes the token vault and the canary to this thread.
     conversation_id: str | None = Field(default=None, pattern=CONVERSATION_PATTERN)
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
-    max_tokens: int | None = Field(default=None, ge=1, le=8192)
+    #: Always sent upstream: a reservation computed against a provider-side
+    #: default could not be reconstructed, and that default can change under
+    #: the gate (ADR-020 decision 3).
+    max_tokens: int = Field(default=1024, ge=1, le=8192)
 
 
 class AssistantTurn(BaseModel):
@@ -582,6 +593,7 @@ async def _complete(
     canary: str,
     decision: RouteDecision,
     sanitizer: EgressSanitizer,
+    limiter: RateLimiter,
 ) -> ChatCompletion:
     """Stage 3b: build the fenced upstream payload and call the routed model."""
     upstream: list[ChatMessage] = [
@@ -599,6 +611,9 @@ async def _complete(
     # token counts and cost. It is a child of the server span, so one turn is
     # still one trace. The requested model is the alias's pinned target, never
     # the alias: see _completion_attributes.
+    settings = get_settings()
+    # The worst case of this turn: the text actually sent plus the output cap.
+    requested_tokens = estimate_prompt_tokens(upstream) + request.max_tokens
     requested_provider, requested_model = _split_model(decision.primary_model or decision.alias)
     with _tracer.start_as_current_span(
         f"chat {decision.alias}", kind=SpanKind.CLIENT
@@ -616,6 +631,47 @@ async def _complete(
                 }
             )
         )
+        reserved = 0
+        if settings.rate_limit_enabled:
+            try:
+                reservation = await limiter.reserve(
+                    state.actor_id,
+                    tokens=requested_tokens,
+                    capacity=settings.rate_limit_chat_tokens_per_window,
+                    window_seconds=settings.rate_limit_window_seconds,
+                )
+            except RateLimitUnavailable as exc:
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, "rate limiter unavailable"
+                ) from exc
+            model_span.set_attributes(
+                _attributes(
+                    {
+                        "bastion.rate_limit.tokens_requested": requested_tokens,
+                        "bastion.rate_limit.remaining": reservation.remaining,
+                    }
+                )
+            )
+            if not reservation.allowed:
+                # Refused before dispatch: the model is not called and no
+                # spend is recorded for this turn (ADR-020 decision 2).
+                logger.warning(
+                    "Token budget exhausted",
+                    extra={
+                        "subject": state.actor_id,
+                        "conversation_id": state.conversation_id,
+                        "tokens_requested": requested_tokens,
+                        "remaining": reservation.remaining,
+                        "retry_after_seconds": reservation.retry_after_seconds,
+                    },
+                )
+                raise HTTPException(
+                    status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="token budget exhausted",
+                    headers=refusal_headers(reservation),
+                )
+            reserved = requested_tokens
+
         try:
             completion = await model_router.complete(
                 upstream,
@@ -651,6 +707,39 @@ async def _complete(
         model_span.set_attributes(
             _completion_attributes(completion, requested=decision.primary_model or decision.alias)
         )
+        if reserved:
+            # Settlement never fails the turn: the answer is already paid for
+            # and a Redis blip must not turn it into a lost request (ADR-020
+            # decision 6). Unknown usage is charged at the reservation.
+            consumed = settled_tokens(
+                prompt_tokens=completion.prompt_tokens,
+                completion_tokens=completion.completion_tokens,
+                total_tokens=completion.total_tokens,
+            )
+            try:
+                remaining = await limiter.settle(
+                    state.actor_id,
+                    delta=0 if consumed is None else consumed - reserved,
+                    capacity=settings.rate_limit_chat_tokens_per_window,
+                    window_seconds=settings.rate_limit_window_seconds,
+                )
+            except RateLimitUnavailable:
+                logger.warning(
+                    "Token budget settlement failed",
+                    extra={"subject": state.actor_id, "tokens_reserved": reserved},
+                )
+                model_span.set_attribute("bastion.rate_limit.settle_failed", True)
+            else:
+                model_span.set_attributes(
+                    _attributes(
+                        {
+                            "bastion.rate_limit.tokens_consumed": (
+                                reserved if consumed is None else consumed
+                            ),
+                            "bastion.rate_limit.remaining": remaining,
+                        }
+                    )
+                )
     return completion
 
 
@@ -792,6 +881,7 @@ async def chat(
     dlp: PresidioDLP = Depends(get_chat_dlp),
     sanitizer: EgressSanitizer = Depends(get_chat_sanitizer),
     cache: SemanticCache | None = Depends(get_chat_cache),
+    limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> ChatResponse:
     """Run one guarded turn from ingress to sanitized egress."""
     conversation_id = request.conversation_id or uuid.uuid4().hex
@@ -826,7 +916,7 @@ async def chat(
         completion = ChatCompletion(content=cached, model="semantic-cache")
     else:
         completion = await _complete(
-            state, model_router, request, redacted, canary, decision, sanitizer
+            state, model_router, request, redacted, canary, decision, sanitizer, limiter
         )
     egress = await _egress_stage(state, sanitizer, completion, decision)
     if (

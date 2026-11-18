@@ -158,6 +158,11 @@ class Settings(BaseSettings):
     #: is deliberate operator work rather than a background poll.
     rate_limit_dashboard_per_window: int = 60
     rate_limit_chat_per_window: int = 120
+    #: Inference budget for one principal per window (ADR-020). A turn reserves
+    #: estimated prompt tokens plus ``max_tokens`` before the model is called
+    #: and settles the reported usage afterwards, so 120 cheap requests can no
+    #: longer buy unlimited spend.
+    rate_limit_chat_tokens_per_window: int = 100_000
 
     # -- DLP: reversible token vault --------------------------------------
     vault_master_key: SecretStr = SecretStr(DEV_VAULT_MASTER_KEY)
@@ -499,6 +504,7 @@ class Settings(BaseSettings):
         "rate_limit_window_seconds",
         "rate_limit_dashboard_per_window",
         "rate_limit_chat_per_window",
+        "rate_limit_chat_tokens_per_window",
         "payload_escrow_ttl_seconds",
         "response_store_max_chars",
         "audit_witness_retention_years",

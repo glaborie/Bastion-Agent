@@ -47,7 +47,11 @@ async def limiter() -> AsyncIterator[tuple[RateLimiter, Redis, str]]:
     try:
         yield RateLimiter(client), client, principal
     finally:
-        await client.delete(f"ratelimit:chat:{principal}", f"ratelimit:dashboard:{principal}")
+        await client.delete(
+            f"ratelimit:chat:{principal}",
+            f"ratelimit:dashboard:{principal}",
+            f"ratelimit:chat_tokens:{principal}",
+        )
         await client.aclose()
 
 
@@ -116,3 +120,75 @@ async def test_key_expires_instead_of_leaking(
     ttl_ms = await client.pttl(f"ratelimit:chat:{principal}")
 
     assert 0 < ttl_ms <= 60_000
+
+
+# ---------------------------------------------------------------------------
+# Inference token budget (ADR-020)
+# ---------------------------------------------------------------------------
+
+
+async def test_reserve_charges_the_worst_case_and_refuses_above_the_balance(
+    limiter: tuple[RateLimiter, Redis, str],
+) -> None:
+    bucket, _client, principal = limiter
+
+    first = await bucket.reserve(principal, tokens=60, capacity=100, window_seconds=60)
+    assert first.allowed
+    assert first.remaining == 40
+
+    second = await bucket.reserve(principal, tokens=50, capacity=100, window_seconds=60)
+    assert not second.allowed
+    assert second.retry_after_seconds >= 1
+
+
+async def test_settlement_refunds_an_over_reservation(
+    limiter: tuple[RateLimiter, Redis, str],
+) -> None:
+    bucket, _client, principal = limiter
+    await bucket.reserve(principal, tokens=80, capacity=100, window_seconds=60)
+
+    # The turn used 20 of the 80 reserved, so 60 comes back.
+    balance = await bucket.settle(principal, delta=-60, capacity=100, window_seconds=60)
+
+    assert balance >= 79
+
+
+async def test_settlement_leaves_debt_and_the_next_turn_is_refused(
+    limiter: tuple[RateLimiter, Redis, str],
+) -> None:
+    bucket, _client, principal = limiter
+    await bucket.reserve(principal, tokens=20, capacity=100, window_seconds=60)
+
+    # The provider reported 60: the estimate was 40 tokens short, which becomes
+    # debt instead of being refused up front.
+    balance = await bucket.settle(principal, delta=40, capacity=100, window_seconds=60)
+    assert balance <= 40
+
+    refused = await bucket.reserve(principal, tokens=60, capacity=100, window_seconds=60)
+    assert not refused.allowed
+
+
+async def test_debt_floors_at_negative_capacity(
+    limiter: tuple[RateLimiter, Redis, str],
+) -> None:
+    bucket, _client, principal = limiter
+    await bucket.reserve(principal, tokens=5, capacity=10, window_seconds=60)
+
+    # A bogus usage figure cannot empty many windows at once.
+    balance = await bucket.settle(principal, delta=10_000, capacity=10, window_seconds=60)
+
+    assert balance == -10
+
+
+async def test_token_bucket_refills_over_time(
+    limiter: tuple[RateLimiter, Redis, str],
+) -> None:
+    bucket, _client, principal = limiter
+
+    assert (await bucket.reserve(principal, tokens=1, capacity=2, window_seconds=1)).allowed
+    assert (await bucket.reserve(principal, tokens=1, capacity=2, window_seconds=1)).allowed
+    assert not (await bucket.reserve(principal, tokens=1, capacity=2, window_seconds=1)).allowed
+
+    await asyncio.sleep(0.6)
+
+    assert (await bucket.reserve(principal, tokens=1, capacity=2, window_seconds=1)).allowed
