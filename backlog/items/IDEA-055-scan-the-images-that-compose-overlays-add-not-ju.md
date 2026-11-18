@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-016
 - created: 2026-11-14
-- updated: 2026-11-16
+- updated: 2026-11-18
 - source: session review on 2026-11-14 of ADR-016's coverage claim against the three compose overlays
 
 **Problem**
