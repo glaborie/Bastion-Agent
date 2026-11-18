@@ -8,8 +8,8 @@
 
   const seenKey = "bastion.handoffs.seen";
   const seen = new Set(JSON.parse(sessionStorage.getItem(seenKey) || "[]"));
-  // The first poll primes the set: rows that were already queued when the page
-  // opened are old news, so they do not arrive as a burst of notifications.
+  // A fresh page summarises what was already queued instead of firing a burst;
+  // a page whose sessionStorage already holds the queue only reports new rows.
   let primed = sessionStorage.getItem(seenKey) !== null;
   const supported = "Notification" in window;
   const enable = document.getElementById("handoff-enable");
@@ -27,16 +27,37 @@
     });
   };
 
+  const summarize = (rows) => {
+    if (!supported || Notification.permission !== "granted") return;
+    // The panel renders newest first (recent_handoffs orders by id desc).
+    const newest = rows[0];
+    const verdict = newest.dataset.handoffVerdict || "handoff";
+    new Notification("Bastion-Agent: handoffs are waiting for an operator", {
+      body: `${rows.length} waiting · newest ${verdict} · conversation ${newest.dataset.handoffId}`,
+      tag: "bastion-handoff-queue",
+    });
+  };
+
   const scan = () => {
+    const rows = [...slot.querySelectorAll("[data-handoff-id]")];
+    if (!primed) {
+      // One summary for the queue that was already there, never one per row.
+      primed = true;
+      for (const row of rows) seen.add(row.dataset.handoffId);
+      if (rows.length) {
+        summarize(rows);
+        save();
+      }
+      return;
+    }
     let changed = false;
-    for (const row of slot.querySelectorAll("[data-handoff-id]")) {
+    for (const row of rows) {
       const id = row.dataset.handoffId;
       if (seen.has(id)) continue;
       seen.add(id);
       changed = true;
-      if (primed) notify(row);
+      notify(row);
     }
-    primed = true;
     if (changed) save();
   };
 
@@ -54,7 +75,8 @@
   document.body.addEventListener("htmx:afterSwap", (event) => {
     if (event.target === slot) scan();
   });
-  // htmx may have completed the first swap before this file was evaluated.
-  if (slot.querySelector("[data-handoff-id]")) scan();
+  // Always evaluate once: htmx may have completed the first swap before this
+  // file was evaluated, and an empty first poll must still count as primed.
+  scan();
   syncEnable();
 })();

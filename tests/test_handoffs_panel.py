@@ -1,8 +1,10 @@
 """The dashboard handoff surface: template, wiring and notification contract.
 
-The browser Notification API cannot be driven from pytest, so what is pinned
-here is the contract around it: who sees the panel, what the fragment carries,
-and that the script notifies from those attributes alone — never from text.
+The browser Notification API cannot be driven from pytest's own process, so
+what is pinned here is the contract around it: who sees the panel, what the
+fragment carries, and that the script notifies from those attributes alone —
+never from text. The notification policy itself runs under Node in
+``tests/test_handoff_notifications.py``.
 """
 
 from __future__ import annotations
@@ -98,7 +100,7 @@ def test_the_script_notifies_from_the_attributes_it_renders() -> None:
         assert f"dataset.{attribute}" in script
     for attribute in ("data-handoff-id", "data-handoff-verdict", "data-handoff-created"):
         assert attribute in fragment
-    # One notification per id, and a first poll that primes rather than fires.
+    # One notification per id, one summary for the queue already waiting.
     assert "sessionStorage" in script
     assert "tag:" in script
     assert "Notification.permission" in script
