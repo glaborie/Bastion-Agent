@@ -1,6 +1,6 @@
 ### IDEA-040: Encrypt every hop: browser to gateway, gateway to services, egress to providers
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-019
 - created: 2026-11-12
-- updated: 2026-11-12
+- updated: 2026-11-18
 - source: session request on 2026-11-12 ("implement https"), same day the ADR-019 PKI profile landed; requester clarified on the same day that it means encryption between frontend and backend as well as against the outside world
 
 **Problem**

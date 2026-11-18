@@ -1,6 +1,6 @@
 ### IDEA-027: Cache semantically equivalent completions to avoid repeated model calls
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-12
-- updated: 2026-11-12
+- updated: 2026-11-18
 - source: session request on 2026-11-12 ("add a semantic cache component to avoid unnecessary LLM calls for similar queries")
 
 **Problem**

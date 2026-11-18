@@ -1,6 +1,6 @@
 ### IDEA-060: Expose an OpenAI-compatible chat completions facade
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-012
 - created: 2026-11-14
-- updated: 2026-11-14
+- updated: 2026-11-18
 - source: session, design note against gateway/routers/chat.py and README.md:1099, 2026-11-14
 
 **Problem**
