@@ -1,6 +1,6 @@
 ### IDEA-072: Prove the gateway's fail-closed contract with a deterministic fault-injection suite
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-004
 - created: 2026-11-17
-- updated: 2026-11-17
+- updated: 2026-11-18
 - source: session request on 2026-11-17 ("chaos engineering to stress test the gateway with delays, latency, broken endpoints")
 
 **Problem**

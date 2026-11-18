@@ -1,6 +1,6 @@
 ### IDEA-039: Run Uptime Kuma as a profile-gated sidecar that watches container health
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-001
 - created: 2026-11-12
-- updated: 2026-11-12
+- updated: 2026-11-18
 - source: session request on 2026-11-12 ("set up and deploy uptime kuma to monitor the health of the containers, configure it as a side car with profile infra")
 
 **Problem**

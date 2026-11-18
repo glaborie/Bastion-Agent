@@ -1,6 +1,6 @@
 ### IDEA-020: Load production secrets from OpenBao instead of the process environment
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: security
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-11
-- updated: 2026-11-17
+- updated: 2026-11-18
 - source: session request on 2026-11-11 ("capture OpenBao as a compliance improvement")
 
 **Problem**
