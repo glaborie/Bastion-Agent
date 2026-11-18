@@ -69,6 +69,7 @@ dev = [
     # Arrives transitively via presidio, but tests/test_otel_config.py parses the
     # collector YAML, so the dependency is declared rather than assumed.
     "pyyaml>=6.0.2,<7.0.0",
+    "openai>=1.55.0,<3.0.0",
 ]
 
 [build-system]

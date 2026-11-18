@@ -109,7 +109,8 @@ if [[ -z "$PYTEST_WORKERS" ]]; then
         PYTEST_WORKERS=auto
     fi
 fi
-[[ "$PYTEST_WORKERS" == "auto" || "$PYTEST_WORKERS" =~ ^[1-9][0-9]*$ ]] ||
+# 0 is valid and is what an integration run selects below (one shared database).
+[[ "$PYTEST_WORKERS" == "auto" || "$PYTEST_WORKERS" =~ ^(0|[1-9][0-9]*)$ ]] ||
     { echo "gate: --pytest-workers must be 'auto' or a positive integer" >&2; exit 2; }
 XDIST=""
 [[ "$PYTEST_WORKERS" != "0" ]] && XDIST="-n $PYTEST_WORKERS --dist loadfile"

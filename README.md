@@ -150,6 +150,38 @@ the browser to Keycloak's end-session endpoint. A short-lived
 logout, so an in-flight dashboard poll cannot silently re-authenticate through
 the still-open SSO session.
 
+### OpenAI-compatible facade
+
+Existing OpenAI clients can use the gateway by changing the base URL. Both
+routes call the same guarded pipeline as `/v1/chat`, so DLP, routing, the
+injection gate, the canary, egress inspection and the audit ledger run exactly
+once (ADR-026).
+
+| Route | Purpose |
+|-------|---------|
+| `POST /v1/chat/completions` | Chat completions; `stream: true` is buffered, scanned, then replayed as SSE |
+| `GET /v1/models` | The aliases this caller may ask for |
+
+```bash
+curl -sS http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "bastion-auto", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+Aliases: `bastion-auto` lets the classifier route (the default), `bastion-local`
+narrows the turn to the local model, and `local-llama`/`cloud-primary` are
+accepted as hints. The response reports the model that actually answered.
+
+Deliberate limits: a blocked turn is `200` with `finish_reason:
+"content_filter"`, empty `content` and a `bastion` extension object; errors use
+the OpenAI envelope (`error.message`, `error.type`, `error.code`); `tools` and
+`tool_choice` are refused because tool execution stays server-side, as are
+client-supplied `system`/`assistant` turns; `X-Bastion-Conversation-Id` scopes
+the vault session and is echoed back — without it each request gets its own
+vault session while the canary and quarantine stay keyed on the principal. The
+Responses API is out of scope.
+
 ### API access with a Bearer token
 
 The gateway accepts the same RS256 token on `/api/*` and `/auth/me`:

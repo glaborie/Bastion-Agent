@@ -29,7 +29,7 @@ from gateway.dashboard.demo import router as demo_router
 from gateway.dashboard.routes import router as dashboard_router
 from gateway.dashboard.templating import render_error
 from gateway.queue import close_arq_pool
-from gateway.routers import approval_ws, approvals, audit, auth, chat, evals, health
+from gateway.routers import approval_ws, approvals, audit, auth, chat, evals, health, openai_compat
 from gateway.web import is_htmx
 from logging_setup import configure_logging
 from settings import get_settings
@@ -119,6 +119,8 @@ def create_app() -> FastAPI:
     app.include_router(approval_ws.router)
     app.include_router(audit.router)
     app.include_router(chat.router)
+    app.include_router(openai_compat.router)
+    openai_compat.install_error_handlers(app)
     app.include_router(evals.router)
     app.include_router(dashboard_router)
     app.include_router(demo_router)
@@ -145,6 +147,9 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(request: Request, exc: StarletteHTTPException) -> Response:
+        compat = openai_compat.compat_error_response(request, exc)
+        if compat is not None:
+            return compat
         path = request.url.path
         if exc.status_code == 401 and path == "/auth/logout":
             # The session already expired; clearing the cookie is the useful

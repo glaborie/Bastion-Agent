@@ -244,13 +244,22 @@ class EgressSanitizer:
         return f'<{_FENCE_TAG} source="{safe_source}">\n{neutralised}\n</{_FENCE_TAG}>'
 
     # -- output inspection -------------------------------------------------
-    async def inspect(self, text: str, session_id: str, *, tenant_id: str) -> EgressResult:
-        """Block canary leaks, then restore this tenant/session's entity markers."""
-        if await self.is_tripped(tenant_id, session_id):
+    async def inspect(
+        self, text: str, session_id: str, *, tenant_id: str, egress_session: str | None = None
+    ) -> EgressResult:
+        """Block canary leaks, then restore this tenant/session's entity markers.
+
+        ``egress_session`` keys the canary and the quarantine; it defaults to
+        ``session_id``. The compat facade passes the actor there while restoring
+        markers from a per-request vault session, so a canary trip quarantines
+        the principal instead of a throwaway session (ADR-026).
+        """
+        guard = egress_session or session_id
+        if await self.is_tripped(tenant_id, guard):
             return EgressResult(text="", blocked=True, reason="circuit_open")
 
         if self._canary_pattern.search(text):
-            await self.trip(tenant_id, session_id, "canary_leak")
+            await self.trip(tenant_id, guard, "canary_leak")
             logger.warning("Canary detected in model output", extra={"session": "redacted"})
             return EgressResult(text="", blocked=True, reason="canary_leak")
 
@@ -258,7 +267,7 @@ class EgressSanitizer:
         try:
             restored = await self._vault.restore(tenant_id, session_id, text)
         except VaultError:
-            await self.trip(tenant_id, session_id, "vault_error")
+            await self.trip(tenant_id, guard, "vault_error")
             return EgressResult(text="", blocked=True, reason="vault_error")
         unresolved = len(TOKEN_PATTERN.findall(restored))
         claim = _disclosure_claim(restored)
