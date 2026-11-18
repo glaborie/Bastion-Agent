@@ -1,6 +1,6 @@
 ### IDEA-069: Notify once when the dashboard opens with handoffs already queued
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.4
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: IDEA-065
 - spec: ADR-022
 - created: 2026-11-17
-- updated: 2026-11-17
+- updated: 2026-11-18
 - source: session report on 2026-11-17 ("Alice logged on the dashboard with accepted notifications didn't receive any notification")
 
 **Problem**
