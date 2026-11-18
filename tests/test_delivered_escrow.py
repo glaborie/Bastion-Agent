@@ -229,6 +229,7 @@ async def test_unblocked_turn_writes_one_response_event(chat_api: Harness) -> No
         "chars": len(ANSWER),
         "stored_chars": len(ANSWER),
         "truncated": False,
+        "cache_hit": False,
     }
     # Flag off: the answer is hashed but not escrowed.
     assert not await _escrow_rows(chat_api)

@@ -1,6 +1,6 @@
 ### IDEA-027: Cache semantically equivalent completions to avoid repeated model calls
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.5
 - area: agent
@@ -46,14 +46,14 @@ eviction and the audit shape.
 
 **Acceptance**
 
-- [ ] `uv run pytest tests/test_semantic_cache.py -q` proves that two identical turns in one session produce one model call (a recording router counts them) and deliver the same answer text, with the second turn served from the cache
-- [ ] A paraphrase above `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` hits and a near-miss below it misses and calls the model; both are pinned with an injectable fake similarity backend, so the suite needs no network call and no model download
-- [ ] The same text routed two ways never shares an entry: a `pii_detected` turn on `local-llama` does not read a `cloud-primary` entry, and a tenant B turn does not read a tenant A entry, both asserted with identical prompt text
-- [ ] A hit cannot deliver another session's marker: a test replays a cached answer whose markers were minted in a different session and asserts the caller gets either a fully restored answer or a miss, never a `{{ENTITY:...}}` token
-- [ ] The turn is still audited: a cache hit is visible on the ledger (the existing rows' metadata, or the event shape the ADR decides) and the hit still writes the DLP and egress rows for that turn, asserted by comparing the hit and miss paths in `tests/test_semantic_cache.py`
-- [ ] `SEMANTIC_CACHE_ENABLED=false`, `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` and `SEMANTIC_CACHE_TTL_SECONDS` are settings keys documented in `.env.example`; with the flag off `uv run pytest -q` passes and the recording router observes exactly the pre-change model-call count
-- [ ] `uv run python scripts/benchmark_semantic_cache.py` reports hit rate, model calls avoided and p95 latency with the cache on and off over a repeated prompt corpus, and those numbers are recorded in the item and the ADR
-- [ ] The ADR (a new one, or an amendment to ADR-004) records what the cache is not — not a confidentiality decision, not a substitute for DLP, canary or egress, and not a PII store — and `uv run python scripts/check_adrs.py` passes
+- [x] `uv run pytest tests/test_semantic_cache.py -q` proves that two identical turns in one session produce one model call (a recording router counts them) and deliver the same answer text, with the second turn served from the cache
+- [x] A paraphrase above `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` hits and a near-miss below it misses and calls the model; both are pinned with an injectable fake similarity backend, so the suite needs no network call and no model download
+- [x] The same text routed two ways never shares an entry: a `pii_detected` turn on `local-llama` does not read a `cloud-primary` entry, and a tenant B turn does not read a tenant A entry, both asserted with identical prompt text
+- [x] A hit cannot deliver another session's marker: a test replays a cached answer whose markers were minted in a different session and asserts the caller gets either a fully restored answer or a miss, never a `{{ENTITY:...}}` token
+- [x] The turn is still audited: a cache hit is visible on the ledger (the existing rows' metadata, or the event shape the ADR decides) and the hit still writes the DLP and egress rows for that turn, asserted by comparing the hit and miss paths in `tests/test_semantic_cache.py`
+- [x] `SEMANTIC_CACHE_ENABLED=false`, `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` and `SEMANTIC_CACHE_TTL_SECONDS` are settings keys documented in `.env.example`; with the flag off `uv run pytest -q` passes and the recording router observes exactly the pre-change model-call count
+- [x] `uv run python scripts/benchmark_semantic_cache.py` reports hit rate, model calls avoided and p95 latency with the cache on and off over a repeated prompt corpus, and those numbers are recorded in the item and the ADR
+- [x] The ADR (a new one, or an amendment to ADR-004) records what the cache is not — not a confidentiality decision, not a substitute for DLP, canary or egress, and not a PII store — and `uv run python scripts/check_adrs.py` passes
 
 **Notes**
 
@@ -63,3 +63,8 @@ eviction and the audit shape.
 - Open questions for triage, deliberately not decided: **where the embedding runs** — a cloud embedding API would send prompt text off-host, which contradicts ADR-002/ADR-004 for `CONFIDENTIAL` prompts, so an on-box embedder or an exact-hash first slice is the conservative default; **where the vectors live** — Postgres with pgvector, a Redis vector index, or an in-process dict with no persistence; **whether a hit may be served while the routed backend is down**, since ADR-004 decision 4 fails closed on `local-llama` and a cached answer must not look like a live confidential completion; and **whether entries may be shared across principals inside one tenant**, which is where most of the saving is and the largest leak surface.
 - Honest limits to record in the ADR rather than paper over: a similarity threshold is a false-positive budget — a hit on a question that only looks the same serves a wrong answer with no way for the caller to tell, so its measured near-miss behaviour matters more than its hit rate; the cache is a PII-adjacent store, so its TTL should be short and its contents should be markers or post-redaction text rather than raw prompts; and the embedding cost is paid per turn whether or not the lookup hits, so the component can make the median turn slower while it removes duplicate model calls.
 - Scope: one cache stage plus the ADR. Out of scope: a separate exact-match cache item, prefix or KV caching inside `llama.cpp`, OmniRoute provider-side caching, and any change to `/v1/chat`'s request schema. Intake only — no implementation, dependency, settings, test, compose or ADR edit is part of this capture.
+
+- Shipped (ADR-024): a lookup between `ROUTING_DECISION` and the model call, scoped `semantic_cache:v1:<tenant>:<alias>:<label>` in Redis; `TokenSimilarity` (word-set Jaccard) as the default backend behind an injectable `SimilarityBackend`; `SEMANTIC_CACHE_ENABLED` (false), `..._SIMILARITY_THRESHOLD` (0.9), `..._TTL_SECONDS` (300) and `..._MAX_ENTRIES` (50) in `.env.example`. A hit synthesises a `semantic-cache` completion and still runs egress, so `EGRESS_FILTERED` is written and `RESPONSE_SENT` carries `cache_hit`; a Redis error degrades to a model call.
+- Marker rule, which is stricter than the acceptance asked for: a turn whose DLP stage found entities is neither looked up nor stored, and `store`/`lookup` both refuse an answer matching `TOKEN_PATTERN`, so a marker minted in one session can only ever be a miss. Tests: `tests/test_semantic_cache.py` (6 cases, `uv run pytest tests/test_semantic_cache.py -q` against the disposable database).
+- Benchmark (`uv run python scripts/benchmark_semantic_cache.py`, 10 prompts x 3 repeats, 25 ms simulated model): cache off — 0.0 % hits, 30 calls, p50 25.25 ms, p95 25.31 ms; cache on — 66.7 % hits, 10 calls, p50 0.04 ms, p95 25.40 ms. The p95 turn is a miss: duplicates get cheap, the slowest turn does not get faster.
+- Deliberately left open, as the capture listed them: a real embedder (the backend seam exists but the default is token overlap), persistence/eviction beyond the bounded Redis list plus TTL, sharing entries across principals inside one tenant, and whether a hit may be served while the routed backend is down. Each needs its own decision before widening the scope.
