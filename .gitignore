@@ -70,3 +70,6 @@ artifacts/compliance/*
 # --- Falco runtime alerts ----------------------------------------------------
 artifacts/falco/*
 !artifacts/falco/.gitkeep
+
+# --- Gitnexus graph DB -------------------------------------------------------
+.gitnexus/
