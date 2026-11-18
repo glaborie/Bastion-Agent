@@ -606,10 +606,11 @@ admin-only escrow path (`POST /api/handoffs/{conversation_id}/transcript`,
 offering a button that cannot work. A browser signed in as e.g. `breakglass` in a second window is also
 notified: click **Enable browser alerts** once, and each newly queued handoff
 raises one `Notification` built from the conversation id, verdict and timestamp.
-The first poll primes the page, so rows queued before you opened it do not
-arrive as a burst, and permission-denied degrades to the panel. The channel is
-that tab — no service worker, no push service, no key — so a closed browser
-learns nothing (ADR-022 decision 8).
+Opening the dashboard with handoffs already queued raises a single summary that
+says how many are waiting and names the newest conversation; an empty queue
+stays silent. Permission-denied degrades to the panel. The channel is that tab —
+no service worker, no push service, no key — so a closed browser learns nothing
+(ADR-022 decision 8).
 
 ### Demo
 
