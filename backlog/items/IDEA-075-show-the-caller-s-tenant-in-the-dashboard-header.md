@@ -1,6 +1,6 @@
 ### IDEA-075: Show the caller's tenant in the dashboard header
 
-- status: ready
+- status: active
 - priority: P3
 - phase: v0.4
 - area: gateway
