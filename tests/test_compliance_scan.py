@@ -20,8 +20,8 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "docker-compose.yml"
 
-# The ten shipped image references: IDEA-019's nine plus the audit-witness store
-# (IDEA-021).
+# The eleven shipped image references: IDEA-019's nine, the audit-witness store
+# (IDEA-021) and the availability monitor (IDEA-039).
 EXPECTED_IMAGES = {
     "bastion-agent:local",
 }
@@ -35,6 +35,7 @@ EXPECTED_IMAGE_PREFIXES = (
     "otel/opentelemetry-collector-contrib:0.165.0@sha256:",
     "diegosouzapw/omniroute:3.8.53@sha256:",
     "cgr.dev/chainguard/minio:latest@sha256:",
+    "louislam/uptime-kuma:2.5.12@sha256:",
 )
 
 
@@ -188,7 +189,7 @@ def test_default_compose_inventory_is_the_shipped_set() -> None:
     )
     assert result.returncode == 0, result.stderr
     images = result.stdout.splitlines()
-    assert len(images) == 10
+    assert len(images) == 11
     assert set(images) >= EXPECTED_IMAGES
     for prefix in EXPECTED_IMAGE_PREFIXES:
         assert any(image.startswith(prefix) for image in images), prefix
