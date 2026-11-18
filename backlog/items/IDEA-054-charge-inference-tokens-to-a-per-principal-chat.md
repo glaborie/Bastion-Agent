@@ -1,6 +1,6 @@
 ### IDEA-054: Charge inference tokens to a per-principal chat budget
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-020
 - created: 2026-11-14
-- updated: 2026-11-14
+- updated: 2026-11-18
 - source: ADR-020 (Proposed) and THREAT_MODEL.md T12 known gap 3, 2026-11-14
 
 **Problem**
