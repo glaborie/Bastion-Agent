@@ -1,6 +1,6 @@
 ### IDEA-074: Show the whole conversation transcript, not just the newest request and answer
 
-- status: inbox
+- status: active
 - priority: P2
 - phase: v0.4
 - area: gateway
