@@ -1,6 +1,6 @@
 ### IDEA-040: Encrypt every hop: browser to gateway, gateway to services, egress to providers
 
-- status: ready
+- status: blocked
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -9,6 +9,7 @@
 - spec: ADR-019
 - created: 2026-11-12
 - updated: 2026-11-18
+- blocked-by: the PKI toolchain this item builds on is absent from the tree — `scripts/pki/{bootstrap,init-ca,issue-certs,check}.sh`, `config/pki/pg_hba.conf` and the `secrets/` files the overlay mounts have never been committed, so no CA exists to issue the ingress leaf and `scripts/pki/check.sh` cannot pass
 - source: session request on 2026-11-12 ("implement https"), same day the ADR-019 PKI profile landed; requester clarified on the same day that it means encryption between frontend and backend as well as against the outside world
 
 **Problem**
@@ -52,3 +53,4 @@ The default `docker compose up -d` stays plaintext and loopback-only, and the do
 - Design constraint to settle before code: uvicorn's TLS flags keep the certificate in the same process, which preserves ADR-001 decision 1, but one process then serves one hostname and scheme — the Keycloak redirect URI, the cookie `Secure` flag and the CSRF origin check all key off the scheme, so the profile has to set them together or the login loop breaks. The alternative (a Caddy/nginx sidecar) reverses ADR-001 decision 1 and needs its own ADR; it is not assumed here.
 - `depends-on: -` deliberately: the CA, the compose profile and the leaf-issuance scripts already exist (IDEA-023 is done), so this is the same profile extended rather than work blocked on a new capability.
 - Intake only: no compose, `scripts/pki/`, code, test, `.env.example`, document or ADR change is part of this capture, and the idea was not implemented in the turn that produced it, nor in the clarification turn that widened its scope.
+- Blocked 2026-11-18 while reading the item before claiming it. Both tiers that can be built here depend on the IDEA-023 PKI profile, and that profile's tooling is not in the repository: `git ls-files | grep -i pki` returns only `docker-compose.pki.yml` and `docs/PKI.md`, and `git log --all -- scripts/pki config/pki` is empty, so the files have never existed on any branch. What the tree references but does not contain: `scripts/pki/bootstrap.sh` (the documented first step, `docs/PKI.md:12`), `scripts/pki/{init-ca,issue-certs,check}.sh` (mounted at `/scripts` and run as the `pki-init` and `pki-issue` commands), `config/pki/pg_hba.conf` (mounted over `/etc/postgresql/pg_hba.conf` in the `db` override) and the `secrets/ca_password` / `secrets/provisioner_password` files the overlay declares as compose secrets. IDEA-023 is marked `done` and its implementation note lists those scripts as delivered, so the delivery is missing rather than deferred. Consequences for this item, concretely: `docker compose -f docker-compose.yml -f docker-compose.pki.yml --profile pki up -d` cannot start on a clean clone (missing secret files, missing mount sources), there is no CA to issue the server leaf that acceptance 1 and 2 require, and `curl --cacert pki/trust/ca.crt` has nothing to trust. Rebuilding the CA bootstrap, issuance and check scripts is a different task than "add ingress TLS" and would have to be written blind against an ADR that says they exist, so it is not done here. What is needed to unblock: restore or re-implement `scripts/pki/*` and `config/pki/pg_hba.conf` (with IDEA-023's Notes corrected, since a `done` item that references absent files hides this), then re-read this item — the ingress tier alone is still the shippable slice, and tiers 2 and 3 are unaffected by the missing CA except that "gateway-to-collector TLS" would reuse the same issuance path.
