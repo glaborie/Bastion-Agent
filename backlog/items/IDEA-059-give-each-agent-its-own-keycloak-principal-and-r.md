@@ -2,7 +2,7 @@
 
 - status: inbox
 - priority: P2
-- phase: v0.4
+- phase: v0.5
 - area: security
 - tags: identity, rbac, keycloak, audit, rate-limiting
 - depends-on: IDEA-054
