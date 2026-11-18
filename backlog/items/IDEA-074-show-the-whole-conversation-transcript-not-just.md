@@ -8,7 +8,7 @@
 - depends-on: IDEA-071
 - spec: ADR-022
 - created: 2026-11-17
-- updated: 2026-11-17
+- updated: 2026-11-18
 - source: session report on 2026-11-17 ("show transcript is not showing the full transcript")
 
 **Problem**
@@ -67,6 +67,14 @@ trace or a log.
 
 **Notes**
 
+- 2026-11-18: second reproduction, conversation `0fcd1c3a…` in tenant `acme`.
+  Two turns, `HANDOFF_REQUIRED` on turn 2 (audit row 1305), and both answers
+  escrowed (rows 1301 and 1307). The panel renders the newest request (row 1302,
+  which already carries both user turns) plus the newest answer (row 1307), so
+  the reader sees two user messages followed by an answer that replies to
+  neither — turn 1's answer is simply absent. Alice was notified normally in the
+  same tenant, so the gap is the transcript view alone, and the request side
+  already holds the full history: only the assistant turns are lost.
 - The cap should be a settings key with a default, like `MAX_HANDOFF_RECORDS`,
   so an operator can widen it without a code change; each decrypt is an audit
   row, so the cap is also a bound on ledger noise.
