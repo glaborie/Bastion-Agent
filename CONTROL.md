@@ -251,5 +251,5 @@ volumes:
 - **No PII in Dashboard by Default**: All entity values masked; "Reveal" requires `admin` role + step-up auth (TOTP/WebAuthn)
 - **Audit Every View**: `AUDIT_LOG_VIEW` event logged with viewer identity
 - **CSRF Protection**: All mutating endpoints require `X-CSRF-Token` header (issued on dashboard load)
-- **Rate Limiting**: Per-principal Redis token bucket (ADR-013). Dashboard pages, HTMX partials and polling APIs share 60 req/60 s per user; `POST /v1/chat` allows 120 req/60 s. Refusals are `429` with `Retry-After` and `RateLimit-*` headers; a limiter outage is `503`, never unlimited.
+- **Rate Limiting**: Per-principal Redis token buckets (ADR-013, ADR-020). Dashboard pages, HTMX partials and polling APIs share 60 req/60 s per user; `POST /v1/chat` allows 120 req/60 s. On top of that, chat *spend* is bounded: a turn reserves estimated prompt tokens plus `max_tokens` from a 100,000-token/60 s budget, is refused with `429`/`Retry-After`/`token budget exhausted` when the reservation does not fit, and settles the reported usage afterwards (debt when the estimate was short, floored at `-capacity`). Refusals are `429` with `Retry-After` and `RateLimit-*` headers; a limiter outage is `503`, never unlimited.
 - **Content Security Policy**: Strict CSP headers, no inline scripts except HTMX/Alpine nonce

@@ -294,9 +294,10 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
 - Controls:
   - LIVE: at most 64 messages, 32,768 characters per message, 65,536 in total, `max_tokens` at most 8192. A tool argument size cap applies.
   - LIVE: a quarantined session cannot continue to consume inference.
-  - LIVE: a per-principal Redis token bucket bounds request rate — 60 requests per 60 s for the dashboard and its polling APIs, 120 per 60 s for chat — and refuses with `429` plus `Retry-After`. A limiter outage is `503`, never unlimited (ADR-013).
-  - PLANNED: per-principal token and cost budgets. A principal can still spend its full request allowance on expensive turns.
-- Residual risk: fail-closed design is a deliberate trade. An outage of Presidio, Redis or the classifier denies service instead of degrading security. Rate limiting bounds request rate, not spend, so the T12 score is unchanged until token and cost budgets exist.
+  - LIVE: per-principal Redis token buckets bound request rate — 60 requests per 60 s for the dashboard and its polling APIs, 120 per 60 s for chat — and refuse with `429` plus `Retry-After`. A limiter outage is `503`, never unlimited (ADR-013).
+  - LIVE: chat *spend* is bounded per principal — a turn reserves estimated prompt tokens plus `max_tokens` from a 100,000-token/60 s bucket before the model is called, is refused with `429`/`Retry-After`/`token budget exhausted` when it does not fit, and settles the reported usage afterwards, including debt when the estimate was short (ADR-020).
+  - PLANNED: a per-principal *cost* budget. The token budget narrows dollar exposure but a principal on an expensive model gets the same allowance as one on the local model.
+- Residual risk: fail-closed design is a deliberate trade. An outage of Presidio, Redis or the classifier denies service instead of degrading security. Spend is bounded in tokens, not in dollars, and the reservation is an estimate — a prompt denser than `chars / 4` settles as debt rather than being refused up front.
 
 ## 6. Risk scoring
 
@@ -317,18 +318,18 @@ Scores are the author's estimates of residual risk with the controls as they exi
 | **T9 Approval workflow abuse** | 7 | 5 | 4 | 4 | 4 | **24** |
 | **T10 Audit tampering** | 7 | 5 | 3 | 6 | 4 | **25** |
 | **T11 Supply chain and model artifacts** | 8 | 3 | 3 | 8 | 5 | **27** |
-| **T12 Resource exhaustion** | 5 | 8 | 7 | 5 | 6 | **31** |
+| **T12 Resource exhaustion** | 4 | 6 | 5 | 4 | 6 | **25** |
 
 **Risk Priority:**
 1. T8 Job queue trust boundary - 34
 2. T4 Sensitive data disclosure - 32
 3. T1 Direct prompt injection - 31
-4. T12 Resource exhaustion - 31
-5. T6 Gateway identity and privilege abuse - 28
-6. T2 Indirect prompt injection - 27
-7. T11 Supply chain and model artifacts - 27
-8. T3 Hidden-context extraction - 26
-9. T10 Audit tampering - 25
+4. T6 Gateway identity and privilege abuse - 28
+5. T2 Indirect prompt injection - 27
+6. T11 Supply chain and model artifacts - 27
+7. T3 Hidden-context extraction - 26
+8. T10 Audit tampering - 25
+9. T12 Resource exhaustion - 25
 10. T9 Approval workflow abuse - 24
 11. T7 Tool misuse and unauthorized change - 23
 12. T5 Cross-session vault decoding - 20
@@ -339,7 +340,7 @@ Scores are the author's estimates of residual risk with the controls as they exi
 
 1. Close T8: authenticate queued jobs and isolate Redis.
 2. Run `pytest` and `scripts/run_evals.py` in CI and fail the build below threshold. The README states that evals gate merges, and CI does not do that yet.
-3. Add per-principal token and cost budgets (T12); request-rate limiting is live (ADR-013).
+3. Add a per-principal cost budget (T12); request-rate (ADR-013) and token budgets (ADR-020) are live.
 4. Add Swiss identifier recognizers and grow the golden set beyond 83 cases (T1, T4).
 5. Sign and verify images (cosign), pin the three tag-only references, and add IaC and secret scanning (T11).
 6. Replace development secrets with a secret-manager integration (T4, T6).

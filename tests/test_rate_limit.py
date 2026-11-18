@@ -23,8 +23,10 @@ from gateway.main import create_app
 from gateway.rate_limit import (
     RateLimitDecision,
     RateLimitUnavailable,
+    estimate_prompt_tokens,
     get_rate_limiter,
     rate_limit,
+    settled_tokens,
 )
 from settings import reset_settings_cache
 
@@ -39,6 +41,7 @@ class StubLimiter:
     retry_after_seconds: int = 1
     error: Exception | None = None
     calls: list[tuple[str, str, int, int]] = field(default_factory=list)
+    costs: list[int] = field(default_factory=list)
 
     async def consume(
         self,
@@ -47,8 +50,10 @@ class StubLimiter:
         *,
         limit: int,
         window_seconds: int,
+        cost: int = 1,
     ) -> RateLimitDecision:
         self.calls.append((principal_id, scope, limit, window_seconds))
+        self.costs.append(cost)
         if self.error is not None:
             raise self.error
         return RateLimitDecision(
@@ -251,3 +256,34 @@ def test_stub_limiter_signature_matches_the_protocol() -> None:
     real = inspect.signature(RateLimiter.consume)
     stub = inspect.signature(StubLimiter.consume)
     assert list(real.parameters) == list(stub.parameters)
+
+
+class _Message:
+    """Minimal ``ChatMessage`` stand-in: the estimator only reads ``content``."""
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+def test_the_estimator_is_ceil_chars_over_four_plus_four_per_message() -> None:
+    # The message list a turn sends upstream, plus the output cap, is what the
+    # bucket is charged: one short message costs 1 + 4 tokens.
+    assert estimate_prompt_tokens([_Message("abcd")]) == 1 + 4
+    # 8 characters round to 2 tokens, and each additional message carries 4.
+    assert estimate_prompt_tokens([_Message("abcd"), _Message("efgh")]) == 2 + 8
+    # Conservative on English on purpose; settlement refunds the difference.
+    long_prompt = [_Message("a" * 4000)]
+    assert estimate_prompt_tokens(long_prompt) == 1000 + 4
+
+
+def test_the_estimator_counts_characters_not_bytes() -> None:
+    # Four multi-byte characters are still one token at this ratio.
+    assert estimate_prompt_tokens([_Message("héllo wörld")]) == 3 + 4
+
+
+def test_settlement_prefers_total_then_the_two_parts() -> None:
+    assert settled_tokens(prompt_tokens=10, completion_tokens=5, total_tokens=17) == 17
+    assert settled_tokens(prompt_tokens=10, completion_tokens=5, total_tokens=None) == 15
+    # A provider that omits usage is charged at its reservation (ADR-020).
+    assert settled_tokens(prompt_tokens=None, completion_tokens=None, total_tokens=None) is None
+    assert settled_tokens(prompt_tokens=None, completion_tokens=5, total_tokens=None) is None

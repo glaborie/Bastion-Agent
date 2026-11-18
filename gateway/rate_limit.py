@@ -5,12 +5,17 @@ principal instead of one per process. Refill and consume happen inside a single
 Lua script and the clock is Redis's own ``TIME``, which keeps replicas with
 skewed system clocks from disagreeing about the same bucket.
 
-Two scopes are enforced, both keyed on the JWT ``sub``:
+Two request scopes are enforced, both keyed on the JWT ``sub``:
 
 * ``dashboard`` — pages, HTMX partials and the JSON APIs the dashboard polls
   (approvals, audit, eval health). The budget is deliberately the tighter one:
   a browser that polls faster than the UI needs is the common accident.
 * ``chat`` — ``POST /v1/chat``, the only path that spends inference tokens.
+
+A third scope, ``chat_tokens``, bounds the *spend* of that path rather than its
+request count (ADR-020): the chat handler reserves estimated prompt tokens plus
+``max_tokens`` before dispatching and settles the reported usage afterwards, so
+request rate and inference spend are two independent budgets on one store.
 
 Health probes, the OIDC login/callback routes and static assets are not
 limited: they either have no principal yet or must stay reachable while the rest
@@ -27,9 +32,9 @@ from __future__ import annotations
 import functools
 import logging
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import Final, Literal, Protocol, cast
 
 from fastapi import Depends, HTTPException, Request, Response, status
 from redis.asyncio import Redis
@@ -41,9 +46,25 @@ from settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-RateLimitScope = Literal["dashboard", "chat"]
 
+class ChatMessageLike(Protocol):
+    """The one field the estimator needs, so it does not import the router."""
+
+    @property
+    def content(self) -> str: ...
+
+
+RateLimitScope = Literal["dashboard", "chat", "chat_tokens"]
+
+#: Scopes the request-count dependency may enforce. ``chat_tokens`` is reserved
+#: for the reservation/settlement calls the chat handler makes itself.
 _SCOPES: Final[frozenset[str]] = frozenset({"dashboard", "chat"})
+
+#: How many tokens the estimator charges per message on top of its text.
+_MESSAGE_OVERHEAD_TOKENS: Final[int] = 4
+#: Conservative characters-per-token ratio. English is closer to 4, CJK and
+#: base64 are denser, which is why settlement may leave the bucket in debt.
+_CHARS_PER_TOKEN: Final[int] = 4
 
 #: Token bucket, refilled continuously at ``capacity / window`` per millisecond.
 #: ``TIME`` is read inside the script so all replicas share one clock. The key
@@ -94,6 +115,49 @@ return {allowed, math.floor(tokens), retry_ms, reset_ms}
 """
 
 
+#: Settlement script: add a signed correction to an existing bucket. The
+#: admission script refuses any cost above the balance, which is right for
+#: admitting a request and wrong for reconciling a completed call, so this one
+#: accepts debt and floors the balance at ``-capacity`` (ADR-020 decision 4).
+#: Returns the balance in tokens, floored like the reply of the bucket script.
+_SETTLE_SCRIPT: Final[str] = """
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local window_ms = tonumber(ARGV[2])
+local delta = tonumber(ARGV[3])
+if capacity <= 0 or window_ms <= 0 then
+  return redis.error_reply('rate limiter: capacity and window must be positive')
+end
+
+local refill = capacity / window_ms
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+
+local state = redis.call('HMGET', key, 'tokens', 'ts')
+local tokens = tonumber(state[1])
+local ts = tonumber(state[2])
+if tokens == nil or ts == nil then
+  tokens = capacity
+  ts = now
+end
+
+local elapsed = now - ts
+if elapsed > 0 then
+  tokens = math.min(capacity, tokens + elapsed * refill)
+end
+
+tokens = tokens - delta
+if tokens > capacity then tokens = capacity end
+if tokens < -capacity then tokens = -capacity end
+
+local reset_ms = math.ceil((capacity - tokens) / refill)
+redis.call('HSET', key, 'tokens', tokens, 'ts', now)
+redis.call('PEXPIRE', key, math.max(reset_ms, 1000))
+
+return math.floor(tokens)
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class RateLimitDecision:
     """Outcome of one bucket consume, already converted to wire units."""
@@ -122,8 +186,9 @@ class RateLimiter:
         *,
         limit: int,
         window_seconds: int,
+        cost: int = 1,
     ) -> RateLimitDecision:
-        """Take one token from ``principal_id``'s ``scope`` bucket."""
+        """Take ``cost`` tokens from ``principal_id``'s ``scope`` bucket."""
         key = f"ratelimit:{scope}:{principal_id}"
         try:
             reply = await cast(
@@ -134,7 +199,7 @@ class RateLimiter:
                     key,
                     str(limit),
                     str(window_seconds * 1000),
-                    "1",
+                    str(cost),
                 ),
             )
         except RedisError as exc:
@@ -153,6 +218,79 @@ class RateLimiter:
             retry_after_seconds=max(0, math.ceil(retry_ms / 1000)),
             reset_after_seconds=max(0, math.ceil(reset_ms / 1000)),
         )
+
+    async def reserve(
+        self,
+        principal_id: str,
+        *,
+        tokens: int,
+        capacity: int,
+        window_seconds: int,
+    ) -> RateLimitDecision:
+        """Reserve the worst-case spend of one turn from the token budget."""
+        return await self.consume(
+            principal_id,
+            "chat_tokens",
+            limit=capacity,
+            window_seconds=window_seconds,
+            cost=tokens,
+        )
+
+    async def settle(
+        self,
+        principal_id: str,
+        *,
+        delta: int,
+        capacity: int,
+        window_seconds: int,
+    ) -> int:
+        """Reconcile a completed call, returning the balance in tokens.
+
+        ``delta`` is ``actual - reserved``: positive charges the shortfall and
+        leaves the bucket in debt, negative refunds an over-reservation.
+        """
+        key = f"ratelimit:chat_tokens:{principal_id}"
+        try:
+            reply = await cast(
+                "Awaitable[object]",
+                self._redis.eval(
+                    _SETTLE_SCRIPT,
+                    1,
+                    key,
+                    str(capacity),
+                    str(window_seconds * 1000),
+                    str(delta),
+                ),
+            )
+        except RedisError as exc:
+            logger.error("Rate limiter settle failed", extra={"scope": "chat_tokens"})
+            raise RateLimitUnavailable("rate limiter store unavailable") from exc
+        return int(str(reply))
+
+
+def estimate_prompt_tokens(messages: Iterable[ChatMessageLike]) -> int:
+    """Conservative token estimate for a prompt: ``ceil(chars / 4)`` + 4 each.
+
+    It deliberately over-reserves English and under-reserves CJK or base64; the
+    first is corrected by settlement, the second becomes debt (ADR-020).
+    """
+    chars = 0
+    count = 0
+    for message in messages:
+        chars += len(message.content)
+        count += 1
+    return math.ceil(chars / _CHARS_PER_TOKEN) + _MESSAGE_OVERHEAD_TOKENS * count
+
+
+def settled_tokens(
+    *, prompt_tokens: int | None, completion_tokens: int | None, total_tokens: int | None
+) -> int | None:
+    """The usage figure settlement charges, or ``None`` when the provider omitted it."""
+    if total_tokens is not None:
+        return total_tokens
+    if prompt_tokens is not None and completion_tokens is not None:
+        return prompt_tokens + completion_tokens
+    return None
 
 
 @functools.lru_cache(maxsize=1)
@@ -179,7 +317,7 @@ def _headers(decision: RateLimitDecision) -> dict[str, str]:
     }
 
 
-def _refusal_headers(decision: RateLimitDecision) -> dict[str, str]:
+def refusal_headers(decision: RateLimitDecision) -> dict[str, str]:
     """The 429 headers: bucket state plus when the caller may retry."""
     return {
         **_headers(decision),
@@ -231,7 +369,7 @@ def rate_limit(scope: RateLimitScope) -> Callable[..., Awaitable[AuthContext]]:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="rate limit exceeded",
-                headers=_refusal_headers(decision),
+                headers=refusal_headers(decision),
             )
         return context
 

@@ -217,11 +217,24 @@ reset it.
 |-------|--------|----------------|
 | `dashboard` | pages, HTMX partials, `/api/approvals`, `/api/audit`, `/api/evals/latest`, `/api/incidents`, `/api/dashboard/demo/runs/*` | 60 requests / 60 s |
 | `chat` | `POST /v1/chat` | 120 requests / 60 s |
+| `chat_tokens` | `POST /v1/chat` (spend) | 100,000 tokens / 60 s |
+
+Request count is not spend, so chat also has an inference budget (ADR-020): a
+turn reserves its estimated prompt tokens — `ceil(chars / 4)` plus 4 per message
+over the post-DLP, canary-fenced payload — plus `max_tokens` before the model is
+called, and settles the provider's reported `usage` afterwards. A reservation
+that does not fit is refused before dispatch with `429`, `Retry-After` and
+detail `token budget exhausted`; an estimate that was too low settles as debt
+(floored at `-capacity`) that refill pays down, and a settle failure delivers
+the answer and flags `bastion.rate_limit.settle_failed` on the model span. A
+prompt blocked by the injection gate or the egress circuit breaker spends
+nothing.
 
 Tune it with `RATE_LIMIT_ENABLED`, `RATE_LIMIT_WINDOW_SECONDS`,
-`RATE_LIMIT_DASHBOARD_PER_WINDOW` and `RATE_LIMIT_CHAT_PER_WINDOW` (see
-`.env.example`). Health probes, the OIDC login flow and static assets are
-exempt; Keycloak's brute-force protection owns failed-login throttling.
+`RATE_LIMIT_DASHBOARD_PER_WINDOW`, `RATE_LIMIT_CHAT_PER_WINDOW` and
+`RATE_LIMIT_CHAT_TOKENS_PER_WINDOW` (see `.env.example`). Health probes, the
+OIDC login flow and static assets are exempt; Keycloak's brute-force protection
+owns failed-login throttling.
 
 A refusal is `429` with `Retry-After` and `RateLimit-Limit` /
 `RateLimit-Remaining` / `RateLimit-Reset`. JSON callers get the detail, while
