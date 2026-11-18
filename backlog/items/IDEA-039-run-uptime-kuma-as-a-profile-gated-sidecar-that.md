@@ -1,6 +1,6 @@
 ### IDEA-039: Run Uptime Kuma as a profile-gated sidecar that watches container health
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: infra
