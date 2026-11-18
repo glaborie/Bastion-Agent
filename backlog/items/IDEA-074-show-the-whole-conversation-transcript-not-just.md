@@ -1,6 +1,6 @@
 ### IDEA-074: Show the whole conversation transcript, not just the newest request and answer
 
-- status: inbox
+- status: done
 - priority: P2
 - phase: v0.4
 - area: gateway
@@ -50,19 +50,19 @@ trace or a log.
 
 **Acceptance**
 
-- [ ] `handoff_transcript_records` (or its replacement) returns **all** escrowed
+- [x] `handoff_transcript_records` (or its replacement) returns **all** escrowed
   `INPUT_RECEIVED` and `RESPONSE_SENT` rows for the conversation in id order, and
   the panel renders them turn by turn — a three-turn conversation from
   `bcdad02e…` shows three user turns and three assistant turns, not one block
   and one answer
-- [ ] The read stays admin-only and CSRF-guarded, one `ESCROW_ACCESSED` row per
+- [x] The read stays admin-only and CSRF-guarded, one `ESCROW_ACCESSED` row per
   decrypted record, and the count is bounded (a documented cap, e.g. the newest
   50 turns) so one click cannot walk an unbounded ledger page
-- [ ] A test seeds a multi-turn conversation with escrow on and asserts the
+- [x] A test seeds a multi-turn conversation with escrow on and asserts the
   order, the per-record audit rows and the cap; a conversation whose middle
   entry expired still renders the entries that are readable, with a note where
   one is not
-- [ ] `docs/adr/ADR-022.md` decision 9 and `README.md`'s "Operator handoffs"
+- [x] `docs/adr/ADR-022.md` decision 9 and `README.md`'s "Operator handoffs"
   paragraph state what the transcript now shows, and `scripts/gate.sh` is green
 
 **Notes**
@@ -87,3 +87,5 @@ trace or a log.
 - Not in scope: making the transcript available to `operator` (it decrypts
   escrow, so it stays admin-only), and any change to what the handoff queue
   itself shows a non-admin.
+- Shipped: `handoff_transcript_records` returns every escrowed `INPUT_RECEIVED`/`RESPONSE_SENT` row in ledger order, capped by the new `HANDOFF_TRANSCRIPT_MAX_RECORDS` setting (50 by default, newest kept); the route emits only the messages past the previous request and renders an expired or missing entry as a labelled gap. Tests live in `tests/test_handoff_transcript.py` (order, per-record `ESCROW_ACCESSED`, cap and the expired-entry gap), since `tests/test_dashboard.py` was at its size limit.
+- The cap window starts on a request: the first request inside it replays the history it carries, so a truncated transcript can show user turns older than the cap edge — but never a duplicate, and never an orphan answer before its question.
