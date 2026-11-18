@@ -1,6 +1,6 @@
 ### IDEA-072: Prove the gateway's fail-closed contract with a deterministic fault-injection suite
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: gateway
