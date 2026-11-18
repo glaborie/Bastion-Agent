@@ -1,6 +1,6 @@
 ### IDEA-054: Charge inference tokens to a per-principal chat budget
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: gateway
