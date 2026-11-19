@@ -1,6 +1,6 @@
 ### IDEA-079: Decide whether pyright joins the gate (it is clean today)
 
-- status: inbox
+- status: ready
 - priority: P3
 - phase: v0.5
 - area: tooling
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-18
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: session on 2026-11-18, after a root pyrightconfig.json briefly overrode the committed [tool.pyright]
 
 **Problem**

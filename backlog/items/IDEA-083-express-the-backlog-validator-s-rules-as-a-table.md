@@ -1,6 +1,6 @@
 ### IDEA-083: Express the backlog validator's rules as a table instead of one branch per rule
 
-- status: inbox
+- status: ready
 - priority: P3
 - phase: v0.5
 - area: tooling
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-18
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: session request on 2026-11-18, refactoring scan of scripts/check_backlog.py
 
 **Problem**
