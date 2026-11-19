@@ -68,6 +68,15 @@ def without_vault_certs_rule() -> str:
     )
 
 
+def without_env_rules() -> str:
+    """The real .gitignore with the `.env` and `.env.*` rules stripped."""
+    return "".join(
+        line
+        for line in GITIGNORE.read_text(encoding="utf-8").splitlines(keepends=True)
+        if line.strip() not in {".env", ".env.*"}
+    )
+
+
 def test_the_repository_itself_is_clean() -> None:
     result = run_check(ROOT)
 
@@ -112,6 +121,21 @@ def test_material_in_a_directory_that_lost_its_rule_fails(tmp_path: Path) -> Non
 
     (root / ".gitignore").write_text(GITIGNORE.read_text(encoding="utf-8"), encoding="utf-8")
 
+    assert run_check(root).returncode == 0
+
+
+def test_a_missing_env_ignore_rule_fails_naming_only_the_path(tmp_path: Path) -> None:
+    root = make_repo(tmp_path, without_env_rules())
+
+    result = run_check(root)
+
+    assert result.returncode == 1
+    assert ".env" in result.stdout
+    assert ".env.vault" in result.stdout
+
+    (root / ".gitignore").write_text(GITIGNORE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    # Absent files still pass: the rule is what the check protects.
     assert run_check(root).returncode == 0
 
 

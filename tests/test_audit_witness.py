@@ -40,6 +40,7 @@ from db.witness import (
     verify_witness_signature,
     witness_matches,
 )
+from scripts.check_env_vault import read_env
 from settings import Settings
 from tests.conftest import (
     TEST_DATABASE_URL,
@@ -83,8 +84,12 @@ def app_client() -> Any:
 
 
 def root_client() -> Any:
-    user = os.getenv("MINIO_ROOT_USER")
-    password = os.getenv("MINIO_ROOT_PASSWORD")
+    # The stack takes these from the `.env` -> `.env.vault` pair (IDEA-076), and
+    # CI exports them into the process environment; resolve the same order.
+    root = Path(__file__).resolve().parents[1]
+    values = {**read_env(root / ".env"), **read_env(root / ".env.vault"), **os.environ}
+    user = values.get("MINIO_ROOT_USER")
+    password = values.get("MINIO_ROOT_PASSWORD")
     assert user and password, "MINIO_ROOT_USER/MINIO_ROOT_PASSWORD are not set"
     return s3_client(user, password)
 

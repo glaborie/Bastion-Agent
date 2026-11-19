@@ -270,3 +270,27 @@ def test_audit_event_vocabulary_ddl_covers_every_event_type() -> None:
         assert f"'{member.value}'" in kind_ddl, f"{member.name} is missing from the DDL"
     newest_kind = list(EscrowKind)[-1].value
     assert f"LIKE '%{newest_kind}%'" in kind_ddl
+
+
+def test_env_vault_is_the_optional_second_dotenv_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IDEA-076: host tooling sees the values `make vault-export` materialised."""
+    (tmp_path / ".env").write_text("LOG_LEVEL=INFO\n", encoding="utf-8")
+    (tmp_path / ".env.vault").write_text("LOG_LEVEL=DEBUG\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+
+    assert make_settings().log_level == "INFO"
+    assert Settings().log_level == "DEBUG"
+    assert Settings.model_config["env_file"] == (".env", ".env.vault")
+
+
+def test_no_env_vault_leaves_settings_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text("LOG_LEVEL=INFO\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+
+    assert Settings().log_level == "INFO"

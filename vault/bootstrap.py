@@ -13,6 +13,7 @@ Production: replace the dev token with AppRole/K8s auth and inject unseal keys
 via a secrets manager or HSM. This script is dev-only.
 """
 
+import base64
 import json
 import os
 import shutil
@@ -160,6 +161,7 @@ def main():
 
 
 def seed_secrets() -> None:
+    """Seed every generated secret once; externally-issued keys come from `vault-import`."""
     secrets = {
         "db/postgres": {
             "POSTGRES_USER": "bastion",
@@ -174,22 +176,39 @@ def seed_secrets() -> None:
         "db/keycloak": {
             "KEYCLOAK_ADMIN": "admin",
             "KEYCLOAK_ADMIN_PASSWORD": os.urandom(24).hex(),
-            "KEYCLOAK_CLIENT_SECRET": os.urandom(32).hex(),
+            # Not generated on purpose: Keycloak imports the realm from
+            # config/keycloak/realm-export.json, which pins this dev client
+            # secret, and the gateway exchanges the code with the env value.
+            # A random value would break the dashboard login. _reject_dev_secrets
+            # still refuses this value outside local development.
+            "KEYCLOAK_CLIENT_SECRET": "dev-only-keycloak-client-secret",
         },
         "db/minio": {
             "MINIO_ROOT_USER": "bastion-minio-root",
             "MINIO_ROOT_PASSWORD": os.urandom(24).hex(),
-            "AUDIT_WITNESS_ACCESS_KEY": "bastion-witness",
+            "AUDIT_WITNESS_ACCESS_KEY": os.urandom(16).hex(),
             "AUDIT_WITNESS_SECRET_KEY": os.urandom(32).hex(),
+        },
+        "db/pgadmin": {
+            "PGADMIN_DEFAULT_PASSWORD": os.urandom(24).hex(),
+        },
+        "db/omniroute": {
+            "OMNIROUTE_ADMIN_PASSWORD": os.urandom(24).hex(),
         },
         "app/jwt": {
             "JOB_SIGNING_SECRET": os.urandom(32).hex(),
             "APPROVAL_HMAC_SECRET": os.urandom(32).hex(),
         },
+        "app/dlp": {
+            # AES-256 keys: settings.py base64-decodes these and requires 32 bytes.
+            "VAULT_MASTER_KEY": base64.b64encode(os.urandom(32)).decode(),
+            "PAYLOAD_ESCROW_MASTER_KEY": base64.b64encode(os.urandom(32)).decode(),
+        },
+        "app/audit": {
+            "AUDIT_WITNESS_HMAC_SECRET": os.urandom(32).hex(),
+        },
         "app/oauth": {
-            "OPENROUTER_API_KEY": "sk-local-dev",
-            "OMNIROUTE_API_KEY": "sk-local-dev",
-            "LLAMA_API_KEY": "dev-only-llama-api-key",
+            "OMNIROUTE_API_KEY": f"sk-{os.urandom(24).hex()}",
         },
     }
     for path, data in secrets.items():
