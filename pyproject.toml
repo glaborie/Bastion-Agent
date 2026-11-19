@@ -100,6 +100,9 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.pylint.main]
 py-version = "3.11"
+# `tests` is a first-party package but not part of the installed project, so the
+# repo root has to be importable for the scripts that read the golden corpus.
+init-hook = "import sys; sys.path.insert(0, '')"
 # 0 = one worker per core. Safe here because duplicate-code (R0801), the one
 # cross-module checker parallel mode complicates, is disabled below.
 jobs = 0

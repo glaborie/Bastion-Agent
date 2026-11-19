@@ -1,6 +1,6 @@
 ### IDEA-080: Load the golden corpus through one shared loader
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.5
 - area: evals
@@ -38,11 +38,11 @@ scripts read the same field values they do today.
 
 **Acceptance**
 
-- [ ] `uv run pytest tests/test_classifier.py tests/test_classifier_evals.py tests/test_dlp_evals.py tests/test_egress_evals.py -q` passes
-- [ ] `uv run python scripts/tune_classifier.py --json` and `uv run python scripts/benchmark_classifier_goldens.py --json` report the same corpus row count as before the change on a host with the ensemble configured
-- [ ] `grep -rn "class Golden" --include='*.py' tests scripts` prints exactly one line (`tests/goldens.py`), and `grep -n "json.loads" scripts/tune_classifier.py scripts/benchmark_classifier_goldens.py` prints nothing
-- [ ] `uv run mypy tests/goldens.py scripts/tune_classifier.py scripts/benchmark_classifier_goldens.py` is clean under the repo's strict config
-- [ ] `git diff --exit-code tests/data/goldens.jsonl` succeeds (corpus unchanged)
+- [x] `uv run pytest tests/test_classifier.py tests/test_classifier_evals.py tests/test_dlp_evals.py tests/test_egress_evals.py -q` passes
+- [x] `uv run python scripts/tune_classifier.py --json` and `uv run python scripts/benchmark_classifier_goldens.py --json` report the same corpus row count as before the change on a host with the ensemble configured
+- [x] `grep -rn "class Golden" --include='*.py' tests scripts` prints exactly one line (`tests/goldens.py`), and `grep -n "json.loads" scripts/tune_classifier.py scripts/benchmark_classifier_goldens.py` prints nothing
+- [x] `uv run mypy tests/goldens.py scripts/tune_classifier.py scripts/benchmark_classifier_goldens.py` is clean under the repo's strict config
+- [x] `git diff --exit-code tests/data/goldens.jsonl` succeeds (corpus unchanged)
 
 **Notes**
 
@@ -69,3 +69,8 @@ scripts read the same field values they do today.
   verdict changes.
 - Priority/phase confirmed against the rubric: P2/v0.5 — a real correctness
   seam that is not part of a phase definition of done and can wait one phase.
+- `tests` is importable under pytest but not to a script: `uv run python
+  scripts/…` puts only `scripts/` on `sys.path`, and the project install
+  excludes `tests`, so both scripts add the repo root to `sys.path` and
+  `[tool.pylint.main] init-hook` does the same for pylint. A future non-test
+  consumer should move the loader into a shipped package instead.
