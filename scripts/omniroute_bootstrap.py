@@ -5,10 +5,11 @@ Creates/updates the llama.cpp provider node, the provider connections, the
 `local-llama` / `cloud-primary` / `cloud-strong` combos and the gateway API key,
 then smoke-tests every alias.
 
-    uv run python scripts/omniroute_bootstrap.py --write-env
+    uv run python scripts/omniroute_bootstrap.py --write-vault
 
-The API key is printed only when it is created (OmniRoute never reveals it
-again); `--write-env` stores it in `.env` automatically.
+The API key is never printed (OmniRoute does not reveal it again);
+`--write-vault` stores a new one in Vault so the next `make vault-export`
+carries it, and `--write-env` keeps the pre-Vault flow that writes `.env`.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -25,6 +27,8 @@ import urllib.request
 BASE_URL = "http://127.0.0.1:8001"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENV_FILE = ROOT / ".env"
+ENV_VAULT = ROOT / ".env.vault"
+COMPOSE_FILES = ("-f", "docker-compose.yml", "-f", "docker-compose.vault.yml")
 
 NODE_ID = "openai-compatible-chat-local"
 NODE = {
@@ -57,14 +61,44 @@ COMBOS = {
 
 
 def load_env() -> dict[str, str]:
+    """`.env` then the optional `.env.vault`, as `settings.py` loads them."""
     values: dict[str, str] = {}
-    for line in ENV_FILE.read_text().splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
+    for path in (ENV_FILE, ENV_VAULT):
+        if not path.is_file():
             continue
-        key, _, value = stripped.partition("=")
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        for line in path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            values[key.strip()] = value.strip().strip('"').strip("'")
     return values
+
+
+def write_vault_value(key: str, value: str) -> None:
+    """Patch one field into `bastion/app/oauth`, so `vault-export` carries it."""
+    command = ["docker", "compose"]
+    for path in (ENV_FILE, ENV_VAULT):
+        if path.is_file():
+            command += ["--env-file", str(path)]
+    command += [
+        *COMPOSE_FILES,
+        "exec",
+        "-T",
+        "-e",
+        "VAULT_SKIP_VERIFY=true",
+        "vault",
+        "vault",
+        "kv",
+        "patch",
+        "bastion/app/oauth",
+        f"{key}={value}",
+    ]
+    result = subprocess.run(  # noqa: S603 - fixed docker CLI, arguments built here
+        command, cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"writing {key} to Vault failed: {result.stderr.strip()[:300]}")
 
 
 def write_env_value(key: str, value: str) -> None:
@@ -207,7 +241,7 @@ def ensure_key(admin: Admin, env: dict[str, str]) -> str:
     if status >= 300:
         raise SystemExit(f"key creation failed: {body[:400]}")
     created = str(json.loads(body)["key"])
-    print(f"gateway key created: {created}")
+    print("gateway key created (value not printed)")
     return created
 
 
@@ -241,6 +275,9 @@ def main() -> None:
     parser.add_argument(
         "--write-env", action="store_true", help="store a newly created gateway key in .env"
     )
+    parser.add_argument(
+        "--write-vault", action="store_true", help="store a newly created gateway key in Vault"
+    )
     parser.add_argument("--skip-smoke", action="store_true", help="do not call the aliases")
     args = parser.parse_args()
 
@@ -261,7 +298,12 @@ def main() -> None:
     )
     ensure_combos(admin)
     key = ensure_key(admin, env)
-    if args.write_env and key != env.get("OMNIROUTE_API_KEY"):
+    if args.write_vault and key != env.get("OMNIROUTE_API_KEY"):
+        write_vault_value("OMNIROUTE_API_KEY", key)
+        print(
+            "wrote OMNIROUTE_API_KEY to Vault; run `make vault-export` and recreate gateway/worker"
+        )
+    elif args.write_env and key != env.get("OMNIROUTE_API_KEY"):
         write_env_value("OMNIROUTE_API_KEY", key)
         print("wrote OMNIROUTE_API_KEY to .env (recreate gateway/worker to apply)")
     if not args.skip_smoke:

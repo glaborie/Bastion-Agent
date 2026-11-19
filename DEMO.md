@@ -54,7 +54,8 @@ curl -s http://localhost:8000/health/ready | jq
 Register the OmniRoute aliases once (idempotent):
 
 ```bash
-uv run python scripts/omniroute_bootstrap.py --write-env
+uv run python scripts/omniroute_bootstrap.py --write-vault
+make vault-export
 docker compose up -d --no-deps gateway worker   # only if a key was written
 ```
 

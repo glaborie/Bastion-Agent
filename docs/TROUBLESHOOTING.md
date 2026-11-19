@@ -174,12 +174,14 @@ reconcile the contract:
 
 ```bash
 docker compose up -d omniroute
-uv run python scripts/omniroute_bootstrap.py --write-env   # rotates OMNIROUTE_API_KEY
+uv run python scripts/omniroute_bootstrap.py --write-vault  # rotates OMNIROUTE_API_KEY
+make vault-export
 docker compose up -d gateway worker
 ```
 
-The bootstrap rewrites `OMNIROUTE_API_KEY` in `.env` and smoke-tests both
-aliases, so a passing run says the router answers `local-llama` and
+The bootstrap stores `OMNIROUTE_API_KEY` in Vault (`--write-env` does the same
+for a stack still running from `.env`) and smoke-tests both aliases, so a
+passing run says the router answers `local-llama` and
 `cloud-primary`. A container created before the fix keeps a volume whose root
 holds the old layout; remove it (`docker compose rm -sf omniroute`, then
 `docker volume rm bastion-agent_omniroute_data`) rather than mounting it at the

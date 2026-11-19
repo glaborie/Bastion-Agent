@@ -298,13 +298,21 @@ def check_render(env_vault: Path, base_env: Path) -> list[str]:
     return problems
 
 
-def _vault_field(key: str, path: str) -> str | None:
+def compose_exec_args(env_vault: Path) -> list[str]:
+    """`docker compose` invocation that can interpolate a stack whose `.env` is
+    migrated: the required `${VAR:?}`s now live only in `.env.vault`."""
+    args = ["docker", "compose"]
+    if (ROOT / ".env").is_file():
+        args += ["--env-file", ".env"]
+    if env_vault.is_file():
+        args += ["--env-file", str(env_vault)]
+    return [*args, *COMPOSE_FILES, "exec"]
+
+
+def _vault_field(key: str, path: str, env_vault: Path) -> str | None:
     """One field from the live Vault; ``None`` when the read failed."""
     command = [
-        "docker",
-        "compose",
-        *COMPOSE_FILES,
-        "exec",
+        *compose_exec_args(env_vault),
         "-T",
         "-e",
         "VAULT_SKIP_VERIFY=true",
@@ -330,7 +338,7 @@ def check_vault(env_vault: Path, host_env: Path) -> list[str]:
     problems: list[str] = []
     live: dict[str, str] = {}
     for key, path in VAULT_SECRETS.items():
-        value = _vault_field(key, path)
+        value = _vault_field(key, path, env_vault)
         if value is None:
             problems.append(f"{key}: cannot read {path} from Vault (is it up and unsealed?)")
             continue

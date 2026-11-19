@@ -54,12 +54,17 @@ make vault-import
 # 3. Materialise every credential into a gitignored .env.vault
 make vault-export
 
-# 4. Delete the sixteen application-secret lines and the two host URL lines
-#    from .env; `make vault-check` names any that remain
+# 4. Delete every line `vault-export` wrote from `.env` (the 25 keys);
+#    `make vault-check` and the plaintext gate name any that remain
 make vault-check
 
 # 5. Start the full stack (layers .env.vault over .env)
 make up
+
+# 6. On a fresh OmniRoute volume, register the gateway key in Vault and re-export
+uv run python scripts/omniroute_bootstrap.py --write-vault
+make vault-export
+docker compose up -d --no-deps gateway worker   # only if a key was written
 ```
 
 That is the only start path. `make up` layers `.env.vault` over `.env` (a later
@@ -72,8 +77,10 @@ still starts.
 
 Once the lines are deleted, `scripts/check_env_vault.py --check-plaintext` (a
 gate step) fails, naming only the key, if a secret is typed back into `.env`.
-`.env.example` keeps the development defaults so a clone without Vault remains
-startable.
+The seven infra lines must go too: leaving a development copy in `.env` shadows
+`.env.vault` for host tooling, because a process environment entry wins over a
+dotenv file (DeepEval's pytest plugin exports `.env` this way). `.env.example`
+keeps the development defaults so a clone without Vault remains startable.
 
 If `.env.vault` is incomplete, or Vault has been rotated since it was written,
 `make vault-check` stops you before the stack starts:

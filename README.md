@@ -68,8 +68,9 @@ ls -lh models/qwen2.5-7b-instruct-q4_k_m.gguf   # must be ~4.7 GB, not 0 bytes
 #    IDEA-062). Both are `service_completed_successfully` dependencies.
 docker compose up -d
 
-# 5. Register the routing aliases (idempotent; writes OMNIROUTE_API_KEY to .env)
-uv run python scripts/omniroute_bootstrap.py --write-env
+# 5. Register the routing aliases (idempotent; stores the gateway key in Vault)
+uv run python scripts/omniroute_bootstrap.py --write-vault
+make vault-export
 docker compose up -d --no-deps gateway worker   # only needed if a key was written
 
 # 6. Access Command Control Center
@@ -1163,11 +1164,14 @@ combos, and the gateway's `/v1` API key. It is idempotent and ends with a smoke
 test of every alias:
 
 ```bash
-uv run python scripts/omniroute_bootstrap.py --write-env
+uv run python scripts/omniroute_bootstrap.py --write-vault   # .env.vault stack
+# or --write-env when the stack still runs from .env
 ```
 
-Re-run it after `docker compose down -v` (which wipes OmniRoute's volume), after
-rotating `LLAMA_API_KEY` or `OPENROUTER_API_KEY`, or when adding models to a
+`--write-vault` patches `bastion/app/oauth`; follow it with `make vault-export`
+and a gateway/worker recreate. Re-run it after `docker compose down -v` (which
+wipes OmniRoute's volume), after rotating `LLAMA_API_KEY` or
+`OPENROUTER_API_KEY`, or when adding models to a
 combo. It requires `OPENROUTER_API_KEY` in `.env`.
 
 ---
