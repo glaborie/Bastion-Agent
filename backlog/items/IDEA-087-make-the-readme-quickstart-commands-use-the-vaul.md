@@ -1,6 +1,6 @@
 ### IDEA-087: Make the README quickstart commands use the Vault env files
 
-- status: ready
+- status: active
 - priority: P1
 - phase: v0.5
 - area: docs
