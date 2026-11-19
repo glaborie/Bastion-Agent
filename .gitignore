@@ -13,6 +13,9 @@
 # gate when any of this becomes trackable, so a fixture that must be committed
 # goes in its allowlist with a justification rather than as a rule here.
 pki/
+# The toolchain is tracked; only generated material is ignored (IDEA-078).
+!scripts/pki/
+!config/pki/
 secrets/
 vault/certs/
 
