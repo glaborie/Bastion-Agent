@@ -1,6 +1,6 @@
 ### IDEA-086: Self-host CI runners and evaluate Gitea
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: infra

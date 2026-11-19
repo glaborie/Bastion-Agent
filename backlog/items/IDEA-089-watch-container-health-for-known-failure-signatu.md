@@ -1,6 +1,6 @@
 ### IDEA-089: Watch container health for known failure signatures and forward them to Uptime Kuma and ntfy
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: infra

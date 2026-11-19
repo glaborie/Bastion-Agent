@@ -1,6 +1,6 @@
 ### IDEA-084: Make an eval run's per-test evidence recoverable from the harness
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: evals
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-006
 - created: 2026-11-18
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: session on 2026-11-18, after the first recorded run (`run_id 1e39853cf621489c9885921566b5af31`, 250/250, all three metrics `1.0`) left no way to say which tests produced it
 
 **Problem**
