@@ -730,9 +730,12 @@ A PDF enters the pipeline through one local command, never through the chat
 endpoint, and its text is redacted before anything else sees it:
 
 ```bash
-docker compose exec gateway python -m agent.ingest.cli convert dossier.pdf \
-  --tenant acme --actor alice --output dossier.redacted.md
-# host checkout, same module:
+# inside the container the paths are the container's, so copy in and out
+docker compose cp dossier.pdf gateway:/tmp/dossier.pdf
+docker compose exec gateway python -m agent.ingest.cli convert /tmp/dossier.pdf \
+  --tenant acme --actor alice --output /tmp/dossier.redacted.md
+docker compose cp gateway:/tmp/dossier.redacted.md dossier.redacted.md
+# host checkout, same module, host paths:
 uv run python -m agent.ingest.cli convert dossier.pdf \
   --tenant acme --actor alice --output dossier.redacted.md
 ```
