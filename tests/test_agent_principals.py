@@ -408,11 +408,16 @@ async def test_v3_ledger_links_old_rows_and_breaks_on_actor_edit(
     session: AsyncSession,
 ) -> None:
     """v1/v2 rows keep their preimage; a v3 agent row is tamper-evident."""
-    from db.models import compute_record_hash, hash_payload
+    from db.models import AUDIT_LOG_ID_SEQUENCE, compute_record_hash, hash_payload
 
     moment = datetime(2026, 11, 19, 12, 0, 0, tzinfo=UTC)
     previous = GENESIS_HASH
-    for version, record_id in ((1, 1), (2, 2)):
+    for version in (1, 2):
+        # Allocate like the append path does: another test in the same database
+        # may have left rows behind, so a fixed id would collide.
+        record_id = int(
+            (await session.execute(select(AUDIT_LOG_ID_SEQUENCE.next_value()))).scalar_one()
+        )
         metadata_hash = hash_payload({}) if version == 2 else None
         row = AuditLog(
             id=record_id,
