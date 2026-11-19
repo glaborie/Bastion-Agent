@@ -1,6 +1,6 @@
 ### IDEA-059: Give each agent its own Keycloak principal and registry entry
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: security
@@ -8,7 +8,7 @@
 - depends-on: IDEA-054
 - spec: -
 - created: 2026-11-14
-- updated: 2026-11-14
+- updated: 2026-11-19
 - source: session, design note on non-human principals against gateway/auth and db/audit.py, 2026-11-14
 
 **Problem**
