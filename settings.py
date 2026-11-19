@@ -38,7 +38,11 @@ class Settings(BaseSettings):
     """Typed view over the process environment."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # `.env.vault` is materialised from Vault by `make vault-export`; a later
+        # file wins, so host tooling (pytest, Alembic, scripts) sees the same
+        # values the containers do. The file is optional: a fresh clone without
+        # Vault loads exactly as before (IDEA-076).
+        env_file=(".env", ".env.vault"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

@@ -36,6 +36,10 @@ from pathlib import Path
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 MATERIAL_SUFFIXES = (".crt", ".key", ".pem", ".p12", ".pfx", ".jks")
 GENERATED_DIRS = ("pki/", "secrets/", "vault/certs/")
+#: Materialised env files: `.env` is hand-edited and `.env.vault` is written by
+#: `make vault-export`. Both must stay ignored even though they are absent on a
+#: fresh clone, so the rule cannot disappear without a red check (IDEA-076).
+MATERIALISED_ENV_FILES = (".env", ".env.vault")
 
 # Tracked fixtures that must stay committed, path -> why it is safe.
 # Keep this empty until a test genuinely needs key material in the tree; a
@@ -93,6 +97,27 @@ def missing_ignore_rules(root: Path) -> list[str]:
     return [d for d in GENERATED_DIRS if d not in rules and d not in {r.rstrip("/") for r in rules}]
 
 
+def ignored_path(root: Path, path: str) -> bool:
+    """True when git would ignore ``path`` (the path need not exist)."""
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed git CLI, argument built here
+            ["git", "-C", str(root), "check-ignore", "-q", path],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise RepositoryError(f"git check-ignore failed in {root}: {exc}") from exc
+    if result.returncode not in (0, 1):
+        raise RepositoryError(f"git check-ignore failed in {root}: rc={result.returncode}")
+    return result.returncode == 0
+
+
+def unignored_env_files(root: Path) -> list[str]:
+    """Materialised env files whose ignore rule is gone."""
+    return [name for name in MATERIALISED_ENV_FILES if not ignored_path(root, name)]
+
+
 def scan(root: Path, allowlist: Mapping[str, str] | None = None) -> list[str]:
     """Return one message per problem; messages name paths, never content."""
     exempt = ALLOWLIST if allowlist is None else allowlist
@@ -108,6 +133,11 @@ def scan(root: Path, allowlist: Mapping[str, str] | None = None) -> list[str]:
     problems += [
         f"generated material directory is not ignored: {d} — .gitignore is missing the `{d}` rule"
         for d in missing_ignore_rules(root)
+    ]
+    problems += [
+        f"materialised env file is not ignored: {p} — .gitignore is missing the rule, "
+        "so a plain `git add -A` would commit it"
+        for p in unignored_env_files(root)
     ]
     problems += [
         f"allowlist entry without a justification: {p} — state why the material is safe to commit"
@@ -134,7 +164,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"secret material: scanning {root}")
         print(
             f"secret material: suffixes {', '.join(MATERIAL_SUFFIXES)}; "
-            f"generated dirs {', '.join(GENERATED_DIRS)}"
+            f"generated dirs {', '.join(GENERATED_DIRS)}; "
+            f"env files {', '.join(MATERIALISED_ENV_FILES)}"
         )
         if ALLOWLIST:
             for path, reason in sorted(ALLOWLIST.items()):
