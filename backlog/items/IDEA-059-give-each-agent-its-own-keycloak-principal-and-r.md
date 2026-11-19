@@ -1,6 +1,6 @@
 ### IDEA-059: Give each agent its own Keycloak principal and registry entry
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: security
