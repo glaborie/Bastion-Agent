@@ -1,6 +1,6 @@
 ### IDEA-076: Move the remaining application secrets out of .env into the Vault dev overlay
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.3
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-021
 - created: 2026-11-18
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: session 2026-11-18 ("I just want to get rid of secrets stored in the .env file")
 
 **Problem**
