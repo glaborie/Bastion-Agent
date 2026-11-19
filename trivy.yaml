@@ -145,3 +145,15 @@ ignore:
     images: [louislam-uptime-kuma-2.5.12]
     statement: "Go stdlib 1.20.5 in a bundled helper binary of uptime-kuma 2.5.12; fixed in 1.22.4, which needs the next upstream release."
     expires: 2027-02-16
+
+  # ---------------------------------------------------------------------------
+  # quay.io/keycloak/keycloak 26.8.2 (the default stack's OIDC provider). The
+  # JDK package below has no fixed version in the image's Red Hat suite, so the
+  # risk is accepted for 90 days at the user's direction; the next Keycloak base
+  # rebuild reopens the review, and the expiry fails the gate even if the
+  # finding disappears.
+  # ---------------------------------------------------------------------------
+  - id: CVE-2026-114938
+    images: [quay.io-keycloak-keycloak-26.8.2]
+    statement: "java-21-openjdk-headless 1:21.0.13.0.9-1.2.el9 in the Keycloak 26.8.2 image has no fixed version; risk accepted until the next Keycloak base rebuild."
+    expires: 2027-02-17
