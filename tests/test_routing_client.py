@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -12,12 +13,16 @@ import yaml
 
 from agent.routing.classifier import Classification, Sensitivity, SensitivityClassifier
 from agent.routing.client import (
+    BreakerOpenError,
     ChatMessage,
     ModelRouter,
     OmniRouteClient,
+    RequestDeadline,
+    RouteBusyError,
     RoutingError,
     UpstreamError,
     UpstreamResponseError,
+    UpstreamTimeoutError,
 )
 from settings import get_settings
 
@@ -331,3 +336,183 @@ def test_invalid_client_configuration() -> None:
         OmniRouteClient(base_url="http://omniroute:20128", api_key="")
     with pytest.raises(ValueError, match="max_retries"):
         OmniRouteClient(base_url="http://omniroute:20128", api_key="sk-test", max_retries=-1)
+
+
+class FakeClock:
+    """A monotonic clock the test moves by hand; no test waits on real time."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class GatedTransport(httpx.AsyncBaseTransport):
+    """Holds every request until the test releases it."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.entered = asyncio.Event()
+        self.calls = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        self.entered.set()
+        await self.release.wait()
+        return httpx.Response(
+            200, json=completion_payload(model=json.loads(request.content)["model"])
+        )
+
+
+async def test_a_hung_upstream_stops_at_the_request_deadline() -> None:
+    """ADR-004 decision 4: one attempt ends at the budget, not timeout x attempts."""
+    clock = FakeClock()
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        clock.now += 200.0  # the hung attempt consumed more than the whole budget
+        raise httpx.ReadTimeout("hung upstream", request=request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OmniRouteClient(
+        base_url="http://omniroute:20128",
+        api_key="sk-test",
+        timeout_seconds=120.0,
+        max_retries=3,
+        retry_backoff_seconds=0.25,
+        clock=clock,
+        client=http,
+    )
+    deadline = RequestDeadline(5.0, clock=clock)
+    try:
+        with pytest.raises(UpstreamTimeoutError) as info:
+            await client.chat_completion(
+                [ChatMessage("user", "hi")], model="cloud-primary", deadline=deadline
+            )
+    finally:
+        await http.aclose()
+    assert calls["n"] == 1
+    assert info.value.http_status == 504
+
+
+async def test_little_time_left_makes_zero_retries() -> None:
+    clock = FakeClock()
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(503, json={"error": "busy"})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OmniRouteClient(
+        base_url="http://omniroute:20128",
+        api_key="sk-test",
+        max_retries=3,
+        retry_backoff_seconds=0.25,
+        clock=clock,
+        client=http,
+    )
+    # The budget is smaller than the first backoff, so no retry can fit.
+    deadline = RequestDeadline(0.1, clock=clock)
+    try:
+        with pytest.raises(UpstreamError) as info:
+            await client.chat_completion(
+                [ChatMessage("user", "hi")], model="cloud-primary", deadline=deadline
+            )
+    finally:
+        await http.aclose()
+    assert calls["n"] == 1
+    assert info.value.status_code == 503
+
+
+async def test_a_full_bulkhead_refuses_the_next_call_and_routes_count_apart() -> None:
+    transport = GatedTransport()
+    http = httpx.AsyncClient(transport=transport)
+    client = OmniRouteClient(
+        base_url="http://omniroute:20128",
+        api_key="sk-test",
+        max_concurrency=1,
+        client=http,
+    )
+    held = asyncio.create_task(
+        client.chat_completion([ChatMessage("user", "hi")], model="local-llama")
+    )
+    await transport.entered.wait()
+
+    try:
+        with pytest.raises(RouteBusyError):
+            await client.chat_completion([ChatMessage("user", "hi")], model="local-llama")
+
+        transport.entered.clear()
+        cloud = asyncio.create_task(
+            client.chat_completion([ChatMessage("user", "hi")], model="cloud-primary")
+        )
+        await transport.entered.wait()
+    finally:
+        transport.release.set()
+    assert (await held).model == "local-llama"
+    assert (await cloud).model == "cloud-primary"
+    await http.aclose()
+
+
+async def test_the_breaker_opens_half_opens_and_closes() -> None:
+    clock = FakeClock()
+    status = {"code": 503}
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if status["code"] >= 400:
+            return httpx.Response(status["code"], json={"error": "busy"})
+        return httpx.Response(200, json=completion_payload())
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OmniRouteClient(
+        base_url="http://omniroute:20128",
+        api_key="sk-test",
+        max_retries=0,
+        breaker_failure_threshold=2,
+        breaker_cooldown_seconds=30.0,
+        clock=clock,
+        client=http,
+    )
+    try:
+        for _ in range(2):
+            with pytest.raises(UpstreamError):
+                await client.chat_completion([ChatMessage("user", "hi")], model="cloud-primary")
+        assert calls["n"] == 2
+
+        # Open: refused before the wire, and the upstream sees nothing.
+        with pytest.raises(BreakerOpenError):
+            await client.chat_completion([ChatMessage("user", "hi")], model="cloud-primary")
+        assert calls["n"] == 2
+
+        # Half-open: exactly one probe after the cooldown, and its success closes.
+        clock.now += 30.0
+        status["code"] = 200
+        completion = await client.chat_completion(
+            [ChatMessage("user", "hi")], model="cloud-primary"
+        )
+        assert completion.content == "hello"
+        assert calls["n"] == 3
+
+        status["code"] = 200
+        await client.chat_completion([ChatMessage("user", "hi")], model="cloud-primary")
+        assert calls["n"] == 4
+    finally:
+        await http.aclose()
+
+
+def test_invalid_availability_configuration() -> None:
+    with pytest.raises(ValueError, match="max_concurrency"):
+        OmniRouteClient(base_url="http://omniroute:20128", api_key="sk-test", max_concurrency=0)
+    with pytest.raises(ValueError, match="breaker_failure_threshold"):
+        OmniRouteClient(
+            base_url="http://omniroute:20128", api_key="sk-test", breaker_failure_threshold=0
+        )
+    with pytest.raises(ValueError, match="breaker_cooldown_seconds"):
+        OmniRouteClient(
+            base_url="http://omniroute:20128", api_key="sk-test", breaker_cooldown_seconds=-1
+        )

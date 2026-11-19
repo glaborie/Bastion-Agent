@@ -196,8 +196,10 @@ writes no `RESPONSE_SENT` row:
 
 | Injected fault | Caller sees | Ledger |
 | --- | --- | --- |
-| OmniRoute connect timeout, stalled body, or connection reset | `502` | `INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION` only |
+| `REQUEST_DEADLINE_SECONDS` exhausted between stages or before a retry | `504` `request deadline exceeded` / `upstream model timed out` | rows written before the deadline; no `RESPONSE_SENT` |
+| OmniRoute connect timeout, stalled body, or connection reset | `504` `upstream model timed out` | `INPUT_RECEIVED`, `DLP_REDACTION`, `ROUTING_DECISION` only |
 | OmniRoute `500`/`429`/`408`/`503`/`504` after `OMNIROUTE_MAX_RETRIES` retries | `502` | same rows; the attempts stay on one alias |
+| route bulkhead full (`OMNIROUTE_MAX_CONCURRENCY`) or breaker open | `503` `route temporarily unavailable` | the call never reaches upstream |
 | the local route failing on a PII-bearing turn | `503` | plus `SECURITY_INCIDENT` with `reason: pii_route_local_unavailable`, `stage: model` |
 | Redis token-budget store down at reservation | `503` `rate limiter unavailable` | no model call, no incident row |
 | egress sanitizer store down at inspection | `503` `egress sanitizer unavailable` | the model answered; the text is discarded, no `RESPONSE_SENT` |
@@ -205,12 +207,19 @@ writes no `RESPONSE_SENT` row:
 | audit database failing mid-turn | `500` | the turn stops at the stage that could not be recorded |
 
 **Fix.** Read the gateway log line named by the row (`OmniRoute timeout`,
-`Model completion failed`, `Routing classifier failed`, `Egress filter`). A
-`502` says the provider or the alias is unhealthy — check `/api/health` on
-OmniRoute. A `503` names the store that is down; restore it and retry, because
-nothing was answered. A `500` is the audit database: the turn is refused rather
-than delivered unaudited, and next steps are in "The database-backed suite errors
-at fixture setup".
+`Model completion failed`, `Request deadline exceeded`,
+`Routing classifier failed`, `Egress filter`). A `502` says the provider or the
+alias is unhealthy — check `/api/health` on OmniRoute. A `504` says the turn ran
+out of time: `REQUEST_DEADLINE_SECONDS` bounds the whole turn and each attempt's
+timeout is the smaller of `OMNIROUTE_TIMEOUT_SECONDS` and the budget that
+remains, so a slow provider is cut off at the deadline rather than after
+`timeout × (retries + 1)`. A `503` names the store that is down, or says the
+route's bulkhead is full / its breaker is open: the call was refused before
+reaching upstream, and it recovers when the cooldown
+(`OMNIROUTE_BREAKER_COOLDOWN_SECONDS`) half-opens the route. Restore the store or
+the provider and retry, because nothing was answered. A `500` is the audit
+database: the turn is refused rather than delivered unaudited, and next steps
+are in "The database-backed suite errors at fixture setup".
 
 `tests/test_failure_modes.py` injects each row deterministically over a stubbed
 provider, so the mapping can be re-checked without the stack:

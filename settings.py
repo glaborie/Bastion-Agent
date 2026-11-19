@@ -351,6 +351,15 @@ class Settings(BaseSettings):
     omniroute_timeout_seconds: float = 120.0
     omniroute_max_retries: int = 1
     omniroute_retry_backoff_seconds: float = 0.25
+    #: In-flight calls one alias may have; the next call fails fast with 503.
+    omniroute_max_concurrency: int = 2
+    #: Consecutive timeouts/5xx before an alias' availability breaker opens.
+    omniroute_breaker_failure_threshold: int = 3
+    #: How long an open breaker waits before allowing one half-open probe.
+    omniroute_breaker_cooldown_seconds: float = 30.0
+    #: One chat turn's wall-clock budget. Default is below the worker's 300 s
+    #: ``job_timeout`` so a slow upstream cannot consume the whole worker slot.
+    request_deadline_seconds: float = 280.0
     model_local_alias: str = "local-llama"
     model_cloud_alias: str = "cloud-primary"
     #: Alias a CONFIDENTIAL or PII-bearing prompt never leaves; the only tier
@@ -513,11 +522,20 @@ class Settings(BaseSettings):
         "handoff_transcript_max_records",
         "semantic_cache_ttl_seconds",
         "semantic_cache_max_entries",
+        "omniroute_max_concurrency",
+        "omniroute_breaker_failure_threshold",
     )
     @classmethod
     def _validate_positive(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("value must be a positive integer")
+        return value
+
+    @field_validator("omniroute_breaker_cooldown_seconds", "request_deadline_seconds")
+    @classmethod
+    def _validate_positive_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("value must be a positive number of seconds")
         return value
 
     @field_validator("omniroute_max_retries")
