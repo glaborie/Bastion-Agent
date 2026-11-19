@@ -1,6 +1,6 @@
 ### IDEA-077: Move the llama.cpp CUDA pin to b12464 and record the unchanged base-image findings
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -21,10 +21,10 @@
 
 **Acceptance**
 
-- [ ] The b12464 scan is recorded in the item next to the b12211 one, with the base-layer overlap that explains the identical counts
-- [ ] `grep -n "sha256:ae96e52f8b2106ea82bad786ee2d08bb9b0a8c93403df9c27ae1bf065a118089" docker-compose.yml` matches the `llama-cpp` image line, and the floating `server-cuda` tag still resolves to that digest
-- [ ] `docker compose up -d llama-cpp` reaches healthy and `curl -fsS http://127.0.0.1:8002/health` plus one `/v1/chat/completions` call succeed on the GPU host
-- [ ] `scripts/scan_images.sh --build-missing` exits 0 on the full set and `scripts/gate.sh` passes; `trivy.yaml` is untouched because no CRITICAL is involved
+- [x] The b12464 scan is recorded in the item next to the b12211 one, with the base-layer overlap that explains the identical counts
+- [x] `grep -n "sha256:ae96e52f8b2106ea82bad786ee2d08bb9b0a8c93403df9c27ae1bf065a118089" docker-compose.yml` matches the `llama-cpp` image line, and the floating `server-cuda` tag still resolves to that digest
+- [x] `docker compose up -d llama-cpp` reaches healthy and `curl -fsS http://127.0.0.1:8002/health` plus one `/v1/chat/completions` call succeed on the GPU host
+- [x] `scripts/scan_images.sh --build-missing` exits 0 on the full set and `scripts/gate.sh` passes; `trivy.yaml` is untouched because no CRITICAL is involved
 
 **Notes**
 
@@ -34,3 +34,6 @@
 - Why the findings are survivable: the service runs `cap_drop: ALL`, `no-new-privileges`, exposes one plain-HTTP port on loopback and executes only `/app/llama-server`; apt and gnupg are not invoked, and TLS is terminated outside the container. That is a reason to accept the wait, not a fix, and it should be written down rather than inferred.
 - Cost: the image is 4.4 GB, so a local check is one `docker save` plus two Trivy analyses. CI does not run the scan on a pin-only PR (ADR-016 decision 5, dev-mode cadence), so the evidence is the local run and the next `master` scan.
 - Open questions for triage: whether the base-rebuild wait belongs in ADR-016's residual risk or in the item alone; and whether a dated pin-refresh cadence belongs in ADR-016 at all, since currently only a human noticing an upstream build drives it and only CRITICAL can fail the gate.
+- b12464 measurement (2026-11-19, `scripts/scan_images.sh --build-missing` with `LLAMA_CPP_IMAGE` set to the pin): 0 CRITICAL, 16 HIGH rows over the same four CVEs (gnupg `CVE-2025-68973`, apt `CVE-2026-109518`, openssl `CVE-2026-45447`, `CVE-2026-84782`), 875 MEDIUM rows / 238 unique, 135 LOW rows / 59 unique. The HIGH set is unchanged from b12211; MEDIUM and LOW moved by four and two unique CVEs only because the Trivy database advanced since the 2026-11-18 measurement. The two images share 10 of their 13 filesystem layers, so only the three llama.cpp layers differ and every base package (and its finding) is byte-identical: a tag bump cannot clear a base-package finding, only an upstream `nvidia/cuda` rebuild can.
+- Disposition (2026-11-19): the four HIGHs are accepted as "fixed upstream, waiting for the base rebuild", not suppressed; `trivy.yaml` is untouched because ADR-016 decision 4 fails only on CRITICAL. The wait is acceptable for the reasons already recorded above (no capabilities, one loopback HTTP port, only `/app/llama-server`, no apt or gnupg, TLS outside the container) — a reason to wait, not a fix.
+- Verification (2026-11-19): `scripts/scan_images.sh --build-missing` exited 0 on the full twelve-image inventory with the pin in place, and `scripts/gate.sh` reported `14/14 passed`; `trivy.yaml` is unchanged. `docker buildx imagetools inspect ghcr.io/ggml-org/llama.cpp:server-cuda` still resolves the floating tag to `sha256:ae96e52f…`. The pinned image was served in an isolated compose project (separate project name, port 18002, the gitignored model hardlinked into this worktree's `models/`) because the shared `bastion-agent` project belongs to the concurrent IDEA-078 worktree; it reached healthy, `/health` returned `{"status":"ok"}`, and one `/v1/chat/completions` call answered with `system_fingerprint: b12464-d3c3e242c`.

@@ -472,7 +472,7 @@ services:
   # ---------------------------------------------------------------------------
   llama-cpp:
     # Upstream image runs as root; it only reads the read-only model mount.
-    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:f28803153f5ce48a6c8deaef694f58fca09b5dd79baca75fced670ec23b7bd71}
+    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:ae96e52f8b2106ea82bad786ee2d08bb9b0a8c93403df9c27ae1bf065a118089}
     container_name: bastion-llama-cpp
     command:
       - --model
