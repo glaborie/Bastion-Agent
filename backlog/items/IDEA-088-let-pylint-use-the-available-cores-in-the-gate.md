@@ -1,6 +1,6 @@
 ### IDEA-088: Let pylint use the available cores in the gate
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: tooling
