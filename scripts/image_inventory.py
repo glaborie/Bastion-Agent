@@ -40,6 +40,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+# `python scripts/image_inventory.py` puts only `scripts/` on sys.path, so the
+# repo root must be added for `scripts._env` to resolve as it does under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts._env import read_env  # pylint: disable=wrong-import-position
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_COMPOSE = ROOT / "docker-compose.yml"
 
@@ -61,32 +67,6 @@ class InventoryError(RuntimeError):
 def required_vars(text: str) -> list[str]:
     """Names used as ``${NAME:?message}`` anywhere in the file."""
     return sorted({match.group("name") for match in REQUIRED_REF.finditer(text)})
-
-
-def read_env_file(path: Path) -> dict[str, str]:
-    """Read a Compose-style ``.env``: KEY=VALUE, optional quotes, # comments."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return {}
-    values: dict[str, str] = {}
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export ") :].lstrip()
-        key, separator, value = stripped.partition("=")
-        if not separator:
-            continue
-        key = key.strip()
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        values[key] = value
-    return values
 
 
 def expand(ref: str, env: dict[str, str]) -> str:
@@ -236,7 +216,7 @@ def read_images(
 ) -> list[str]:
     """Return the additive, de-duplicated image set of every file, in file order."""
     if env is None:
-        environment = read_env_file(env_file) if env_file is not None else {}
+        environment = read_env(env_file) if env_file is not None else {}
         environment.update(os.environ)
     else:
         environment = dict(env)
