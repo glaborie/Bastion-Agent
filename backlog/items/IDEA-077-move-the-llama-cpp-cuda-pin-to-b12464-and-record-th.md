@@ -1,6 +1,6 @@
 ### IDEA-077: Move the llama.cpp CUDA pin to b12464 and record the unchanged base-image findings
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: infra
