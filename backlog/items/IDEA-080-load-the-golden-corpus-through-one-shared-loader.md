@@ -1,6 +1,6 @@
 ### IDEA-080: Load the golden corpus through one shared loader
 
-- status: inbox
+- status: active
 - priority: P2
 - phase: v0.5
 - area: evals
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-006
 - created: 2026-11-18
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: refactoring scan of the golden-corpus readers, 2026-11-18
 
 **Problem**
