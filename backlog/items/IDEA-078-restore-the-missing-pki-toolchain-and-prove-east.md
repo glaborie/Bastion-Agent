@@ -1,6 +1,6 @@
 ### IDEA-078: Restore the missing PKI toolchain and prove east-west TLS again
 
-- status: inbox
+- status: active
 - priority: P1
 - phase: v0.5
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-019
 - created: 2026-11-18
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: reading IDEA-040 before claiming it, 2026-11-18
 
 **Problem**
