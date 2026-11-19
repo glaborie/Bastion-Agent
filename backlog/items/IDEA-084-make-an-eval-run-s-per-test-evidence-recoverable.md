@@ -1,6 +1,6 @@
 ### IDEA-084: Make an eval run's per-test evidence recoverable from the harness
 
-- status: active
+- status: blocked
 - priority: P2
 - phase: v0.5
 - area: evals
@@ -9,6 +9,7 @@
 - spec: ADR-006
 - created: 2026-11-18
 - updated: 2026-11-19
+- blocked-by: acceptance criteria need clarification
 - source: session on 2026-11-18, after the first recorded run (`run_id 1e39853cf621489c9885921566b5af31`, 250/250, all three metrics `1.0`) left no way to say which tests produced it
 
 **Problem**
@@ -88,3 +89,4 @@ explainable, not a database.
 - Nearest existing pattern: `scripts/gate.sh` already writes per-step logs and `summary.md` under `artifacts/gate/<run>/`, and CI runs pytest with `--junitxml=pytest-report.xml` (`.github/workflows/ci.yml`). Reusing that shape and name keeps the two harnesses legible together rather than inventing a third format.
 - `P2`/`v0.5`: nothing ships wrongly today — the gates themselves are correct and green — but the artefact of a security gate that nobody can explain is exactly the evidence gap ADR-006 exists to close, and this is a small, self-contained change to one script.
 - Capture only: no test, script or document change is part of this item.
+- Blocked (2026-11-19): acceptance 1 (`-k test_dlp_evals` exits 0) cannot hold together with the Outcome's "never-green rule untouched" (ADR-006 decision 3). pytest's `-k` matches the module keyword, so that invocation selects 48 of 250 tests and deselects every test in `tests/test_egress_evals.py` and `tests/test_classifier_evals.py` (verified with `pytest ... -k test_dlp_evals --collect-only -q`: 48 collected, 202 deselected). Two gates then have no executed test, and `summarise()` must add one synthetic failure each, so the script exits 1. Needed: decide whether a narrowed run scopes the summary to the gate(s) its arguments select (a change to the report contract and ADR-006 decision 3), or whether acceptance 1 should expect exit 1 with two unverified gates. No code was changed.
