@@ -35,6 +35,12 @@ from pathlib import Path
 
 import yaml  # type: ignore[import-untyped]
 
+# `python scripts/check_env_vault.py` puts only `scripts/` on sys.path, so the
+# repo root must be added for `scripts._env` to resolve as it does under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts._env import read_env  # pylint: disable=wrong-import-position
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ENV_VAULT = ROOT / ".env.vault"
 DEFAULT_BASE_ENV = ROOT / ".env.example"
@@ -120,29 +126,6 @@ SENTINEL = "check-env-vault-sentinel"
 BASE_SENTINEL = "check-env-vault-base"
 VAR_REQUIRED = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*):\?")
 URL_PASSWORD = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/@]*:([^@]*)@")
-
-
-def read_env(path: Path) -> dict[str, str]:
-    """Read a Compose-style ``.env``: KEY=VALUE, optional quotes, # comments."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return {}
-    values: dict[str, str] = {}
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export ") :].lstrip()
-        key, separator, value = stripped.partition("=")
-        if not separator:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        values[key.strip()] = value
-    return values
 
 
 def required_vars() -> set[str]:
