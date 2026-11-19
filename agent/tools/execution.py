@@ -40,6 +40,7 @@ from agent.tools.decorator import (
     ToolStatus,
     get_tool,
 )
+from agent.tools.errors import ToolNotAllowedError
 from db.audit import append_audit_event
 from db.models import (
     ApprovalStatus,
@@ -68,6 +69,7 @@ _TERMINAL_RESULTS: Final[dict[ApprovalStatus, ToolStatus]] = {
 
 #: ``outcome`` recorded on a ``TOOL_REQUESTED`` row for each refusal class.
 _FIXED_OUTCOMES: Final[tuple[tuple[type[ToolError], str], ...]] = (
+    (ToolNotAllowedError, "not_allowlisted"),
     (ToolAuthorizationError, "denied"),
     (ToolNotFoundError, "not_registered"),
     (ToolNotInCatalogError, "not_in_catalog"),
@@ -129,6 +131,9 @@ async def record_tool_refusal(
         session,
         actor_id=context.actor_id,
         tenant_id=context.tenant_id,
+        actor_type=context.actor_type,
+        agent_id=context.agent_id,
+        owner_sub=context.owner_sub,
         event_type=AuditEventType.TOOL_REQUESTED,
         session_id=context.session_id,
         payload=payload,
@@ -159,6 +164,9 @@ async def request_tool_execution(
     # parsed, before RBAC is consulted and before a ticket could be created.
     entry = await _authorize_catalog(session, definition, context, moment)
     cleaned = definition.validate_arguments(arguments)
+
+    if context.allowed_tools is not None and definition.name not in context.allowed_tools:
+        await _deny_allowlist(session, definition, cleaned, context, moment)
 
     if not definition.permits(context.roles):
         await _deny_rbac(session, definition, cleaned, context, moment)
@@ -405,6 +413,30 @@ async def _deny_rbac(
     raise error
 
 
+async def _deny_allowlist(
+    session: AsyncSession,
+    definition: ToolDefinition,
+    arguments: dict[str, Any],
+    context: AgentContext,
+    moment: datetime,
+) -> NoReturn:
+    """Record an allowlist-denied call in the ledger, then raise (ADR-027)."""
+    error = ToolNotAllowedError(definition.name)
+    await record_tool_refusal(
+        session,
+        context=context,
+        tool_name=definition.name,
+        error=error,
+        arguments=arguments,
+        moment=moment,
+    )
+    logger.warning(
+        "Tool call denied by the agent allowlist",
+        extra={"tool": definition.name, "agent_id": context.agent_id},
+    )
+    raise error
+
+
 async def _authorize_resume(
     session: AsyncSession,
     ticket: PendingApproval,
@@ -437,6 +469,9 @@ async def _record_accepted(
         session,
         actor_id=context.actor_id,
         tenant_id=context.tenant_id,
+        actor_type=context.actor_type,
+        agent_id=context.agent_id,
+        owner_sub=context.owner_sub,
         event_type=AuditEventType.TOOL_REQUESTED,
         session_id=context.session_id,
         payload={"tool": definition.name, "arguments": arguments},
@@ -500,6 +535,9 @@ async def _execute_now(
             definition,
             actor_id=context.actor_id,
             tenant_id=context.tenant_id,
+            actor_type=context.actor_type,
+            agent_id=context.agent_id,
+            owner_sub=context.owner_sub,
             session_id=context.session_id,
             moment=moment,
             outcome="failed",
@@ -513,6 +551,9 @@ async def _execute_now(
         definition,
         actor_id=context.actor_id,
         tenant_id=context.tenant_id,
+        actor_type=context.actor_type,
+        agent_id=context.agent_id,
+        owner_sub=context.owner_sub,
         session_id=context.session_id,
         moment=moment,
         outcome="ok",
@@ -544,6 +585,7 @@ async def _suspend(
         session_id=context.session_id,
         tenant_id=context.tenant_id,
         initiator_id=context.actor_id,
+        initiator_owner_sub=context.owner_sub,
         tool_name=definition.name,
         tool_arguments=arguments,
         required_role=definition.required_role or "",
@@ -559,6 +601,9 @@ async def _suspend(
         session,
         actor_id=context.actor_id,
         tenant_id=context.tenant_id,
+        actor_type=context.actor_type,
+        agent_id=context.agent_id,
+        owner_sub=context.owner_sub,
         event_type=AuditEventType.APPROVAL_REQUESTED,
         session_id=context.session_id,
         payload={
@@ -598,6 +643,9 @@ async def _record_execution(
     *,
     actor_id: str,
     tenant_id: str,
+    actor_type: str = "human",
+    agent_id: str | None = None,
+    owner_sub: str | None = None,
     session_id: str | None,
     moment: datetime,
     outcome: str,
@@ -610,6 +658,9 @@ async def _record_execution(
         session,
         actor_id=actor_id,
         tenant_id=tenant_id,
+        actor_type=actor_type,
+        agent_id=agent_id,
+        owner_sub=owner_sub,
         event_type=AuditEventType.TOOL_EXECUTED,
         session_id=session_id,
         payload={

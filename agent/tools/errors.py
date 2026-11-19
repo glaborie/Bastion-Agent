@@ -15,6 +15,10 @@ from typing import Final
 #: caller both are "unknown tool".
 TOOL_NOT_IN_CATALOG_CODE: Final[int] = -32003
 
+#: JSON-RPC code for a tool the catalog approves but the agent's registry row
+#: does not allowlist (ADR-027).
+TOOL_NOT_ALLOWLISTED_CODE: Final[int] = -32010
+
 
 class ToolError(RuntimeError):
     """Base class for guard failures."""
@@ -60,6 +64,15 @@ class ToolAuthorizationError(ToolError):
         super().__init__(f"role {required_role!r} is required to call tool {tool_name!r}")
         self.tool_name = tool_name
         self.required_role = required_role
+
+
+class ToolNotAllowedError(ToolError):
+    """The catalog approves the tool, but not for this agent (ADR-027)."""
+
+    def __init__(self, tool_name: str) -> None:
+        super().__init__(f"tool {tool_name!r} is not on this agent's allowlist")
+        self.tool_name = tool_name
+        self.code: int = TOOL_NOT_ALLOWLISTED_CODE
 
 
 class ToolInvocationError(ToolError):

@@ -69,6 +69,7 @@ from agent.tools.decorator import (
     ToolAuthorizationError,
     ToolCatalogUnavailableError,
     ToolError,
+    ToolNotAllowedError,
     ToolNotFoundError,
     ToolNotInCatalogError,
     ToolStatus,
@@ -292,6 +293,14 @@ async def _run_tool_job(
                 arguments=arguments,
                 context=context,
             )
+    except ToolNotAllowedError as exc:
+        await _persist_refusal(tool_name, context, exc, arguments)
+        return {
+            "status": "denied",
+            "tool": tool_name,
+            "error": str(exc),
+            "code": exc.code,
+        }
     except ToolAuthorizationError as exc:
         await _persist_refusal(tool_name, context, exc, arguments)
         return {"status": "denied", "tool": tool_name, "error": str(exc)}

@@ -127,8 +127,8 @@ class _Recorded:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    async def __call__(self, _session: Any, **kwargs: Any) -> None:
-        self.calls.append(kwargs)
+    async def __call__(self, state: Any, **kwargs: Any) -> None:
+        self.calls.append({"state": state, **kwargs})
 
 
 def _request(*contents: str) -> chat_router.ChatRequest:
@@ -170,7 +170,7 @@ async def test_the_stage_writes_one_handoff_row(monkeypatch: pytest.MonkeyPatch)
     assert len(recorder.calls) == 1
     call = recorder.calls[0]
     assert call["event_type"] is AuditEventType.HANDOFF_REQUIRED
-    assert call["conversation_id"] == "conv-handoff"
+    assert call["state"].conversation_id == "conv-handoff"
     assert call["metadata"]["verdict"] in {"repeated_complaint", "escalating_language"}
     assert "content" not in str(call["metadata"])
 

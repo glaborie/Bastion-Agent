@@ -17,8 +17,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import AgentRegistry
 from db.redis import close_redis, get_redis
+from db.session import get_db_session
+from gateway.auth.agents import authorize_agent
 from gateway.auth.oidc import (
     JWKSClient,
     OIDCTokenClient,
@@ -47,11 +51,43 @@ class AuthContext:
     principal: Principal
     method: AuthMethod
     session: SessionRecord | None = None
+    #: The registry row behind an agent token; ``None`` for a human caller.
+    agent: AgentRegistry | None = None
 
     @property
     def actor_id(self) -> str:
         """Stable audit identity: the JWT ``sub``, never a display name."""
         return self.principal.subject
+
+    @property
+    def actor_type(self) -> str:
+        """``human`` or ``agent`` (ADR-027)."""
+        return self.principal.actor_type
+
+    @property
+    def agent_id(self) -> str | None:
+        """The Keycloak client id of an agent caller, else ``None``."""
+        return self.principal.agent_id
+
+    @property
+    def owner_sub(self) -> str | None:
+        """The human an agent acts for; ``None`` for a human caller."""
+        return self.agent.owner_sub if self.agent is not None else None
+
+    @property
+    def allowed_tools(self) -> frozenset[str] | None:
+        """The agent's tool allowlist, or ``None`` when the catalog is the gate."""
+        return frozenset(self.agent.allowed_tools) if self.agent is not None else None
+
+    @property
+    def allowed_route_aliases(self) -> frozenset[str] | None:
+        """Route aliases an agent may reach, or ``None`` for a human caller."""
+        return frozenset(self.agent.allowed_route_aliases) if self.agent is not None else None
+
+    @property
+    def rate_limit_subject(self) -> str:
+        """Bucket identity: two agents of one owner must not share a budget."""
+        return self.agent.budget_key if self.agent is not None else self.principal.subject
 
     @property
     def tenant_id(self) -> str:
@@ -178,6 +214,7 @@ async def get_auth_context(
     request: Request,
     validator: TokenValidator = Depends(get_token_validator),
     sessions: SessionManager = Depends(get_session_manager),
+    session: AsyncSession = Depends(get_db_session),
 ) -> AuthContext:
     """Resolve the caller from a Bearer token or a dashboard session cookie."""
     settings = get_settings()
@@ -192,6 +229,11 @@ async def get_auth_context(
             # Log the stable reason code only — never the token or claim set.
             logger.info("Bearer token rejected", extra={"reason": exc.code})
             raise _unauthorized() from exc
+        if principal.actor_type == "agent":
+            # ADR-027: the registry row is the allow switch, and an agent may
+            # only reach the /v1/ API — never a session-authenticated route.
+            agent = await authorize_agent(session, principal, request.url.path)
+            return AuthContext(principal=principal, method="bearer", agent=agent)
         return AuthContext(principal=principal, method="bearer")
 
     session_id = request.cookies.get(settings.session_cookie_name)
@@ -201,6 +243,38 @@ async def get_auth_context(
             return AuthContext(principal=record.principal, method="session", session=record)
 
     raise _unauthorized()
+
+
+async def refuse_agent_principal(
+    request: Request,
+    validator: TokenValidator = Depends(get_token_validator),
+) -> None:
+    """Refuse an agent token on the login/callback routes (ADR-027).
+
+    These routes are deliberately outside :func:`get_auth_context`: a browser
+    has no Bearer token. An agent that presents one must be told no before any
+    login state or ``auth:session:*`` key could be written.
+    """
+    header = request.headers.get("authorization")
+    if header is None:
+        return
+    token = parse_bearer_token(header)
+    if token is None:
+        return
+    try:
+        principal = await validator.validate_access_token(token)
+    except TokenValidationError:
+        # Not a usable credential either; the login flow proceeds as anonymous.
+        return
+    if principal.actor_type == "agent":
+        logger.warning(
+            "Agent token refused at the session boundary",
+            extra={"agent_id": principal.agent_id, "path": request.url.path},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="an agent token cannot open a dashboard session",
+        )
 
 
 # ---------------------------------------------------------------------------

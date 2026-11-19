@@ -343,7 +343,7 @@ def rate_limit(scope: RateLimitScope) -> Callable[..., Awaitable[AuthContext]]:
         limit = _limit_for(scope, settings)
         try:
             decision = await limiter.consume(
-                context.actor_id,
+                context.rate_limit_subject,
                 scope,
                 limit=limit,
                 window_seconds=settings.rate_limit_window_seconds,

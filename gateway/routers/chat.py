@@ -34,7 +34,7 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass, replace
-from typing import Final, Literal
+from typing import Final, Literal, TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from opentelemetry import trace
@@ -214,12 +214,9 @@ def _vault_session(tenant_id: str, actor_id: str, conversation_id: str) -> str:
 
 
 async def _record(
-    session: AsyncSession,
+    state: _Turn,
     *,
-    actor_id: str,
-    tenant_id: str,
     event_type: AuditEventType,
-    conversation_id: str,
     payload: object | None = None,
     metadata: dict[str, object] | None = None,
     escrow: bool = False,
@@ -234,17 +231,16 @@ async def _record(
     for the same record, in the same transaction, under ``escrow_kind``.
     """
     await append_audit_event(
-        session,
-        actor_id=actor_id,
-        tenant_id=tenant_id,
+        state.session,
+        **state.audit_actor,
         event_type=event_type,
-        session_id=conversation_id,
+        session_id=state.conversation_id,
         payload=payload,
         metadata_json=metadata or {},
         escrow=escrow,
         escrow_kind=escrow_kind,
     )
-    await session.commit()
+    await state.session.commit()
 
 
 async def _redact_messages(
@@ -276,6 +272,14 @@ async def _redact_messages(
     return redacted, entity_types, len(tokens)
 
 
+class _AuditActor(TypedDict):
+    actor_id: str
+    tenant_id: str
+    actor_type: str
+    agent_id: str | None
+    owner_sub: str | None
+
+
 @dataclass(frozen=True, slots=True)
 class _Turn:
     """The request-scoped identity every stage writes its audit row against."""
@@ -285,10 +289,26 @@ class _Turn:
     conversation_id: str
     vault_session: str
     session: AsyncSession
+    actor_type: str = "human"
+    agent_id: str | None = None
+    owner_sub: str | None = None
+    rate_limit_subject: str = ""
+    allowed_route_aliases: frozenset[str] | None = None
     #: Keys the canary and the quarantine. Equal to ``vault_session`` for the
     #: native endpoint; the compat facade pins it to the actor so an ephemeral
     #: conversation cannot escape a trip (ADR-026).
     egress_session: str = ""
+
+    @property
+    def audit_actor(self) -> _AuditActor:
+        """The actor arguments every audit row in this turn carries."""
+        return {
+            "actor_id": self.actor_id,
+            "tenant_id": self.tenant_id,
+            "actor_type": self.actor_type,
+            "agent_id": self.agent_id,
+            "owner_sub": self.owner_sub,
+        }
 
     @property
     def egress_key(self) -> str:
@@ -314,11 +334,8 @@ async def _ingress(state: _Turn, request: ChatRequest) -> None:
         )
 
     await _record(
-        state.session,
-        actor_id=state.actor_id,
-        tenant_id=state.tenant_id,
+        state,
         event_type=AuditEventType.INPUT_RECEIVED,
-        conversation_id=state.conversation_id,
         payload=[turn.model_dump(exclude_none=True) for turn in request.messages],
         metadata={
             "conversation_id": state.conversation_id,
@@ -357,11 +374,8 @@ async def _dlp_stage(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DLP stage unavailable") from exc
 
     await _record(
-        state.session,
-        actor_id=state.actor_id,
-        tenant_id=state.tenant_id,
+        state,
         event_type=AuditEventType.DLP_REDACTION,
-        conversation_id=state.conversation_id,
         metadata={
             "redacted": entity_count > 0,
             "entities": entity_count,
@@ -415,13 +429,22 @@ async def _routing_stage(
             primary_model=None,
         )
     classification = decision.classification
+    if (
+        state.allowed_route_aliases is not None
+        and decision.alias not in state.allowed_route_aliases
+    ):
+        # The router's choice is authoritative, so this is the only place the
+        # alias allowlist cannot be bypassed by a client hint (ADR-027).
+        await _record(
+            state,
+            event_type=AuditEventType.SECURITY_INCIDENT,
+            metadata={"reason": "route_alias_not_allowed", "route": decision.alias},
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "route alias not allowed for this agent")
     complexity = decision.complexity
     await _record(
-        state.session,
-        actor_id=state.actor_id,
-        tenant_id=state.tenant_id,
+        state,
         event_type=AuditEventType.ROUTING_DECISION,
-        conversation_id=state.conversation_id,
         metadata={
             "route": decision.alias,
             "local": decision.local,
@@ -463,11 +486,8 @@ async def _handoff_stage(state: _Turn, request: ChatRequest) -> None:
     if verdict is None:
         return
     await _record(
-        state.session,
-        actor_id=state.actor_id,
-        tenant_id=state.tenant_id,
+        state,
         event_type=AuditEventType.HANDOFF_REQUIRED,
-        conversation_id=state.conversation_id,
         metadata={
             "conversation_id": state.conversation_id,
             "verdict": verdict.reason,
@@ -490,19 +510,13 @@ async def _preflight(state: _Turn, sanitizer: EgressSanitizer) -> str:
         return await sanitizer.canary_for(state.tenant_id, state.egress_key)
     except EgressCircuitOpenError as exc:
         await _record(
-            state.session,
-            actor_id=state.actor_id,
-            tenant_id=state.tenant_id,
+            state,
             event_type=AuditEventType.EGRESS_FILTERED,
-            conversation_id=state.conversation_id,
             metadata={"blocked": True, "reason": "circuit_open"},
         )
         await _record(
-            state.session,
-            actor_id=state.actor_id,
-            tenant_id=state.tenant_id,
+            state,
             event_type=AuditEventType.SECURITY_INCIDENT,
-            conversation_id=state.conversation_id,
             metadata={"reason": "circuit_open", "stage": "preflight"},
         )
         _annotate({"bastion.egress.blocked": True, "bastion.egress.reason": "circuit_open"})
@@ -527,11 +541,8 @@ async def _injection_gate(state: _Turn, decision: RouteDecision) -> ChatResponse
         return None
 
     await _record(
-        state.session,
-        actor_id=state.actor_id,
-        tenant_id=state.tenant_id,
+        state,
         event_type=AuditEventType.EGRESS_FILTERED,
-        conversation_id=state.conversation_id,
         metadata={
             "blocked": True,
             "reason": "prompt_injection",
@@ -543,11 +554,8 @@ async def _injection_gate(state: _Turn, decision: RouteDecision) -> ChatResponse
         },
     )
     await _record(
-        state.session,
-        actor_id=state.actor_id,
-        tenant_id=state.tenant_id,
+        state,
         event_type=AuditEventType.SECURITY_INCIDENT,
-        conversation_id=state.conversation_id,
         metadata={
             "reason": _INJECTION_REASON,
             "stage": "routing",
@@ -564,12 +572,12 @@ async def _injection_gate(state: _Turn, decision: RouteDecision) -> ChatResponse
         }
     )
     return ChatResponse(
-        conversation_id=state.conversation_id,
         message=AssistantTurn(content=_INJECTION_NOTICE),
         model="gateway",
         route=decision.alias,
         classification=classification.label.value,
         reason=classification.reason,
+        conversation_id=state.conversation_id,
         confidence=classification.confidence,
         restored_tokens=0,
         blocked=True,
@@ -628,7 +636,7 @@ async def _complete(
         if settings.rate_limit_enabled:
             try:
                 reservation = await limiter.reserve(
-                    state.actor_id,
+                    state.rate_limit_subject or state.actor_id,
                     tokens=requested_tokens,
                     capacity=settings.rate_limit_chat_tokens_per_window,
                     window_seconds=settings.rate_limit_window_seconds,
@@ -681,11 +689,8 @@ async def _complete(
                 # data. Falling back would undo that control, so the request
                 # fails closed and the attempt is on the ledger (ADR-004).
                 await _record(
-                    state.session,
-                    actor_id=state.actor_id,
-                    tenant_id=state.tenant_id,
+                    state,
                     event_type=AuditEventType.SECURITY_INCIDENT,
-                    conversation_id=state.conversation_id,
                     metadata={
                         "reason": "pii_route_local_unavailable",
                         "stage": "model",
@@ -712,7 +717,7 @@ async def _complete(
             )
             try:
                 remaining = await limiter.settle(
-                    state.actor_id,
+                    state.rate_limit_subject or state.actor_id,
                     delta=0 if consumed is None else consumed - reserved,
                     capacity=settings.rate_limit_chat_tokens_per_window,
                     window_seconds=settings.rate_limit_window_seconds,
@@ -757,11 +762,8 @@ async def _egress_stage(
         ) from exc
 
     await _record(
-        state.session,
-        actor_id=state.actor_id,
-        tenant_id=state.tenant_id,
+        state,
         event_type=AuditEventType.EGRESS_FILTERED,
-        conversation_id=state.conversation_id,
         metadata={
             "blocked": egress.blocked,
             "reason": egress.reason,
@@ -784,11 +786,8 @@ async def _egress_stage(
 
     if egress.blocked:
         await _record(
-            state.session,
-            actor_id=state.actor_id,
-            tenant_id=state.tenant_id,
+            state,
             event_type=AuditEventType.SECURITY_INCIDENT,
-            conversation_id=state.conversation_id,
             metadata={
                 "reason": egress.reason,
                 "stage": "egress",
@@ -821,11 +820,8 @@ async def _delivery_stage(
     stored_answer = egress.text[: settings.response_store_max_chars]
     truncated = len(egress.text) > len(stored_answer)
     await _record(
-        state.session,
-        actor_id=state.actor_id,
-        tenant_id=state.tenant_id,
+        state,
         event_type=AuditEventType.RESPONSE_SENT,
-        conversation_id=state.conversation_id,
         payload=stored_answer,
         metadata={
             "model": completion.model,
@@ -847,12 +843,12 @@ async def _delivery_stage(
     )
     classification = decision.classification
     return ChatResponse(
-        conversation_id=state.conversation_id,
         message=AssistantTurn(content=egress.text),
         model=completion.model,
         route=decision.alias,
         classification=classification.label.value,
         reason=classification.reason,
+        conversation_id=state.conversation_id,
         confidence=classification.confidence,
         restored_tokens=egress.restored_tokens,
     )
@@ -883,6 +879,11 @@ async def run_turn(
     state = _Turn(
         actor_id=context.actor_id,
         tenant_id=context.tenant_id,
+        actor_type=context.actor_type,
+        agent_id=context.agent_id,
+        owner_sub=context.owner_sub,
+        rate_limit_subject=context.rate_limit_subject,
+        allowed_route_aliases=context.allowed_route_aliases,
         conversation_id=conversation,
         vault_session=vault_session,
         egress_session=egress_session or vault_session,

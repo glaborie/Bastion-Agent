@@ -32,6 +32,7 @@ from db.models import (
     AUDIT_EVENT_VOCABULARY_DDL,
     AUDIT_HASH_VERSION_DDL,
     ESCROW_KIND_DDL,
+    FOUR_EYES_OWNER_DDL,
     TENANT_SCOPE_DDL,
     Base,
 )
@@ -89,9 +90,13 @@ async def db_engine() -> AsyncIterator[AsyncEngine]:
         # ...or predates the versioned audit hash columns.
         for statement in AUDIT_HASH_VERSION_DDL:
             await connection.execute(text(statement))
+        # ...or predates the agent owner column (ADR-027).
+        for statement in FOUR_EYES_OWNER_DDL:
+            await connection.execute(text(statement))
         await connection.execute(
             text(
-                "TRUNCATE TABLE payload_escrow, audit_logs, pending_approvals "
+                "TRUNCATE TABLE payload_escrow, audit_logs, pending_approvals, "
+                "agent_registry "
                 "RESTART IDENTITY CASCADE"
             )
         )

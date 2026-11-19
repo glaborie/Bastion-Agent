@@ -79,6 +79,9 @@ async def append_audit_event(
     tenant_id: str,
     event_type: AuditEventType,
     session_id: str | None = None,
+    actor_type: str = "human",
+    agent_id: str | None = None,
+    owner_sub: str | None = None,
     payload: Any | None = None,
     payload_hash: str | None = None,
     metadata_json: Mapping[str, Any] | None = None,
@@ -130,6 +133,9 @@ async def append_audit_event(
         session_id=session_id,
         tenant_id=tenant,
         actor_id=actor_id,
+        actor_type=actor_type,
+        agent_id=agent_id,
+        owner_sub=owner_sub,
         event_type=event_type,
         payload_hash=resolved_payload_hash,
         hash_version=CURRENT_HASH_VERSION,
@@ -147,6 +153,9 @@ async def append_audit_event(
         previous_hash=record.previous_hash,
         hash_version=record.hash_version,
         metadata_hash=record.metadata_hash,
+        actor_type=record.actor_type,
+        agent_id=record.agent_id,
+        owner_sub=record.owner_sub,
     )
 
     session.add(record)

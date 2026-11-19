@@ -1,0 +1,18 @@
+{
+  "agents": [
+    {
+      "agent_id": "bastion-agent-analyst",
+      "owner_sub": "0a100000-0000-4000-8000-00000000a11c",
+      "tenant_id": "acme",
+      "status": "active",
+      "allowed_tools": [
+        "read_file",
+        "read_system_status"
+      ],
+      "allowed_route_aliases": [
+        "local-llama"
+      ],
+      "budget_key": "agent:bastion-agent-analyst"
+    }
+  ]
+}

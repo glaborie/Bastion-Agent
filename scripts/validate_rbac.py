@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from agent.tools import ToolDefinition, list_tools
+from db.agents import REGISTRY_SEED_PATH, load_registry_seed
+from gateway.auth.oidc import AGENT_ACTOR_CLAIM, AGENT_ACTOR_VALUE
 from gateway.auth.roles import ROLE_NAMES, is_satisfied
 from settings import get_settings
 
@@ -39,6 +41,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_REALM,
         help=f"Keycloak realm export (default: {DEFAULT_REALM})",
+    )
+    parser.add_argument(
+        "--registry",
+        type=Path,
+        default=REGISTRY_SEED_PATH,
+        help=f"agent registry seed (default: {REGISTRY_SEED_PATH})",
     )
     parser.add_argument("--strict", action="store_true", help="treat warnings as failures")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
@@ -139,8 +147,81 @@ def _check_clients(realm: dict[str, Any], errors: list[str], warnings: list[str]
         errors.append(f"client {CLI_CLIENT_ID!r} must enable direct access grants")
 
 
+def _is_agent_client(client: dict[str, Any]) -> bool:
+    """Whether the client's tokens carry the agent marker (ADR-027)."""
+    for mapper in client.get("protocolMappers") or []:
+        config = mapper.get("config") or {}
+        if config.get("claim.name") == AGENT_ACTOR_CLAIM and (
+            config.get("claim.value") == AGENT_ACTOR_VALUE
+        ):
+            return True
+    return False
+
+
+def _agent_roles(client: dict[str, Any], realm: dict[str, Any]) -> frozenset[str]:
+    """The realm roles of one client's service-account user."""
+    client_id = client.get("id")
+    for user in realm.get("users", []):
+        if user.get("serviceAccountClientId") == client_id:
+            return frozenset(user.get("realmRoles") or [])
+    return frozenset()
+
+
+def _check_agents(
+    realm: dict[str, Any],
+    tools: list[ToolDefinition],
+    registry: list[dict[str, Any]],
+    errors: list[str],
+    warnings: list[str],
+) -> int:
+    """Prove the agent clients, registry rows and catalog cannot disagree.
+
+    Three failures are the ones an operator would otherwise meet during an
+    incident: an agent token no row can authorize, a row that allowlists a tool
+    the catalog never approved, and an allowlisted tool the agent's own roles
+    cannot satisfy (so the call could never succeed).
+    """
+    clients = {client.get("clientId"): client for client in realm.get("clients", [])}
+    roles_by_tool = {definition.name: definition.required_role for definition in tools}
+    agent_clients = {client_id for client_id, client in clients.items() if _is_agent_client(client)}
+    user_ids = {user.get("id") for user in realm.get("users", []) if user.get("id")}
+    rows = {row["agent_id"]: row for row in registry}
+
+    for client_id in sorted(agent_clients - set(rows)):
+        errors.append(f"agent client {client_id!r} has no registry row")
+    for agent_id, row in sorted(rows.items()):
+        client = clients.get(agent_id)
+        if client is None or agent_id not in agent_clients:
+            errors.append(f"registry row {agent_id!r} has no agent client in the realm")
+            continue
+        if row.get("owner_sub") not in user_ids:
+            errors.append(f"registry row {agent_id!r} names an unknown owner_sub")
+        granted = _agent_roles(client, realm)
+        if not granted:
+            errors.append(f"agent client {agent_id!r} has no service-account roles")
+        for tool_name in row.get("allowed_tools") or []:
+            if tool_name not in roles_by_tool:
+                errors.append(
+                    f"agent {agent_id!r} allowlists {tool_name!r}, which is not in the catalog"
+                )
+                continue
+            required = roles_by_tool[tool_name]
+            if required is not None and not is_satisfied(granted, required):
+                errors.append(
+                    f"agent {agent_id!r} allowlists {tool_name!r} but its roles {sorted(granted)} "
+                    f"do not satisfy {required!r}"
+                )
+        if not (row.get("allowed_route_aliases") or []):
+            warnings.append(f"agent {agent_id!r} has no allowed route alias; every turn is refused")
+    if agent_clients and not rows:
+        warnings.append("the realm seeds an agent client but the registry is empty")
+    return len(agent_clients)
+
+
 def check(
-    realm: dict[str, Any], tools: list[ToolDefinition]
+    realm: dict[str, Any],
+    tools: list[ToolDefinition],
+    registry: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str], dict[str, Any]]:
     """Return ``(errors, warnings, summary)`` for the current policy."""
     errors: list[str] = []
@@ -150,6 +231,7 @@ def check(
     users = _check_users(realm, errors, warnings)
     _check_tools(tools, users, errors)
     _check_clients(realm, errors, warnings)
+    agent_count = _check_agents(realm, tools, registry or [], errors, warnings)
 
     for role in sorted(ROLE_NAMES):
         if not any(role in granted for granted in users.values()):
@@ -160,6 +242,7 @@ def check(
         "users": len(users),
         "tools": len(tools),
         "mutating_tools": sum(1 for definition in tools if not definition.read_only),
+        "agents": agent_count,
         "errors": errors,
         "warnings": warnings,
     }
@@ -170,11 +253,12 @@ def main() -> int:
     args = parse_args()
     try:
         realm = load_realm(args.realm)
+        registry = load_registry_seed(args.registry)
     except (OSError, ValueError) as exc:
         print(f"realm error: {exc}", file=sys.stderr)
         return 1
 
-    errors, warnings, summary = check(realm, list(list_tools()))
+    errors, warnings, summary = check(realm, list(list_tools()), registry)
     failed = bool(errors) or (args.strict and bool(warnings))
 
     if args.json:
@@ -184,7 +268,8 @@ def main() -> int:
             f"realm roles : {', '.join(summary['realm_roles']) or '(none)'}\n"
             f"users       : {summary['users']}\n"
             f"tools       : {summary['tools']} "
-            f"({summary['mutating_tools']} mutating)"
+            f"({summary['mutating_tools']} mutating)\n"
+            f"agents      : {summary['agents']}"
         )
         for warning in warnings:
             print(f"WARN: {warning}")

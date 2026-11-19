@@ -48,6 +48,7 @@ from agent.tools.errors import (
     ToolDefinitionError,
     ToolError,
     ToolInvocationError,
+    ToolNotAllowedError,
     ToolNotFoundError,
     ToolNotInCatalogError,
 )
@@ -99,6 +100,13 @@ class AgentContext:
     roles: frozenset[str]
     session_id: str
     request_id: str | None = None
+    #: Ledger attribution (ADR-027). A human context carries ``human``/NULL/NULL.
+    actor_type: str = "human"
+    agent_id: str | None = None
+    owner_sub: str | None = None
+    #: Names this agent may call, intersected with the catalog at request time.
+    #: ``None`` means the catalog alone decides (a human caller).
+    allowed_tools: frozenset[str] | None = None
 
     def __post_init__(self) -> None:
         actor = (self.actor_id or "").strip()
@@ -111,6 +119,8 @@ class AgentContext:
         object.__setattr__(self, "tenant_id", normalise_tenant_id(self.tenant_id))
         object.__setattr__(self, "session_id", session)
         object.__setattr__(self, "roles", normalise_roles(self.roles))
+        if self.allowed_tools is not None:
+            object.__setattr__(self, "allowed_tools", frozenset(self.allowed_tools))
 
 
 @dataclass(frozen=True, slots=True)
@@ -469,6 +479,7 @@ __all__ = [
     "ToolExecutionResult",
     "ToolHandler",
     "ToolInvocationError",
+    "ToolNotAllowedError",
     "ToolNotFoundError",
     "ToolNotInCatalogError",
     "ToolStatus",
