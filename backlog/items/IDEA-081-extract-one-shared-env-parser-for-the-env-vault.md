@@ -1,6 +1,6 @@
 ### IDEA-081: Extract one shared .env parser for the env-vault and image-inventory scripts
 
-- status: inbox
+- status: active
 - priority: P2
 - phase: v0.5
 - area: tooling
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-016
 - created: 2026-11-18
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: refactoring scan of `scripts/` during the 2026-11-18 session
 
 **Problem**
