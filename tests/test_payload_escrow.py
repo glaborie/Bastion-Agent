@@ -28,7 +28,12 @@ from agent.dlp.presidio import PresidioDLP, get_analyzer
 from agent.dlp.vault import TokenVault
 from agent.egress.sanitizer import EgressSanitizer
 from agent.routing.classifier import Classification, Sensitivity
-from agent.routing.client import ChatCompletion, ChatMessage, RouteDecision
+from agent.routing.client import (
+    ChatCompletion,
+    ChatMessage,
+    RequestDeadline,
+    RouteDecision,
+)
 from db.audit import append_audit_event, verify_audit_chain
 from db.escrow import (
     EscrowDecryptionError,
@@ -98,6 +103,7 @@ class StubRouter:
         decision: RouteDecision | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        deadline: RequestDeadline | None = None,
     ) -> ChatCompletion:
         alias = decision.alias if decision is not None else "cloud-primary"
         return ChatCompletion(content="A normal answer.", model=alias)
