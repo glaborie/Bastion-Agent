@@ -1,6 +1,6 @@
 ### IDEA-085: Add a backup and restore path for the dev volumes before destructive resets
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: infra

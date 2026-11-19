@@ -76,3 +76,4 @@ artifacts/falco/*
 
 # --- Gitnexus graph DB -------------------------------------------------------
 .gitnexus/
+.claude/skills/gitnexus*
