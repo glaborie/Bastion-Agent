@@ -66,12 +66,15 @@ ls -lh models/qwen2.5-7b-instruct-q4_k_m.gguf   # must be ~4.7 GB, not 0 bytes
 #    and `migrate` creates the schema as the owner and grants the non-owner
 #    `bastion_app` role gateway and worker connect as (ADR-005 decision 3,
 #    IDEA-062). Both are `service_completed_successfully` dependencies.
-docker compose up -d
+#    The credentials live in the gitignored `.env.vault` (ADR-021), which Compose
+#    does not load on its own: `make up` layers it after `.env` and adds the Vault
+#    overlay. A bare `docker compose up` fails on POSTGRES_PASSWORD.
+make up
 
 # 5. Register the routing aliases (idempotent; stores the gateway key in Vault)
 uv run python scripts/omniroute_bootstrap.py --write-vault
 make vault-export
-docker compose up -d --no-deps gateway worker   # only needed if a key was written
+make up   # rebuilds gateway and worker; only needed if a key was written
 
 # 6. Access Command Control Center
 # Gateway & Dashboard: http://localhost:8000/dashboard  (Keycloak SSO)
