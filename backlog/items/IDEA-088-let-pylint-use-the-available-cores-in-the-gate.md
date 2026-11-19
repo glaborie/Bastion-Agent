@@ -1,6 +1,6 @@
 ### IDEA-088: Let pylint use the available cores in the gate
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.5
 - area: tooling
@@ -21,11 +21,12 @@ The gate's `pylint` step is its longest slot — 1m01s-1m51s across the last run
 
 **Acceptance**
 
-- [ ] `[tool.pylint.main]` sets `jobs = 0` and a full-target run still rates `10.00/10` and exits 0
-- [ ] the same full-target run completes in less wall time than the 48.07s single-process baseline recorded in the item
-- [ ] `scripts/gate.sh` passes 14/14 with no other change
+- [x] `[tool.pylint.main]` sets `jobs = 0` and a full-target run still rates `10.00/10` and exits 0
+- [x] the same full-target run completes in less wall time than the 48.07s single-process baseline recorded in the item
+- [x] `scripts/gate.sh` passes 14/14 with no other change
 
 **Notes**
 
 - Baseline measured on 2026-11-19 with `pylint settings.py logging_setup.py telemetry.py db gateway agent tests scripts`: 48.07s single-process, 30.93s with `--jobs=0`, both rated 10.00/10. The gain is bounded by startup per module, so the item does not claim linear scaling.
 - Pytest is already parallel: `scripts/gate.sh` passes `-n auto --dist loadfile` when no shared test database is configured, and CI shards it 2 ways. Only the `TEST_DATABASE_URL` path runs serially, because the DB fixtures truncate tables per module and two workers would clobber each other.
+- Verification (2026-11-19): with `jobs = 0` in the config and no flag, the full target set finished in 28.66s at 10.00/10, against the 48.07s single-process baseline. `scripts/gate.sh` reported 14/14 passed, wall 55.8s (from 1m01s), with pylint 50.1s and pytest 53.2s: pylint is no longer the critical path, and the gain is small because the pool runs pytest beside it. The first gate runs failed `test_audit_witness` because the MinIO data drive had gone offline (connection reset on :9000); restarting `bastion-minio` fixed it and is unrelated to this change.
