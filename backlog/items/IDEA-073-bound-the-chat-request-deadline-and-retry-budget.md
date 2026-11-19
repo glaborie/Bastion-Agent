@@ -1,6 +1,6 @@
 ### IDEA-073: Bound the chat request deadline and retry budget under upstream latency
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.5
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-004
 - created: 2026-11-17
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: session request on 2026-11-17 ("chaos engineering to stress test the gateway with delays, latency, broken endpoints")
 
 **Problem**
@@ -21,13 +21,13 @@ One turn is bounded end to end by a configurable deadline checked between stages
 
 **Acceptance**
 
-- [ ] `REQUEST_DEADLINE_SECONDS` (default below `JOB_TIMEOUT`) is set at the chat boundary, checked before each stage and before each retry, and a test with a fake clock proves a hung upstream returns `503`/`504` at the deadline, not after `OMNIROUTE_TIMEOUT_SECONDS * (max_retries + 1)`
-- [ ] The retry budget is the remaining deadline: a test proves a request with little time left makes zero retries, and `OMNIROUTE_MAX_RETRIES` still bounds the count
-- [ ] A per-route bulkhead rejects the `N+1` concurrent call to a hung route immediately, and the local and cloud counters are separate
-- [ ] An availability breaker opens after `N` consecutive timeouts/5xx on a route, fails the next call fast with `503`, and half-opens after the cooldown; a test covers open → half-open → closed
-- [ ] `tests/test_routing_client.py::test_confidential_traffic_never_falls_back_to_cloud` and the PII fail-closed test still pass unchanged: a breaker never moves a confidential prompt to another alias
-- [ ] New settings are in `.env.example` with defaults and validators, `docs/TROUBLESHOOTING.md` explains the fast-fail response, ADR-004 is amended or superseded in the same change, and `uv run python scripts/check_adrs.py` passes
-- [ ] `scripts/gate.sh` is green
+- [x] `REQUEST_DEADLINE_SECONDS` (default below `JOB_TIMEOUT`) is set at the chat boundary, checked before each stage and before each retry, and a test with a fake clock proves a hung upstream returns `503`/`504` at the deadline, not after `OMNIROUTE_TIMEOUT_SECONDS * (max_retries + 1)`
+- [x] The retry budget is the remaining deadline: a test proves a request with little time left makes zero retries, and `OMNIROUTE_MAX_RETRIES` still bounds the count
+- [x] A per-route bulkhead rejects the `N+1` concurrent call to a hung route immediately, and the local and cloud counters are separate
+- [x] An availability breaker opens after `N` consecutive timeouts/5xx on a route, fails the next call fast with `503`, and half-opens after the cooldown; a test covers open → half-open → closed
+- [x] `tests/test_routing_client.py::test_confidential_traffic_never_falls_back_to_cloud` and the PII fail-closed test still pass unchanged: a breaker never moves a confidential prompt to another alias
+- [x] New settings are in `.env.example` with defaults and validators, `docs/TROUBLESHOOTING.md` explains the fast-fail response, ADR-004 is amended or superseded in the same change, and `uv run python scripts/check_adrs.py` passes
+- [x] `scripts/gate.sh` is green
 
 **Notes**
 

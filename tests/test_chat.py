@@ -35,6 +35,7 @@ from agent.routing.client import (
     ChatMessage,
     ModelRouter,
     OmniRouteClient,
+    RequestDeadline,
     RouteDecision,
     RoutingError,
 )
@@ -127,6 +128,7 @@ class StubRouter:
         decision: RouteDecision | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        deadline: RequestDeadline | None = None,
     ) -> ChatCompletion:
         self.complete_calls += 1
         self.sent.append(list(messages))
@@ -163,6 +165,7 @@ class AnsweringClient:
         model: str,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        deadline: RequestDeadline | None = None,
     ) -> ChatCompletion:
         return ChatCompletion(content="OK", model=model)
 

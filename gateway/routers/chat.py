@@ -53,7 +53,9 @@ from agent.egress.sanitizer import (
 from agent.routing.client import (
     ChatCompletion,
     ChatMessage,
+    DeadlineExceededError,
     ModelRouter,
+    RequestDeadline,
     RouteDecision,
     RoutingError,
     get_model_router,
@@ -584,6 +586,7 @@ async def _complete(
     decision: RouteDecision,
     sanitizer: EgressSanitizer,
     limiter: RateLimiter,
+    deadline: RequestDeadline,
 ) -> ChatCompletion:
     """Stage 3b: build the fenced upstream payload and call the routed model."""
     upstream: list[ChatMessage] = [
@@ -668,6 +671,7 @@ async def _complete(
                 decision=decision,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
+                deadline=deadline,
             )
         except RoutingError as exc:
             model_span.set_attribute("error.type", type(exc).__name__)
@@ -693,7 +697,7 @@ async def _complete(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
                     "local model unavailable for a PII-bearing prompt",
                 ) from exc
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "upstream model unavailable") from exc
+            raise HTTPException(exc.http_status, exc.http_detail) from exc
         model_span.set_attributes(
             completion_attributes(completion, requested=decision.primary_model or decision.alias)
         )
@@ -885,56 +889,77 @@ async def run_turn(
         session=session,
     )
 
-    await _ingress(state, request)
-    redacted, entity_count = await _dlp_stage(state, dlp, request)
-    decision = await _routing_stage(
-        state, model_router, request, entity_count, force_local=force_local
-    )
-    await _handoff_stage(state, request)
-    canary = await _preflight(state, sanitizer)
-    if (blocked := await _injection_gate(state, decision)) is not None:
-        return blocked
-    # The cache sits after DLP and routing so its scope carries the label and
-    # the alias, and a turn that minted DLP markers is never looked up or
-    # stored: those markers belong to this session (ADR-024).
-    prompt = _cache_prompt(redacted)
-    cached: str | None = None
-    if cache is not None and prompt is not None and entity_count == 0:
-        cached = await cache.lookup(
-            tenant_id=state.tenant_id,
-            alias=decision.alias,
-            label=decision.classification.label.value,
-            prompt=prompt,
+    deadline = RequestDeadline(get_settings().request_deadline_seconds)
+    try:
+        deadline.check("ingress")
+        await _ingress(state, request)
+        deadline.check("dlp")
+        redacted, entity_count = await _dlp_stage(state, dlp, request)
+        deadline.check("routing")
+        decision = await _routing_stage(
+            state, model_router, request, entity_count, force_local=force_local
         )
-    if cached is not None:
-        completion = ChatCompletion(content=cached, model="semantic-cache")
-    else:
-        completion = await _complete(
-            state, model_router, request, redacted, canary, decision, sanitizer, limiter
+        deadline.check("handoff")
+        await _handoff_stage(state, request)
+        deadline.check("preflight")
+        canary = await _preflight(state, sanitizer)
+        if (blocked := await _injection_gate(state, decision)) is not None:
+            return blocked
+        # The cache sits after DLP and routing so its scope carries the label and
+        # the alias, and a turn that minted DLP markers is never looked up or
+        # stored: those markers belong to this session (ADR-024).
+        prompt = _cache_prompt(redacted)
+        cached: str | None = None
+        if cache is not None and prompt is not None and entity_count == 0:
+            cached = await cache.lookup(
+                tenant_id=state.tenant_id,
+                alias=decision.alias,
+                label=decision.classification.label.value,
+                prompt=prompt,
+            )
+        if cached is not None:
+            completion = ChatCompletion(content=cached, model="semantic-cache")
+        else:
+            deadline.check("model")
+            completion = await _complete(
+                state,
+                model_router,
+                request,
+                redacted,
+                canary,
+                decision,
+                sanitizer,
+                limiter,
+                deadline,
+            )
+        deadline.check("egress")
+        egress = await _egress_stage(state, sanitizer, completion, decision)
+        if (
+            cache is not None
+            and cached is None
+            and prompt is not None
+            and entity_count == 0
+            and egress.unresolved_tokens == 0
+        ):
+            await cache.store(
+                tenant_id=state.tenant_id,
+                alias=decision.alias,
+                label=decision.classification.label.value,
+                prompt=prompt,
+                answer=completion.content,
+            )
+        deadline.check("delivery")
+        return await _delivery_stage(
+            state,
+            get_settings(),
+            egress,
+            completion,
+            decision,
+            cache_hit=cached is not None,
         )
-    egress = await _egress_stage(state, sanitizer, completion, decision)
-    if (
-        cache is not None
-        and cached is None
-        and prompt is not None
-        and entity_count == 0
-        and egress.unresolved_tokens == 0
-    ):
-        await cache.store(
-            tenant_id=state.tenant_id,
-            alias=decision.alias,
-            label=decision.classification.label.value,
-            prompt=prompt,
-            answer=completion.content,
-        )
-    return await _delivery_stage(
-        state,
-        get_settings(),
-        egress,
-        completion,
-        decision,
-        cache_hit=cached is not None,
-    )
+    except DeadlineExceededError as exc:
+        logger.warning("Request deadline exceeded", extra={"conversation_id": conversation})
+        raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "request deadline exceeded") from exc
 
 
 @router.post(

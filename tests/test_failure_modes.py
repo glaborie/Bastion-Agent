@@ -11,6 +11,7 @@ is 50 ms and retries carry zero backoff.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable
@@ -344,24 +345,26 @@ def _http_429(_request: httpx.Request) -> httpx.Response:
 
 
 @pytest.mark.parametrize(
-    "fault",
+    ("fault", "expected_status"),
     [
-        pytest.param(_connect_timeout, id="connect-timeout"),
-        pytest.param(_read_timeout, id="slow-body"),
-        pytest.param(_connection_reset, id="connection-reset"),
-        pytest.param(_http_500, id="http-500"),
-        pytest.param(_http_429, id="http-429"),
+        pytest.param(_connect_timeout, 504, id="connect-timeout"),
+        pytest.param(_read_timeout, 504, id="slow-body"),
+        pytest.param(_connection_reset, 504, id="connection-reset"),
+        pytest.param(_http_500, 502, id="http-500"),
+        pytest.param(_http_429, 502, id="http-429"),
     ],
 )
 async def test_upstream_faults_fail_closed(
-    chat: Harness, fault: Callable[[httpx.Request], httpx.Response]
+    chat: Harness,
+    fault: Callable[[httpx.Request], httpx.Response],
+    expected_status: int,
 ) -> None:
-    """A dead, slow or erroring provider returns 502 and no answer (ADR-004)."""
+    """A dead, slow or erroring provider returns 504/502 and no answer (ADR-004)."""
     chat.upstream.fault = fault
 
     response = await chat.client.post("/v1/chat", json=body("Explain what a message queue does."))
 
-    assert response.status_code == 502, response.text
+    assert response.status_code == expected_status, response.text
     assert ANSWER not in response.text
     # The retry budget is bounded by the setting and every attempt stays on the
     # alias the router chose.
@@ -402,9 +405,32 @@ async def test_a_faulted_turn_costs_one_short_deadline(chat: Harness) -> None:
     response = await chat.client.post("/v1/chat", json=body("Explain what a message queue does."))
 
     elapsed = time.monotonic() - started
-    assert response.status_code == 502, response.text
+    assert response.status_code == 504, response.text
     assert get_settings().omniroute_timeout_seconds <= 0.1
     assert elapsed < 2.0
+
+
+async def test_a_slow_stage_stops_at_the_request_deadline(
+    chat: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deadline is checked between stages, not only around the model call."""
+    monkeypatch.setenv("REQUEST_DEADLINE_SECONDS", "0.02")
+    reset_settings_cache()
+    real_dlp = chat.app.dependency_overrides[get_chat_dlp]()
+
+    class SlowDLP:
+        async def redact(self, *args: Any, **kwargs: Any) -> Any:
+            await asyncio.sleep(0.1)  # the configured budget is 20 ms
+            return await real_dlp.redact(*args, **kwargs)
+
+    chat.app.dependency_overrides[get_chat_dlp] = SlowDLP
+
+    response = await chat.client.post("/v1/chat", json=body("Explain what a message queue does."))
+
+    assert response.status_code == 504, response.text
+    assert response.json()["detail"] == "request deadline exceeded"
+    assert chat.upstream.models == []
+    assert AuditEventType.RESPONSE_SENT not in chat.ledger.types
 
 
 # -- control-plane faults --------------------------------------------------

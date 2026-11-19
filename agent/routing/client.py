@@ -13,7 +13,7 @@ import asyncio
 import functools
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal
 
@@ -35,7 +35,14 @@ _RETRYABLE_STATUS: Final[frozenset[int]] = frozenset({408, 429, 500, 502, 503, 5
 
 
 class RoutingError(RuntimeError):
-    """Base class for routing/upstream failures."""
+    """Base class for routing/upstream failures.
+
+    ``http_status``/``http_detail`` are the gateway's default refusal for the
+    failure; the chat boundary uses them so every routing failure maps once.
+    """
+
+    http_status: int = 502
+    http_detail: str = "upstream model unavailable"
 
 
 class UpstreamError(RoutingError):
@@ -50,9 +57,126 @@ class UpstreamError(RoutingError):
 class UpstreamTimeoutError(RoutingError):
     """OmniRoute could not be reached before the deadline."""
 
+    http_status = 504
+    http_detail = "upstream model timed out"
+
 
 class UpstreamResponseError(RoutingError):
     """OmniRoute returned a response the agent cannot interpret."""
+
+
+class DeadlineExceededError(RoutingError):
+    """The turn's request budget was exhausted before this stage."""
+
+    http_status = 504
+    http_detail = "request deadline exceeded"
+
+
+class RouteBusyError(RoutingError):
+    """The route's bulkhead is full; the call is refused instead of queued."""
+
+    http_status = 503
+    http_detail = "route temporarily unavailable"
+
+
+class BreakerOpenError(RoutingError):
+    """The route's availability breaker is open; the call fails fast."""
+
+    http_status = 503
+    http_detail = "route temporarily unavailable"
+
+
+class RequestDeadline:
+    """A wall-clock budget for one turn, shared by every stage and retry."""
+
+    def __init__(self, seconds: float, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._expires_at = clock() + max(0.0, seconds)
+
+    def remaining(self) -> float:
+        return max(0.0, self._expires_at - self._clock())
+
+    def check(self, stage: str) -> None:
+        if self.remaining() <= 0:
+            raise DeadlineExceededError(f"request deadline exceeded before {stage}")
+
+
+@dataclass
+class _RouteState:
+    failures: int = 0
+    opened_at: float | None = None
+    probing: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _Ticket:
+    route: str
+    probe: bool
+
+
+class _RouteGate:
+    """Per-alias concurrency limit and availability breaker (ADR-004 decision 4).
+
+    The bulkhead bounds how many calls one alias may have in flight; the
+    breaker refuses a route that keeps timing out. Both are keyed by alias, so
+    a stalled local route cannot consume the cloud budget or vice versa, and
+    neither can move a prompt to another alias.
+    """
+
+    def __init__(
+        self,
+        *,
+        limit: int,
+        failure_threshold: int,
+        cooldown_seconds: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._limit = limit
+        self._threshold = failure_threshold
+        self._cooldown = cooldown_seconds
+        self._clock = clock
+        self._in_flight: dict[str, int] = {}
+        self._states: dict[str, _RouteState] = {}
+
+    def _state(self, route: str) -> _RouteState:
+        return self._states.setdefault(route, _RouteState())
+
+    def acquire(self, route: str) -> _Ticket:
+        """Take a slot on ``route`` or refuse immediately."""
+        state = self._state(route)
+        probe = False
+        if state.opened_at is not None:
+            if state.probing or self._clock() - state.opened_at < self._cooldown:
+                raise BreakerOpenError(f"route {route} is unavailable (breaker open)")
+            state.probing = True
+            probe = True
+        if self._in_flight.get(route, 0) >= self._limit:
+            if probe:
+                state.probing = False
+            raise RouteBusyError(f"route {route} is at its concurrency limit")
+        self._in_flight[route] = self._in_flight.get(route, 0) + 1
+        return _Ticket(route, probe)
+
+    def release(self, ticket: _Ticket, *, failed: bool | None) -> None:
+        """Free the slot and feed the breaker: True=timeout/5xx, None=neutral."""
+        route = ticket.route
+        remaining = self._in_flight.get(route, 1) - 1
+        if remaining > 0:
+            self._in_flight[route] = remaining
+        else:
+            self._in_flight.pop(route, None)
+        state = self._state(route)
+        if failed is True:
+            state.failures += 1
+            if ticket.probe or (state.opened_at is None and state.failures >= self._threshold):
+                state.opened_at = self._clock()
+            state.probing = False
+        elif failed is False:
+            state.failures = 0
+            state.opened_at = None
+            state.probing = False
+        elif ticket.probe:
+            state.probing = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +234,10 @@ class OmniRouteClient:
         timeout_seconds: float = 120.0,
         max_retries: int = 1,
         retry_backoff_seconds: float = 0.25,
+        max_concurrency: int = 2,
+        breaker_failure_threshold: int = 3,
+        breaker_cooldown_seconds: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         if not base_url.strip():
@@ -118,11 +246,23 @@ class OmniRouteClient:
             raise ValueError("OmniRoute api_key must not be empty")
         if max_retries < 0:
             raise ValueError("max_retries must be zero or positive")
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be at least one")
+        if breaker_failure_threshold < 1:
+            raise ValueError("breaker_failure_threshold must be at least one")
+        if breaker_cooldown_seconds < 0:
+            raise ValueError("breaker_cooldown_seconds must be zero or positive")
         self._endpoint = f"{base_url.rstrip('/')}/v1/chat/completions"
         self._api_key = api_key
         self._timeout = timeout_seconds
         self._max_retries = max_retries
         self._backoff = max(0.0, retry_backoff_seconds)
+        self._gate = _RouteGate(
+            limit=max_concurrency,
+            failure_threshold=breaker_failure_threshold,
+            cooldown_seconds=breaker_cooldown_seconds,
+            clock=clock,
+        )
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._owns_client = client is None
         # The wire-level model call becomes a child of the ``chat <alias>``
@@ -137,6 +277,7 @@ class OmniRouteClient:
         model: str,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        deadline: RequestDeadline | None = None,
     ) -> ChatCompletion:
         """Send one non-streaming chat completion request."""
         if not messages:
@@ -155,39 +296,29 @@ class OmniRouteClient:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        last_error: Exception | None = None
         for attempt in range(self._max_retries + 1):
+            remaining = deadline.remaining() if deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                raise UpstreamTimeoutError("request deadline exceeded before the model call")
             started = time.monotonic()
             try:
-                response = await self._client.post(
-                    self._endpoint,
-                    json=payload,
-                    headers=headers,
-                    timeout=self._timeout,
-                )
-            except httpx.TimeoutException as exc:
-                last_error = UpstreamTimeoutError("OmniRoute request timed out")
-                if attempt < self._max_retries:
+                response = await self._post_once(model, payload, headers, remaining)
+            except UpstreamTimeoutError as exc:
+                if attempt < self._max_retries and self._retry_fits(deadline, attempt):
                     await self._sleep(attempt)
                     continue
                 logger.warning(
                     "OmniRoute timeout",
                     extra={"model": model, "attempts": attempt + 1},
                 )
-                raise last_error from exc
-            except httpx.TransportError as exc:
-                last_error = UpstreamTimeoutError("OmniRoute is unreachable")
-                if attempt < self._max_retries:
-                    await self._sleep(attempt)
-                    continue
-                logger.warning(
-                    "OmniRoute transport failure",
-                    extra={"model": model, "attempts": attempt + 1},
-                )
-                raise last_error from exc
+                raise exc
 
             duration_ms = round((time.monotonic() - started) * 1000, 1)
-            if response.status_code in _RETRYABLE_STATUS and attempt < self._max_retries:
+            if (
+                response.status_code in _RETRYABLE_STATUS
+                and attempt < self._max_retries
+                and self._retry_fits(deadline, attempt)
+            ):
                 logger.warning(
                     "OmniRoute transient failure; retrying",
                     extra={
@@ -220,7 +351,45 @@ class OmniRouteClient:
             )
             return completion
 
-        raise last_error or RoutingError("OmniRoute request failed")
+        raise RoutingError("OmniRoute request failed")
+
+    async def _post_once(
+        self,
+        model: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        remaining: float | None,
+    ) -> httpx.Response:
+        """One attempt through the route gate, with the budget as its timeout."""
+        ticket = self._gate.acquire(model)
+        failed: bool | None = None
+        try:
+            timeout = self._timeout if remaining is None else min(self._timeout, remaining)
+            try:
+                response = await self._client.post(
+                    self._endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout,
+                )
+            except httpx.TimeoutException as exc:
+                failed = True
+                raise UpstreamTimeoutError("OmniRoute request timed out") from exc
+            except httpx.TransportError as exc:
+                failed = True
+                raise UpstreamTimeoutError("OmniRoute is unreachable") from exc
+            # Only an availability failure feeds the breaker: a 4xx says the
+            # route is healthy and answered, and resets the consecutive count.
+            failed = response.status_code == 408 or response.status_code >= 500
+            return response
+        finally:
+            self._gate.release(ticket, failed=failed)
+
+    def _retry_fits(self, deadline: RequestDeadline | None, attempt: int) -> bool:
+        """A retry needs its backoff inside the budget, or it makes no sense."""
+        if deadline is None:
+            return True
+        return bool(deadline.remaining() > self._backoff * (2**attempt))
 
     async def _sleep(self, attempt: int) -> None:
         if self._backoff > 0:
@@ -279,6 +448,7 @@ class ModelRouter:
         decision: RouteDecision | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        deadline: RequestDeadline | None = None,
     ) -> ChatCompletion:
         """Complete a conversation, classifying the last user turn if needed."""
         if decision is None:
@@ -288,6 +458,7 @@ class ModelRouter:
             model=decision.alias,
             temperature=temperature,
             max_tokens=max_tokens,
+            deadline=deadline,
         )
 
     def _decision(
@@ -409,6 +580,9 @@ def get_model_router() -> ModelRouter:
         timeout_seconds=settings.omniroute_timeout_seconds,
         max_retries=settings.omniroute_max_retries,
         retry_backoff_seconds=settings.omniroute_retry_backoff_seconds,
+        max_concurrency=settings.omniroute_max_concurrency,
+        breaker_failure_threshold=settings.omniroute_breaker_failure_threshold,
+        breaker_cooldown_seconds=settings.omniroute_breaker_cooldown_seconds,
     )
     return ModelRouter(get_classifier(), client)
 

@@ -26,7 +26,12 @@ from agent.dlp.presidio import PresidioDLP, get_analyzer
 from agent.dlp.vault import TokenVault
 from agent.egress.sanitizer import EgressSanitizer
 from agent.routing.classifier import Classification, Sensitivity
-from agent.routing.client import ChatCompletion, ChatMessage, RouteDecision
+from agent.routing.client import (
+    ChatCompletion,
+    ChatMessage,
+    RequestDeadline,
+    RouteDecision,
+)
 from agent.routing.complexity import assess_complexity
 from db.session import get_db_session
 from gateway.auth.oidc import Principal
@@ -89,6 +94,7 @@ class StubRouter:
         decision: RouteDecision | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        deadline: RequestDeadline | None = None,
     ) -> ChatCompletion:
         self.complete_calls += 1
         if self.classification is INJECTION:
