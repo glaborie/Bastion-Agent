@@ -22,10 +22,12 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from db.models import (
+    AUDIT_ACTOR_DDL,
     AUDIT_APPEND_ONLY_DDL,
     AUDIT_EVENT_VOCABULARY_DDL,
     AUDIT_HASH_VERSION_DDL,
     ESCROW_KIND_DDL,
+    FOUR_EYES_OWNER_DDL,
     SCHEMA_INIT_LOCK_ID,
     TENANT_SCOPE_DDL,
     Base,
@@ -187,6 +189,13 @@ async def init_models(engine: AsyncEngine | None = None) -> None:
         # ADR-005 decision 2: add the versioned hash columns to databases
         # created before the metadata digest existed.
         for statement in AUDIT_HASH_VERSION_DDL:
+            await connection.execute(text(statement))
+        # ADR-027: actor triple for non-human principals and the widened
+        # hash-version constraint on databases created before v3.
+        for statement in AUDIT_ACTOR_DDL:
+            await connection.execute(text(statement))
+        # ADR-027: an agent's owner cannot decide the agent's ticket.
+        for statement in FOUR_EYES_OWNER_DDL:
             await connection.execute(text(statement))
     logger.info(
         "Database schema ready",

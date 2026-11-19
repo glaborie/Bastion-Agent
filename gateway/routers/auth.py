@@ -30,6 +30,7 @@ from gateway.auth.rbac import (
     get_session_manager,
     get_token_client,
     get_token_validator,
+    refuse_agent_principal,
     require_csrf,
 )
 from gateway.auth.session import LoginState, SessionManager, safe_next_path
@@ -55,7 +56,11 @@ _ERROR_DETAILS: dict[str, str] = {
 }
 
 
-@router.get("/login", include_in_schema=False)
+@router.get(
+    "/login",
+    include_in_schema=False,
+    dependencies=[Depends(refuse_agent_principal)],
+)
 async def login(
     request: Request,
     next_path: str | None = Query(default=None, alias="next", max_length=512),
@@ -100,7 +105,11 @@ async def login(
     return response
 
 
-@router.get("/callback", include_in_schema=False)
+@router.get(
+    "/callback",
+    include_in_schema=False,
+    dependencies=[Depends(refuse_agent_principal)],
+)
 async def callback(
     request: Request,
     code: str | None = Query(default=None, max_length=4096),

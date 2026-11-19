@@ -31,6 +31,7 @@ a file in this directory; this page is the index and the process guide.
 | 024 | A Scoped Completion Cache in Front of the Model Call | Accepted |
 | 025 | An Opt-In Availability Monitor Behind the `infra` Profile | Accepted |
 | 026 | An OpenAI-Compatible Facade Over One Guarded Pipeline | Accepted |
+| 027 | Registered Non-Human Principals and the Four-Eyes Owner Rule | Accepted |
 
 ---
 

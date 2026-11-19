@@ -27,7 +27,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import httpx
 import jwt
@@ -103,6 +103,15 @@ class OAuthExchangeError(RuntimeError):
         self.description = description
 
 
+#: Client-protocol mapper claim that marks a service-account token as an agent
+#: (ADR-027). It is only mapped on the per-agent clients, so a human token from
+#: the dashboard client can never claim it.
+AGENT_ACTOR_CLAIM: Final[str] = "bastion_actor_type"
+AGENT_ACTOR_VALUE: Final[str] = "agent"
+
+ActorType = Literal["human", "agent"]
+
+
 @dataclass(frozen=True, slots=True)
 class Principal:
     """The authenticated identity derived from a validated access token."""
@@ -113,6 +122,10 @@ class Principal:
     username: str | None = None
     email: str | None = None
     roles: frozenset[str] = frozenset()
+    #: Human OIDC subject or a registered non-human client (ADR-027).
+    actor_type: ActorType = "human"
+    #: The Keycloak client id of an agent token (its ``azp``); None for humans.
+    agent_id: str | None = None
     #: Full claim set. Excluded from equality/repr so it can never leak through
     #: an exception traceback or a debugging log line.
     claims: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
@@ -323,12 +336,16 @@ class TokenValidator:
         tenant_id = _extract_tenant(claims, self._tenant_claim)
         username = _optional_str(claims.get("preferred_username"))
         email = _optional_str(claims.get("email"))
+        actor_type = _actor_type(claims)
+        agent_id = _agent_id(claims) if actor_type == "agent" else None
         return Principal(
             subject=subject,
             tenant_id=tenant_id,
             username=username,
             email=email,
             roles=roles,
+            actor_type=actor_type,
+            agent_id=agent_id,
             claims=claims,
         )
 
@@ -439,6 +456,19 @@ def _extract_tenant(claims: dict[str, Any], claim_name: str) -> str:
         return normalise_tenant_id(raw)
     except TenantIdError as exc:
         raise TokenValidationError("invalid_tenant", "token tenant claim is invalid") from exc
+
+
+def _actor_type(claims: dict[str, Any]) -> ActorType:
+    """Human unless the client mapper marks this token as a service account."""
+    return "agent" if claims.get(AGENT_ACTOR_CLAIM) == AGENT_ACTOR_VALUE else "human"
+
+
+def _agent_id(claims: dict[str, Any]) -> str:
+    """The agent's registry key (the Keycloak client id); fail closed if absent."""
+    azp = claims.get("azp")
+    if not isinstance(azp, str) or not azp.strip():
+        raise TokenValidationError("missing_agent_client", "agent token has no client id")
+    return azp.strip()
 
 
 def _extract_roles(claims: dict[str, Any]) -> frozenset[str]:

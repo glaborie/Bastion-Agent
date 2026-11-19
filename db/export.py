@@ -40,9 +40,9 @@ from settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 #: Bumped only if the segment or manifest body changes shape. Version 2 adds
-#: ``hash_version``/``metadata_hash`` to v2 rows; v1 segments and rows still
-#: verify unchanged.
-EXPORT_VERSION: Final[int] = 2
+#: ``hash_version``/``metadata_hash`` to v2 rows; version 3 adds the actor triple
+#: to v3 rows (ADR-027). Older segments and v1/v2 rows still verify unchanged.
+EXPORT_VERSION: Final[int] = 3
 
 #: Every object the export may create lives under this prefix.
 EXPORT_PREFIX: Final[str] = "export/"
@@ -78,6 +78,9 @@ class ExportRecord:
     record_hash: str
     hash_version: int = 1
     metadata_hash: str | None = None
+    actor_type: str = "human"
+    agent_id: str | None = None
+    owner_sub: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -95,6 +98,10 @@ class ExportRecord:
         if self.hash_version >= 2:
             body["hash_version"] = self.hash_version
             body["metadata_hash"] = self.metadata_hash
+        if self.hash_version >= 3:
+            body["actor_type"] = self.actor_type
+            body["agent_id"] = self.agent_id
+            body["owner_sub"] = self.owner_sub
         return body
 
     @classmethod
@@ -110,6 +117,9 @@ class ExportRecord:
             record_hash=row.record_hash,
             hash_version=row.hash_version,
             metadata_hash=row.metadata_hash,
+            actor_type=row.actor_type,
+            agent_id=row.agent_id,
+            owner_sub=row.owner_sub,
         )
 
     @classmethod
@@ -125,6 +135,9 @@ class ExportRecord:
             record_hash=str(raw["record_hash"]),
             hash_version=int(raw.get("hash_version", 1)),
             metadata_hash=raw.get("metadata_hash"),
+            actor_type=str(raw.get("actor_type", "human")),
+            agent_id=raw.get("agent_id"),
+            owner_sub=raw.get("owner_sub"),
         )
 
 
@@ -328,6 +341,9 @@ def verify_segment(segment: ExportSegment, key: str) -> ExportVerification:
             previous_hash=record.previous_hash,
             hash_version=record.hash_version,
             metadata_hash=record.metadata_hash,
+            actor_type=record.actor_type,
+            agent_id=record.agent_id,
+            owner_sub=record.owner_sub,
         )
         if recomputed != record.record_hash:
             return ExportVerification(

@@ -1,6 +1,6 @@
 ### IDEA-059: Give each agent its own Keycloak principal and registry entry
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.5
 - area: security
@@ -21,13 +21,13 @@ Each agent is a first-class principal rather than a borrowed human token. A per-
 
 **Acceptance**
 
-- [ ] A `client_credentials` token is accepted on the API as an `actor_type=agent` principal while `GET /auth/login`, `GET /auth/callback` and every session-authenticated route refuse it, and the test asserts no `auth:session:*` key was written
-- [ ] Setting the registry row to `suspended` makes the agent's next call fail at ingress with `403` and its visible ledger denial row, with no ARQ job enqueued (asserted against a real queue or a recording fake)
-- [ ] Two agents with one owner have distinct `ratelimit:*` keys and distinct budgets: exhausting one returns `429` while the other's reservation still succeeds, in a test against live Redis with `REDIS_TEST_URL`
-- [ ] A tool present in `docs/tools/v1.json` and satisfied by the agent's role but absent from its allowlist is refused, and a tool absent from the catalog is refused even when allowlisted, both covered by `tests/` cases
-- [ ] `uv run python scripts/validate_rbac.py --strict` fails on an agent client with no registry row, on a registry `allowed_tools` entry missing from the catalog, and on an allowlisted tool whose `required_role` the agent's roles do not satisfy; it passes on the seeded realm
-- [ ] `uv run python scripts/verify_audit_chain.py` exits `0` over a ledger mixing pre-change rows and post-change rows with `actor_type`/`agent_id`/`owner_sub`, and still exits `1` after a post-change row is edited
-- [ ] A new ADR records the non-human principal and the four-eyes rule, `THREAT_MODEL.md` drops the "borrowed human token" residual and is re-scored with `scripts/recalculate_dread.py`, and `scripts/gate.sh` passes
+- [x] A `client_credentials` token is accepted on the API as an `actor_type=agent` principal while `GET /auth/login`, `GET /auth/callback` and every session-authenticated route refuse it, and the test asserts no `auth:session:*` key was written
+- [x] Setting the registry row to `suspended` makes the agent's next call fail at ingress with `403` and its visible ledger denial row, with no ARQ job enqueued (asserted against a real queue or a recording fake)
+- [x] Two agents with one owner have distinct `ratelimit:*` keys and distinct budgets: exhausting one returns `429` while the other's reservation still succeeds, in a test against live Redis with `REDIS_TEST_URL`
+- [x] A tool present in `docs/tools/v1.json` and satisfied by the agent's role but absent from its allowlist is refused, and a tool absent from the catalog is refused even when allowlisted, both covered by `tests/` cases
+- [x] `uv run python scripts/validate_rbac.py --strict` fails on an agent client with no registry row, on a registry `allowed_tools` entry missing from the catalog, and on an allowlisted tool whose `required_role` the agent's roles do not satisfy; it passes on the seeded realm
+- [x] `uv run python scripts/verify_audit_chain.py` exits `0` over a ledger mixing pre-change rows and post-change rows with `actor_type`/`agent_id`/`owner_sub`, and still exits `1` after a post-change row is edited
+- [x] A new ADR records the non-human principal and the four-eyes rule, `THREAT_MODEL.md` drops the "borrowed human token" residual and is re-scored with `scripts/recalculate_dread.py`, and `scripts/gate.sh` passes
 
 **Notes**
 
@@ -36,3 +36,7 @@ Each agent is a first-class principal rather than a borrowed human token. A per-
 - Ledger versioning is the one irreversible part. `compute_record_hash` (`db/hashing.py:56-80`) hashes `id|timestamp|actor_id|event_type|payload_hash|previous_hash`, and `verify_audit_chain` recomputes that preimage for every row (`db/audit.py:197`), so adding fields to the preimage makes every existing row fail verification. The change needs a versioned hash input — the version carried on the row, v1 rows verified with the old preimage — and old rows must keep verifying, which is the acceptance box above.
 - Four-eyes semantics, deliberately not decided: the conservative rule is that the approver must differ from both the agent and its `owner_sub`, which is stricter than today's `is_decidable`. Whether an owner may ever approve their own agent's mutating call, and whether a second agent may approve, is a decision for the ADR rather than this item's prose.
 - Two smaller decisions left open: whether the registry lives in PostgreSQL beside `pending_approvals` or is derived from Keycloak client attributes with the row as a cache, and whether route aliases are checked in the gateway router or in the agent runtime. The suspend switch should reuse the quarantine store (both are "deny this identity now" with a TTL) rather than grow a parallel table.
+- Implemented in ADR-027: the registry lives in PostgreSQL (`agent_registry`), the alias allowlist is enforced in `gateway/routers/chat._routing_stage` after the classifier's decision (the decision, not a client hint, is authoritative), and the suspend switch is the row's `status` — no parallel quarantine table was added, because the existing "quarantine" is an egress store keyed per session and reusing it would have meant a second identity switch rather than one.
+- The four-eyes decision ADR-027 took is the conservative one: `PendingApproval.initiator_owner_sub` is written for an agent ticket, and both `can_be_decided_by` and a `CHECK` refuse the agent's subject or its `owner_sub` as approver.
+- Deliberately left open, follow-ups for a later item: the ARQ tool job envelope (`agent/runtime.py`) still builds a human `AgentContext` (an agent-initiated job needs new signed fields for `agent_id`/`owner_sub`/`allowed_tools`); X.509 client authentication for agents is documented in ADR-027 but still the `pki` overlay's alternative to the client secret; and `agent_registry` is seeded insert-only by the one-shot `migrate`, with no runtime admin API to create or suspend an agent.
+- `docs/tools/v1.json` did not move: no tool, role or approval flag changed. The realm gained one seeded agent client (`bastion-agent-analyst`) and its service-account user, and `config/agents/registry.json` is the reviewable mirror `validate_rbac.py --strict` checks.

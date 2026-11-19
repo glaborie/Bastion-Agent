@@ -239,13 +239,23 @@ class AuditLog(Base):
         String(64), nullable=False, index=True, server_default=text("'default'")
     )
     actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: Whether ``actor_id`` names a human subject or a registered agent
+    #: (ADR-027). v3 rows hash this triple; v1/v2 rows keep ``human``/NULL and
+    #: their original preimage.
+    actor_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="human", server_default=text("'human'")
+    )
+    #: The Keycloak client id of a non-human caller, NULL for humans.
+    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: The human subject an agent acts for; NULL for humans.
+    owner_sub: Mapped[str | None] = mapped_column(String(128), nullable=True)
     event_type: Mapped[AuditEventType] = mapped_column(
         _enum_column("audit_event_type", AuditEventType), nullable=False
     )
     payload_hash: Mapped[str] = mapped_column(String(_HASH_HEX_LENGTH), nullable=False)
     #: Preimage version: 1 predates the metadata digest, 2 covers it.
     hash_version: Mapped[int] = mapped_column(
-        SmallInteger, nullable=False, default=CURRENT_HASH_VERSION, server_default=text("2")
+        SmallInteger, nullable=False, default=CURRENT_HASH_VERSION, server_default=text("3")
     )
     #: SHA-256 of ``canonical_payload_bytes(metadata_json)`` for v2 rows; NULL
     #: on v1 rows, whose original preimage must keep verifying.
@@ -262,8 +272,16 @@ class AuditLog(Base):
         CheckConstraint("payload_hash ~ '^[0-9a-f]{64}$'", name="payload_hash_is_sha256_hex"),
         CheckConstraint(
             "(hash_version = 1 AND metadata_hash IS NULL) "
-            "OR (hash_version = 2 AND metadata_hash ~ '^[0-9a-f]{64}$')",
+            "OR (hash_version IN (2, 3) AND metadata_hash ~ '^[0-9a-f]{64}$')",
             name="hash_version_metadata",
+        ),
+        CheckConstraint(
+            "(hash_version < 3 AND actor_type = 'human' "
+            "AND agent_id IS NULL AND owner_sub IS NULL) "
+            "OR (hash_version = 3 AND actor_type IN ('human', 'agent') "
+            "AND ((actor_type = 'human' AND agent_id IS NULL AND owner_sub IS NULL) "
+            "OR (actor_type = 'agent' AND agent_id IS NOT NULL)))",
+            name="actor_type_fields",
         ),
         Index("ix_audit_logs_timestamp_id", "timestamp", "id"),
         Index("ix_audit_logs_tenant_timestamp_id", "tenant_id", "timestamp", "id"),
@@ -285,6 +303,9 @@ class AuditLog(Base):
             previous_hash=self.previous_hash,
             hash_version=self.hash_version,
             metadata_hash=self.metadata_hash,
+            actor_type=self.actor_type,
+            agent_id=self.agent_id,
+            owner_sub=self.owner_sub,
         )
 
     def verify(self) -> bool:
@@ -469,6 +490,143 @@ $$;
 )
 
 
+#: v3 actor columns and the widened constraint, applied idempotently on boot.
+#: Existing rows stay ``human``/NULL; only new appends are v3 (ADR-027).
+AUDIT_ACTOR_DDL: Final[tuple[str, ...]] = (
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS "
+    "actor_type VARCHAR(16) NOT NULL DEFAULT 'human'",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS agent_id VARCHAR(128)",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS owner_sub VARCHAR(128)",
+    """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_audit_logs_hash_version_metadata'
+          AND pg_get_constraintdef(oid) LIKE '%hash_version = 3%'
+    ) THEN
+        ALTER TABLE audit_logs
+            DROP CONSTRAINT IF EXISTS ck_audit_logs_hash_version_metadata;
+        ALTER TABLE audit_logs
+            ADD CONSTRAINT ck_audit_logs_hash_version_metadata
+            CHECK (
+                (hash_version = 1 AND metadata_hash IS NULL)
+                OR (hash_version IN (2, 3) AND metadata_hash ~ '^[0-9a-f]{64}$')
+            );
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ck_audit_logs_actor_type_fields'
+    ) THEN
+        ALTER TABLE audit_logs
+            ADD CONSTRAINT ck_audit_logs_actor_type_fields
+            CHECK (
+                (hash_version < 3 AND actor_type = 'human'
+                    AND agent_id IS NULL AND owner_sub IS NULL)
+                OR (hash_version = 3 AND actor_type IN ('human', 'agent')
+                    AND ((actor_type = 'human'
+                            AND agent_id IS NULL AND owner_sub IS NULL)
+                        OR (actor_type = 'agent' AND agent_id IS NOT NULL)))
+            );
+    END IF;
+END
+$$;
+""",
+)
+
+
+# ---------------------------------------------------------------------------
+# Non-human principals (ADR-027)
+# ---------------------------------------------------------------------------
+
+
+class AgentStatus(StrEnum):
+    """Lifecycle of a registered agent principal."""
+
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+
+
+class AgentRegistry(Base):
+    """One non-human principal: a Keycloak client that acts for a human owner.
+
+    The row is the registry entry the ingress consults after a
+    ``client_credentials`` token validates. ``status`` is the single deny switch
+    (there is no second quarantine table): ``suspended`` refuses the next call
+    before any work is enqueued. ``allowed_tools`` narrows the global catalog;
+    an empty list means "no tools", never "all tools".
+    """
+
+    __tablename__ = "agent_registry"
+
+    #: The Keycloak client id (the token's ``azp``), not the service-account sub.
+    agent_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    #: The human subject this agent acts for; carried into every ledger row.
+    owner_sub: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, server_default=text("'default'")
+    )
+    status: Mapped[AgentStatus] = mapped_column(
+        _enum_column("agent_status", AgentStatus),
+        nullable=False,
+        default=AgentStatus.ACTIVE,
+        server_default=AgentStatus.ACTIVE.value,
+    )
+    #: Hard stop independent of ``status``; NULL means no expiry configured.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Catalog tool names this agent may call. Never widens the catalog.
+    allowed_tools: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    #: Model route aliases this agent may reach (ADR-027 decision 5).
+    allowed_route_aliases: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    #: Reference to the per-principal budget bucket (ADR-020); defaults to the
+    #: agent id so two agents of one owner never share a bucket.
+    budget_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=text("now()"),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(trim(agent_id)) > 0", name="agent_id_not_blank"),
+        CheckConstraint("length(trim(owner_sub)) > 0", name="owner_sub_not_blank"),
+        CheckConstraint("length(trim(budget_key)) > 0", name="budget_key_not_blank"),
+        CheckConstraint("jsonb_typeof(allowed_tools) = 'array'", name="allowed_tools_is_array"),
+        CheckConstraint(
+            "jsonb_typeof(allowed_route_aliases) = 'array'",
+            name="allowed_route_aliases_is_array",
+        ),
+        Index("ix_agent_registry_tenant_status", "tenant_id", "status"),
+    )
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("status", AgentStatus.ACTIVE)
+        kwargs.setdefault("allowed_tools", [])
+        kwargs.setdefault("allowed_route_aliases", [])
+        kwargs.setdefault("budget_key", kwargs.get("agent_id", ""))
+        super().__init__(**kwargs)
+
+    @property
+    def is_usable(self) -> bool:
+        """True while the row is active and inside its expiry window."""
+        if self.status != AgentStatus.ACTIVE:
+            return False
+        return self.expires_at is None or utcnow() < self.expires_at
+
+
+# ---------------------------------------------------------------------------
+# Four-eyes pending approvals
+# ---------------------------------------------------------------------------
+
+
 class PendingApproval(Base):
     """A mutating tool call suspended under the four-eyes principle."""
 
@@ -483,6 +641,10 @@ class PendingApproval(Base):
         String(64), nullable=False, index=True, server_default=text("'default'")
     )
     initiator_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: The human an agent initiator acts for (ADR-027). NULL for a human call.
+    #: The approver must differ from this too: an owner cannot rubber-stamp
+    #: their own agent's mutating call.
+    initiator_owner_sub: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
     tool_arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     required_role: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -523,6 +685,11 @@ class PendingApproval(Base):
         CheckConstraint(
             "approver_id IS NULL OR approver_id <> initiator_id",
             name="four_eyes_separation",
+        ),
+        CheckConstraint(
+            "approver_id IS NULL OR initiator_owner_sub IS NULL "
+            "OR approver_id <> initiator_owner_sub",
+            name="four_eyes_owner_separation",
         ),
         CheckConstraint(
             "approver_id IS NULL OR length(trim(approver_id)) > 0",
@@ -571,8 +738,14 @@ class PendingApproval(Base):
         return self.status == ApprovalStatus.PENDING and not self.is_expired
 
     def can_be_decided_by(self, actor_id: str) -> bool:
-        """Four-eyes guard: a pending ticket cannot be decided by its initiator."""
-        return self.is_decidable and actor_id != self.initiator_id
+        """Four-eyes guard: neither the initiator nor an agent's owner may decide.
+
+        A human initiator has no ``initiator_owner_sub``; an agent's ticket
+        carries its owner's subject, and that human is refused as well (ADR-027).
+        """
+        if not self.is_decidable or actor_id == self.initiator_id:
+            return False
+        return self.initiator_owner_sub is None or actor_id != self.initiator_owner_sub
 
     @staticmethod
     def expiry_for(issued_at: datetime, ttl_seconds: int) -> datetime:
@@ -586,6 +759,30 @@ class PendingApproval(Base):
             f"PendingApproval(ticket_id={self.ticket_id!r}, tool={self.tool_name!r}, "
             f"status={self.status!r})"
         )
+
+
+#: The four-eyes owner column is added in place on databases created before
+#: ADR-027; NULL keeps every existing human ticket decidable as before.
+FOUR_EYES_OWNER_DDL: Final[tuple[str, ...]] = (
+    "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS initiator_owner_sub VARCHAR(128)",
+    """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_pending_approvals_four_eyes_owner_separation'
+    ) THEN
+        ALTER TABLE pending_approvals
+            ADD CONSTRAINT ck_pending_approvals_four_eyes_owner_separation
+            CHECK (
+                approver_id IS NULL OR initiator_owner_sub IS NULL
+                OR approver_id <> initiator_owner_sub
+            );
+    END IF;
+END
+$$;
+""",
+)
 
 
 # ---------------------------------------------------------------------------

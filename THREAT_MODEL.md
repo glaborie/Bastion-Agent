@@ -97,6 +97,7 @@ Two facts shape the model:
 | Test and eval gate in CI | LIVE | `.github/workflows/ci.yml`, `tests/test_dlp_evals.py`, `tests/test_egress_evals.py` |
 | Kill-switch tiers | PLANNED | ADR-009 only |
 | Per-principal request rate limits (`dashboard` 60/min, `chat` 120/min) | LIVE | `gateway/rate_limit.py`, `tests/test_rate_limit.py`, ADR-013 |
+| Registered non-human principals: per-agent Keycloak client, registry row, own budget key and allowlist | LIVE | `gateway/auth/agents.py`, `db/agents.py`, `tests/test_agent_principals.py`, `tests/test_agent_rate_limit.py`, ADR-027 |
 | Per-principal token and cost budgets | PLANNED | none found |
 | Signed job payloads for every identity-bearing enqueue (`execute_tool_job`, `run_demo_scenario_job`, `resume_tool_job`) | LIVE (host key access is still admin) | `agent/job_auth.py`, `agent/runtime.py`, `tests/test_job_auth.py`, ADR-018 |
 | East-west mTLS for PostgreSQL, Redis and Keycloak (opt-in `pki` profile) | LIVE (profile-scoped; host root still wins) | `docker-compose.pki.yml`, `docs/PKI.md`, `tests/test_db_tls.py`, ADR-019 |
@@ -201,10 +202,13 @@ Runtime detection is opt-in: `docker compose --profile security up -d falco` sta
   - LIVE: RS256/ES256 JWT validation against a cached JWKS. The audit identity is the `sub` claim.
   - LIVE: `require_roles` is the single authorization primitive. `admin` is a superset, applied in one place.
   - LIVE: dashboard sessions are opaque cookies with a CSRF token on mutating requests.
+  - LIVE: an automated caller is a registered non-human principal, not a borrowed human token. Its `client_credentials` token carries `bastion_actor_type=agent`, is admitted only against an `agent_registry` row, only on `/v1/`, and never opens a session; a suspended or expired row is refused at ingress with its own ledger denial. Ledger rows carry `actor_type`/`agent_id`/`owner_sub` under the v3 preimage, and an agent's owner cannot approve the agent's mutating ticket (ADR-027).
 - Residual risk:
   - The shipped Keycloak realm uses shared development passwords and must not be exposed.
+  - An agent authenticates with a shared client secret until the `pki` overlay's X.509 client authentication is used; a leaked secret is a stolen identity like any other bearer.
+  - `owner_sub` is trusted from the registry row, so a wrong owner misattributes the ledger and misapplies the four-eyes exclusion.
   - ADR-009 describes time-bound, sponsored operator roles. That is not a runtime control in this repository.
-- Verification: `tests/test_auth_oidc.py`, `tests/test_auth_session.py`, `tests/test_rbac.py`.
+- Verification: `tests/test_auth_oidc.py`, `tests/test_auth_session.py`, `tests/test_rbac.py`, `tests/test_agent_principals.py`, `tests/test_agent_rate_limit.py`, `scripts/validate_rbac.py --strict`.
 
 ### T7. Tool misuse and unauthorized state change
 
@@ -312,7 +316,7 @@ Scores are the author's estimates of residual risk with the controls as they exi
 | **T3 Hidden-context extraction** | 3 | 6 | 6 | 4 | 7 | **26** |
 | **T4 Sensitive data disclosure** | 8 | 6 | 5 | 7 | 6 | **32** |
 | **T5 Cross-session vault decoding** | 7 | 3 | 3 | 4 | 3 | **20** |
-| **T6 Gateway identity and privilege abuse** | 8 | 4 | 4 | 7 | 5 | **28** |
+| **T6 Gateway identity and privilege abuse** | 8 | 4 | 3 | 7 | 5 | **27** |
 | **T7 Tool misuse and unauthorized change** | 7 | 4 | 3 | 5 | 4 | **23** |
 | **T8 Job queue trust boundary** | 9 | 9 | 4 | 8 | 4 | **34** |
 | **T9 Approval workflow abuse** | 7 | 5 | 4 | 4 | 4 | **24** |
@@ -324,8 +328,8 @@ Scores are the author's estimates of residual risk with the controls as they exi
 1. T8 Job queue trust boundary - 34
 2. T4 Sensitive data disclosure - 32
 3. T1 Direct prompt injection - 31
-4. T6 Gateway identity and privilege abuse - 28
-5. T2 Indirect prompt injection - 27
+4. T2 Indirect prompt injection - 27
+5. T6 Gateway identity and privilege abuse - 27
 6. T11 Supply chain and model artifacts - 27
 7. T3 Hidden-context extraction - 26
 8. T10 Audit tampering - 25
@@ -357,3 +361,10 @@ uv run python scripts/recalculate_dread.py --check
 ```
 
 Update this document in the same commit as any change to a control, and keep the status column in section 4 in step with the code.
+
+**Re-scored 2026-11-19 once ADR-027 landed.** T6 moves from 28 to 27: an
+automated caller no longer has to borrow a human token, every agent carries its
+own registry row, budget key and ledger attribution, and suspension is a single
+row flip, so the privilege-abuse path has one fewer step (exploitability 4→3).
+No other row moves: the agent surface reuses the same DLP, routing, egress,
+catalog and four-eyes controls and adds no new egress path.

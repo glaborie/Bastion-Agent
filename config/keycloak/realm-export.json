@@ -153,19 +153,88 @@
           }
         }
       ]
+    },
+    {
+      "id": "0a200000-0000-4000-8000-00000000a9e7",
+      "clientId": "bastion-agent-analyst",
+      "name": "Bastion-Agent analyst agent (development)",
+      "description": "Confidential service-account client for one registered non-human principal (ADR-027). Its client_credentials token is an agent, never a dashboard session.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dev-only-bastion-agent-analyst-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "consentRequired": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.lifespan": "300"
+      },
+      "protocolMappers": [
+        {
+          "name": "bastion-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "bastion-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "bastion-tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "acme",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "bastion-actor-type",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "bastion_actor_type",
+            "claim.value": "agent",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
     {
       "username": "breakglass",
-      "attributes": {"tenant": ["platform"]},
+      "attributes": {
+        "tenant": [
+          "platform"
+        ]
+      },
       "enabled": true,
       "emailVerified": true,
       "firstName": "Break-glass",
       "lastName": "Admin",
       "email": "breakglass@bastion.local",
       "requiredActions": [],
-      "realmRoles": ["admin"],
+      "realmRoles": [
+        "admin"
+      ],
       "credentials": [
         {
           "type": "password",
@@ -176,21 +245,28 @@
     },
     {
       "username": "alice",
-      "attributes": {"tenant": ["acme"]},
+      "attributes": {
+        "tenant": [
+          "acme"
+        ]
+      },
       "enabled": true,
       "emailVerified": true,
       "firstName": "Alice",
       "lastName": "Operator",
       "email": "alice@bastion.local",
       "requiredActions": [],
-      "realmRoles": ["operator"],
+      "realmRoles": [
+        "operator"
+      ],
       "credentials": [
         {
           "type": "password",
           "value": "Bastion-dev-2026!",
           "temporary": false
         }
-      ]
+      ],
+      "id": "0a100000-0000-4000-8000-00000000a11c"
     },
     {
       "username": "admin",
@@ -200,8 +276,14 @@
       "lastName": "Administrator",
       "email": "admin@bastion.local",
       "requiredActions": [],
-      "attributes": {"tenant": ["acme"]},
-      "realmRoles": ["admin"],
+      "attributes": {
+        "tenant": [
+          "acme"
+        ]
+      },
+      "realmRoles": [
+        "admin"
+      ],
       "credentials": [
         {
           "type": "password",
@@ -212,14 +294,21 @@
     },
     {
       "username": "bob",
-      "attributes": {"tenant": ["acme"]},
+      "attributes": {
+        "tenant": [
+          "acme"
+        ]
+      },
       "enabled": true,
       "emailVerified": true,
       "firstName": "Bob",
       "lastName": "Approver",
       "email": "bob@bastion.local",
       "requiredActions": [],
-      "realmRoles": ["operator", "analyst"],
+      "realmRoles": [
+        "operator",
+        "analyst"
+      ],
       "credentials": [
         {
           "type": "password",
@@ -230,14 +319,20 @@
     },
     {
       "username": "carol",
-      "attributes": {"tenant": ["globex"]},
+      "attributes": {
+        "tenant": [
+          "globex"
+        ]
+      },
       "enabled": true,
       "emailVerified": true,
       "firstName": "Carol",
       "lastName": "Analyst",
       "email": "carol@bastion.local",
       "requiredActions": [],
-      "realmRoles": ["analyst"],
+      "realmRoles": [
+        "analyst"
+      ],
       "credentials": [
         {
           "type": "password",
@@ -248,20 +343,35 @@
     },
     {
       "username": "dave",
-      "attributes": {"tenant": ["globex"]},
+      "attributes": {
+        "tenant": [
+          "globex"
+        ]
+      },
       "enabled": true,
       "emailVerified": true,
       "firstName": "Dave",
       "lastName": "Readonly",
       "email": "dave@bastion.local",
       "requiredActions": [],
-      "realmRoles": ["readonly"],
+      "realmRoles": [
+        "readonly"
+      ],
       "credentials": [
         {
           "type": "password",
           "value": "Bastion-dev-2026!",
           "temporary": false
         }
+      ]
+    },
+    {
+      "username": "service-account-bastion-agent-analyst",
+      "serviceAccountClientId": "0a200000-0000-4000-8000-00000000a9e7",
+      "enabled": true,
+      "requiredActions": [],
+      "realmRoles": [
+        "analyst"
       ]
     }
   ]
