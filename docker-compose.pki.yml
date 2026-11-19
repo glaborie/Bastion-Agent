@@ -74,7 +74,7 @@ services:
       pki-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "step", "ca", "health", "--ca-url", "https://localhost:9000", "--root", "/pki/trust/ca.crt"]
+      test: ["CMD", "step", "ca", "health", "--ca-url", "https://localhost:9000", "--root", "/pki/ca/certs/root_ca.crt"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -111,6 +111,7 @@ services:
       PKI_CERT_TTL: ${PKI_CERT_TTL:-24h}
       PKI_PROVISIONER: ${PKI_PROVISIONER:-bastion-admin}
       POSTGRES_USER: ${POSTGRES_USER:-bastion}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-bastion_app}
     secrets:
       - provisioner_password
     volumes:
@@ -159,7 +160,10 @@ services:
       PKI_CLIENT_KEY_PATH: /pki/client/tls.key
     volumes:
       - ./pki/trust:/pki/ca:ro
-      - ./pki/gateway:/pki/client:ro
+      # The owner leaf, distinct from the app leaf: PostgreSQL `cert` maps the
+      # CN to the role, and the runtime connects as a different role than the
+      # migration does (IDEA-062).
+      - ./pki/migrate:/pki/client:ro
     depends_on:
       pki-issue:
         condition: service_completed_successfully

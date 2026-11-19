@@ -30,12 +30,12 @@ exits after issuance; re-run it to renew.
 ## 3. Prove PostgreSQL refuses a password and a plaintext connection
 
 With the profile up, from a container on the same network (the client certificate
-is `pki/gateway/tls.crt`; the CN is the database role):
+is `pki/gateway/tls.crt`; its CN is the runtime database role, `bastion_app`):
 
 ```bash
 docker run --rm --network bastion-agent_bastion-net -v "$PWD/pki:/pki:ro" \
   -e PGPASSWORD=dummy postgres:16.15-alpine \
-  psql "host=db port=5432 dbname=bastion user=bastion sslmode=verify-full \
+  psql "host=db port=5432 dbname=bastion user=bastion_app sslmode=verify-full \
         sslrootcert=/pki/trust/ca.crt sslcert=/pki/gateway/tls.crt \
         sslkey=/pki/gateway/tls.key" -tAc 'select 1'
 # -> 1
@@ -44,9 +44,12 @@ docker run --rm --network bastion-agent_bastion-net -v "$PWD/pki:/pki:ro" \
 # -> FATAL: connection requires a valid client certificate
 
 # Same host, no TLS at all:
-# -> FATAL: pg_hba.conf rejects connection for host "...", user "bastion",
+# -> FATAL: pg_hba.conf rejects connection for host "...", user "bastion_app",
 #           database "bastion", no encryption
 ```
+
+The one-shot `migrate` service connects as the owner instead, with the leaf in
+`pki/migrate` whose CN is `bastion`; nothing else can present that identity.
 
 From the host, the same check works against the published loopback port when the
 certificate files are readable by your user (`pki/gateway` is owned by the
@@ -91,7 +94,7 @@ Every leaf is re-issued with a fresh serial and `notAfter` (lifetime from
 `PKI_CERT_TTL`, default `24h`). PostgreSQL reloads on `SIGHUP`:
 
 ```bash
-docker kill -s HUP bastion-agent-db-1
+docker kill -s HUP bastion-db
 
 openssl s_client -starttls postgres -connect 127.0.0.1:5432 \
   -servername db -CAfile pki/trust/ca.crt </dev/null 2>/dev/null \

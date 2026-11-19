@@ -1,6 +1,6 @@
 ### IDEA-078: Restore the missing PKI toolchain and prove east-west TLS again
 
-- status: inbox
+- status: done
 - priority: P1
 - phase: v0.5
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-019
 - created: 2026-11-18
-- updated: 2026-11-18
+- updated: 2026-11-19
 - source: reading IDEA-040 before claiming it, 2026-11-18
 
 **Problem**
@@ -23,14 +23,14 @@ The toolchain exists as tracked files and a clean clone can bring the profile up
 
 **Acceptance**
 
-- [ ] `git ls-files scripts/pki config/pki` lists `bootstrap.sh`, `init-ca.sh`, `issue-certs.sh`, `check.sh` and `pg_hba.conf`, and `scripts/pki/check.sh` exits `0` on a tree that has just run `scripts/pki/bootstrap.sh`
-- [ ] On a clean clone with no `secrets/` or `pki/`, `./scripts/pki/bootstrap.sh` writes `secrets/ca_password` and `secrets/provisioner_password` with mode `0600`; a second run leaves their contents unchanged, and neither file is tracked (`git status --porcelain` stays clean)
-- [ ] `docker compose -f docker-compose.yml -f docker-compose.pki.yml --profile pki up -d` starts: `pki-init` and `pki-issue` complete successfully and `db`, `redis` and `keycloak` report healthy
-- [ ] The ADR-019 decision 4 pair reproduces verbatim: `psql "host=db port=5432 dbname=bastion user=bastion sslmode=verify-full sslrootcert=/pki/trust/ca.crt sslcert=/pki/gateway/tls.crt sslkey=/pki/gateway/tls.key" -tAc 'select 1'` returns `1`, and the same command without the client certificate fails with `connection requires a valid client certificate`
-- [ ] The ADR-019 decision 5 pair reproduces: `redis-cli --tls --cacert /pki/trust/ca.crt --cert … --key … ping` returns `PONG`, and a plaintext `redis-cli -p 6379` connection fails
-- [ ] `scripts/pki/check.sh` fails when the CA key becomes world-readable or is force-added to git, and passes again once restored — the check is proven by a deliberate break, not only by a green run
-- [ ] `docs/PKI.md`, `README.md` and `docs/adr/ADR-019.md` reference only commands that exist, `IDEA-023`'s implementation Note names only tracked files, and `uv run python scripts/check_adrs.py` passes
-- [ ] `scripts/gate.sh` stays green, including the `secret-material` step and the pki overlay render in the `infra` step
+- [x] `git ls-files scripts/pki config/pki` lists `bootstrap.sh`, `init-ca.sh`, `issue-certs.sh`, `check.sh` and `pg_hba.conf`, and `scripts/pki/check.sh` exits `0` on a tree that has just run `scripts/pki/bootstrap.sh`
+- [x] On a clean clone with no `secrets/` or `pki/`, `./scripts/pki/bootstrap.sh` writes `secrets/ca_password` and `secrets/provisioner_password` with mode `0600`; a second run leaves their contents unchanged, and neither file is tracked (`git status --porcelain` stays clean)
+- [x] `docker compose -f docker-compose.yml -f docker-compose.pki.yml --profile pki up -d` starts: `pki-init` and `pki-issue` complete successfully and `db`, `redis` and `keycloak` report healthy
+- [x] The ADR-019 decision 4 pair reproduces verbatim: `psql "host=db port=5432 dbname=bastion user=bastion sslmode=verify-full sslrootcert=/pki/trust/ca.crt sslcert=/pki/gateway/tls.crt sslkey=/pki/gateway/tls.key" -tAc 'select 1'` returns `1`, and the same command without the client certificate fails with `connection requires a valid client certificate`
+- [x] The ADR-019 decision 5 pair reproduces: `redis-cli --tls --cacert /pki/trust/ca.crt --cert … --key … ping` returns `PONG`, and a plaintext `redis-cli -p 6379` connection fails
+- [x] `scripts/pki/check.sh` fails when the CA key becomes world-readable or is force-added to git, and passes again once restored — the check is proven by a deliberate break, not only by a green run
+- [x] `docs/PKI.md`, `README.md` and `docs/adr/ADR-019.md` reference only commands that exist, `IDEA-023`'s implementation Note names only tracked files, and `uv run python scripts/check_adrs.py` passes
+- [x] `scripts/gate.sh` stays green, including the `secret-material` step and the pki overlay render in the `infra` step
 
 **Notes**
 
@@ -40,3 +40,9 @@ The toolchain exists as tracked files and a clean clone can bring the profile up
 - Unknown scope, deliberately not guessed: what `check.sh` checked beyond "CA key untracked and owner-only" is recorded nowhere except `README.md:1373` and IDEA-023's note, so the implementer defines that scope and writes it down. Likewise the exact per-service SAN list for leaves other than `db`, `gateway` and `worker` should be derived from ADR-019 decision 3 rather than invented here.
 - `.gitignore` already ignores `pki/` (generated material) and does not ignore `scripts/pki/`, so the intent to track the scripts is unambiguous; the capture changes no ignore rule.
 - Intake only: no script, config, compose, document or ADR change is part of this capture, and the idea was not implemented in the turn that produced it.
+
+- Implementation (2026-11-19): `scripts/pki/{bootstrap,init-ca,issue-certs,check}.sh` and `config/pki/pg_hba.conf` are tracked. `bootstrap.sh` creates the two 0600 secret files and the service directories idempotently; `init-ca.sh` runs `step ca init` only when `ca.json` is absent and writes the root+intermediate trust bundle to `pki/trust/ca.crt`; `issue-certs.sh` generates each key locally from a CSR and signs it with `PKI_CERT_TTL` (24h default). The pki profile came up on a clean tree: `pki-init` and `pki-issue` exited 0, and `db`, `redis` and `keycloak` reported healthy.
+- Role correction (acceptance 4): ADR-019 decision 4 said the leaf CN is `bastion`, but IDEA-062 moved the runtime to `bastion_app`. The app leaves now carry `bastion_app` and a separate `pki/migrate` leaf carries the owner role `bastion`, so `cert` maps each identity without a `pg_ident` map and the gateway never holds an owner-capable certificate. The decision-4 commands now read `user=bastion_app`; the pair reproduces verbatim from that text, and the owner leaf separately returns `1` as `bastion`.
+- `.gitignore` correction: `pki/` ignores every directory named `pki`, including `scripts/pki/` and `config/pki/`, so `git add` refused the toolchain. Two negations (`!scripts/pki/`, `!config/pki/`) keep the generated-material rule while allowing the tracked files; `check_secret_material.py` still requires and finds the `pki/` rule.
+- Break proof: `check.sh` failed with the CA key at `0644` and with it force-added, and passed again after each restore. It is green on a tree with only `bootstrap.sh` run (no CA yet) and after issuance.
+- Discovery, not changed: `worktree.sh` links `.env` but not `.env.vault`, so the gate's `infra` step cannot resolve the migrated secrets from a worktree until it is linked by hand.
