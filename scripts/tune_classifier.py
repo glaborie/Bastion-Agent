@@ -33,7 +33,10 @@ from agent.routing.classifier import (
 )
 from settings import get_settings
 
-GOLDENS: Final[Path] = Path("tests/data/goldens.jsonl")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root: tests is not installed
+
+# pylint: disable-next=wrong-import-position
+from tests.goldens import GOLDENS_PATH, Golden, load_goldens
 
 #: Categories the models are expected to resolve; the deterministic rules
 #: floor owns ``corporate``/``pii`` rows and is measured separately.
@@ -46,15 +49,6 @@ CATEGORY_GRID: Final[tuple[float, ...]] = tuple(round(0.05 + 0.05 * i, 2) for i 
 
 
 @dataclass(frozen=True, slots=True)
-class Golden:
-    ident: str
-    category: str
-    prompt: str
-    expected_label: str | None
-    known_gap: bool
-
-
-@dataclass(frozen=True, slots=True)
 class Scored:
     golden: Golden
     injection: float
@@ -64,29 +58,6 @@ class Scored:
     @property
     def safety_max(self) -> float:
         return max([self.unsafe, *self.categories.values()])
-
-
-def load_goldens(path: Path) -> list[Golden]:
-    if not path.is_file():
-        raise SystemExit(f"golden corpus not found: {path}")
-    goldens: list[Golden] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        try:
-            goldens.append(
-                Golden(
-                    ident=payload["id"],
-                    category=payload["category"],
-                    prompt=payload["prompt"],
-                    expected_label=payload["expected_label"],
-                    known_gap=bool(payload.get("known_gap", False)),
-                )
-            )
-        except (KeyError, TypeError) as exc:
-            raise SystemExit(f"{path}:{line_number}: invalid golden entry: {exc}") from exc
-    return goldens
 
 
 def score_all(classifier: SensitivityClassifier, goldens: list[Golden]) -> list[Scored]:
@@ -291,7 +262,11 @@ def main(argv: list[str] | None = None) -> int:
         print("no ensemble configured; set CLASSIFIER_INJECTION_MODEL_PATH", file=sys.stderr)
         return 2
 
-    goldens = load_goldens(GOLDENS)
+    try:
+        goldens = load_goldens(GOLDENS_PATH)
+    except (OSError, ValueError) as exc:
+        print(f"golden corpus unavailable: {exc}", file=sys.stderr)
+        return 1
     scored = score_all(classifier, goldens)
     rules = SensitivityClassifier(
         ClassifierConfig(model_path=None, threshold=settings.classifier_confidence_threshold)

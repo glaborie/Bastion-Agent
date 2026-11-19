@@ -46,7 +46,11 @@ from typing import Any, Final
 from agent.routing.classifier import ClassifierConfigurationError, get_classifier
 from settings import get_settings
 
-GOLDENS: Final[Path] = Path("tests/data/goldens.jsonl")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root: tests is not installed
+
+# pylint: disable-next=wrong-import-position
+from tests.goldens import GOLDENS_PATH, load_goldens
+
 BUDGET_MS: Final[float] = 50.0
 
 
@@ -72,8 +76,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--goldens",
         type=Path,
-        default=GOLDENS,
-        help="golden corpus to read (JSON lines with a prompt field)",
+        default=GOLDENS_PATH,
+        help="golden corpus to read (ADR-006 JSON lines)",
     )
     parser.add_argument("--repeats", type=int, default=30, help="timed passes over the corpus")
     parser.add_argument("--warmup", type=int, default=5, help="untimed passes over the corpus")
@@ -85,23 +89,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     return parser.parse_args(argv)
-
-
-def load_prompts(path: Path) -> list[str]:
-    if not path.is_file():
-        raise SystemExit(f"golden corpus not found: {path}")
-    prompts: list[str] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        prompt = payload.get("prompt")
-        if not isinstance(prompt, str):
-            raise SystemExit(f"{path}:{line_number}: missing prompt")
-        prompts.append(prompt)
-    if not prompts:
-        raise SystemExit(f"{path}: corpus is empty")
-    return prompts
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -126,7 +113,12 @@ def run(args: argparse.Namespace) -> Result:
     if args.max_p95_ms < 0:
         raise SystemExit("--max-p95-ms must be non-negative")
 
-    prompts = load_prompts(args.goldens)
+    try:
+        prompts = [golden.prompt for golden in load_goldens(args.goldens)]
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"golden corpus unavailable: {exc}") from exc
+    if not prompts:
+        raise SystemExit(f"{args.goldens}: corpus is empty")
     classifier = get_classifier()
     try:
         classifier.ensemble_scores(prompts[0])
