@@ -1,6 +1,6 @@
 ### IDEA-084: Make an eval run's per-test evidence recoverable from the harness
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: evals
