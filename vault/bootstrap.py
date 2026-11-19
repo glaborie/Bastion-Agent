@@ -176,7 +176,12 @@ def seed_secrets() -> None:
         "db/keycloak": {
             "KEYCLOAK_ADMIN": "admin",
             "KEYCLOAK_ADMIN_PASSWORD": os.urandom(24).hex(),
-            "KEYCLOAK_CLIENT_SECRET": os.urandom(32).hex(),
+            # Not generated on purpose: Keycloak imports the realm from
+            # config/keycloak/realm-export.json, which pins this dev client
+            # secret, and the gateway exchanges the code with the env value.
+            # A random value would break the dashboard login. _reject_dev_secrets
+            # still refuses this value outside local development.
+            "KEYCLOAK_CLIENT_SECRET": "dev-only-keycloak-client-secret",
         },
         "db/minio": {
             "MINIO_ROOT_USER": "bastion-minio-root",

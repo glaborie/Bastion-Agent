@@ -120,9 +120,27 @@ vault-list: ## List all secrets in Vault (paths only, no values)
 	@$(VAULT_CLI) kv list -format=json bastion/ | python3 -c "import sys,json; d=json.load(sys.stdin); print('\n'.join(d['data']['keys'] if isinstance(d,dict) else d))"
 
 .PHONY: vault-rotate
-vault-rotate: ## Rotate a secret: make vault-rotate SECRET=db/postgres
-	@$(VAULT_CLI) kv patch bastion/$(SECRET) value=$$(python3 -c "import os; print(os.urandom(24).hex())")
-	@echo "Rotated bastion/$(SECRET). Re-run \`make vault-export\` for infra creds."
+vault-rotate: ## Rotate a secret: make vault-rotate SECRET=db/postgres [FIELD=POSTGRES_PASSWORD]
+	@set -eu; \
+	field="$(FIELD)"; \
+	if [ -z "$$field" ]; then \
+	  case "$(SECRET)" in \
+	    db/postgres) field=POSTGRES_PASSWORD ;; \
+	    db/redis) field=REDIS_PASSWORD ;; \
+	    db/keycloak) field=KEYCLOAK_ADMIN_PASSWORD ;; \
+	    db/minio) field=AUDIT_WITNESS_SECRET_KEY ;; \
+	    db/pgadmin) field=PGADMIN_DEFAULT_PASSWORD ;; \
+	    db/omniroute) field=OMNIROUTE_ADMIN_PASSWORD ;; \
+	    app/oauth) field=OMNIROUTE_API_KEY ;; \
+	    app/audit) field=AUDIT_WITNESS_HMAC_SECRET ;; \
+	    app/dlp) field=VAULT_MASTER_KEY ;; \
+	    *) echo "[vault-rotate] name the field: make vault-rotate SECRET=$(SECRET) FIELD=<name>" >&2; exit 2 ;; \
+	  esac; \
+	fi; \
+	value=$$(python3 -c 'import base64, os, sys; print(base64.b64encode(os.urandom(32)).decode() if sys.argv[1].endswith("MASTER_KEY") else os.urandom(32).hex())' "$$field"); \
+	$(VAULT_CLI) kv patch "bastion/$(SECRET)" "$$field=$$value" >/dev/null; \
+	echo "[vault-rotate] rotated $(SECRET) field $$field; re-run \`make vault-export\`."
+	@echo "[vault-rotate] a db/redis password also needs the running server updated, or the next start still uses the old one."
 
 # ---- Stack lifecycle --------------------------------------------------------
 .PHONY: preflight

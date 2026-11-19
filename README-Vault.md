@@ -155,6 +155,13 @@ non-secret `POSTGRES_USER`, `POSTGRES_DB`, `POSTGRES_PORT` and `REDIS_PORT` in
 `.env`. The app containers never receive those localhost URLs: the compose
 anchor keeps the container-internal `db:5432` and `redis:6379` values.
 
+`KEYCLOAK_CLIENT_SECRET` is the one seeded value that is not generated: the
+realm import pins it in `config/keycloak/realm-export.json`, and the gateway
+exchanges the authorization code with the env value, so a random value would
+break the dashboard login. It stays the committed dev value;
+`_reject_dev_secrets` still refuses it outside local development. Rotating it
+means changing the realm file, the bootstrap constant and Vault together.
+
 
 ## Makefile targets
 
@@ -167,11 +174,17 @@ anchor keeps the container-internal `db:5432` and `redis:6379` values.
 | `make vault-import` | Copy the externally-issued secrets from `.env` into Vault once |
 | `make vault-check` | Fail if `.env.vault` is incomplete or has drifted from Vault |
 | `make vault-list` | List secret paths under `bastion/` (no values) |
-| `make vault-rotate SECRET=db/postgres` | Patch a secret value (paths are relative to `bastion/`) |
+| `make vault-rotate SECRET=db/postgres` | Patch one field (path default, override with `FIELD=...`) |
 
-`vault-export` fails loudly and deletes `.env.vault` if any value comes back
-empty, so a sealed or unseeded Vault cannot leave you with a plausible-looking
-file full of blanks.
+`vault-rotate` patches the field `vault-export` reads (the path defaults are in
+the Makefile; pass `FIELD=` for `app/jwt` or the second password on a path). A
+database or Redis password rotation only changes the Vault value: update the
+running role or `requirepass` as well, or the next start still authenticates
+with the old one.
+
+`vault-export` fails loudly and deletes `.env.vault` if a required value comes
+back empty, so a sealed or unseeded Vault cannot leave you with a
+plausible-looking file full of blanks.
 
 ## Environment variables
 
