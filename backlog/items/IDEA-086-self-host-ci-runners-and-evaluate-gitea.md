@@ -1,6 +1,6 @@
 ### IDEA-086: Self-host CI runners and evaluate Gitea
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-19
-- updated: 2026-11-19
+- updated: 2026-11-20
 - source: session 2026-11-19, prompted by IDEA-025's record of the 2026-11-11 GitHub runner incident and ADR-016 decision 5's ~6.5 min billed runner cost per scan
 
 **Problem**
