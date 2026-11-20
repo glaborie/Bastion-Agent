@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-016
 - created: 2026-11-18
-- updated: 2026-11-19
+- updated: 2026-11-20
 - source: refactoring scan of `scripts/` during the 2026-11-18 session
 
 **Problem**
