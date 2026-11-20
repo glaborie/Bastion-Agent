@@ -355,3 +355,19 @@ forces the full suite when a shared file changed (`conftest.py`, `settings.py`,
 `db/models.py`, `docs/tools/v1.json`), and falls back to full rather than running
 nothing when no test file maps to the diff. CI still runs the full set, so the
 local shortcut never replaces the gate.
+
+## `make backup` reports that a service is not running, or `make restore` refuses the target
+
+**Symptom.** `make backup` exits with `db is not running; start the stack with
+make up` (or `minio` / `keycloak`), or `make restore` exits with
+`target is not empty: 12 audit row(s)`.
+
+**Cause.** A snapshot needs the three stateful services up, and restore only
+overwrites a target when asked: existing audit rows, approval rows or witness
+objects are treated as data the operator did not mean to lose.
+
+**Fix.** Start the stack and retry the backup. For restore, pass `FORCE=1`
+(`make restore BACKUP=<dir> FORCE=1`) if the data really is disposable. A failed
+backup leaves no partial snapshot — it is staged under a dot-prefixed name and
+renamed only on success — and Keycloak is restarted even when the offline export
+fails.

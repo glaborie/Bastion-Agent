@@ -97,6 +97,37 @@ Two notes for the current pins:
   three overlays. Validate before rolling:
   `docker run --rm -v "$PWD/config/otel:/etc/otel:ro" --entrypoint /otelcol-contrib otel/opentelemetry-collector-contrib:0.165.0 validate --config=/etc/otel/otel-collector-config.yaml --config=/etc/otel/otel-collector-no-export.yaml`
 
+
+### Back up and restore the dev data
+
+`docker compose down -v` is still the only reset, but it no longer has to be
+irreversible. `make backup` writes a point-in-time snapshot of the durable dev
+state to `.artifacts/backups/<UTC timestamp>/` (gitignored):
+
+```bash
+make backup                                  # pg_dump, audit witness, Keycloak realm
+make restore BACKUP=.artifacts/backups/20261120T120000Z
+make restore BACKUP=.artifacts/backups/20261120T120000Z FORCE=1   # target has data
+```
+
+A snapshot holds `postgres.sql` (`pg_dump` of the stack database), `witness/`
+(the audit-witness bucket's objects) and `keycloak/<realm>-realm.json` (offline
+Keycloak export with users), plus a `manifest.json` recording every file's
+SHA-256 and size and each witness object's retention date. Restore verifies the
+manifest and digests before touching anything, starts the stack if it is down,
+refuses a target that already holds audit or approval rows or witness objects
+unless `FORCE=1`, then loads Postgres, re-uploads the witness objects under the
+fresh bucket's object lock and imports the realm.
+
+The Keycloak export is offline: the command stops the Keycloak container for a
+few seconds and starts it again, because the dev-file database cannot be read by
+two processes. Everything else runs against the live services.
+
+**Honest limit.** This is a development snapshot, not a backup control: it is
+point-in-time, holds no WAL, writes no off-host copy and encrypts nothing beyond
+the volume it lands on. It is also not a production retention mechanism — that
+stays with the v0.5 HA scope.
+
 ---
 
 ## Authentication & Command Control Center (Milestone 2)
