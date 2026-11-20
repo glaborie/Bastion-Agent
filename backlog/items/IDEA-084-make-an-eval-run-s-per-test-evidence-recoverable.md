@@ -1,6 +1,6 @@
 ### IDEA-084: Make an eval run's per-test evidence recoverable from the harness
 
-- status: blocked
+- status: done
 - priority: P2
 - phase: v0.5
 - area: evals
@@ -8,8 +8,7 @@
 - depends-on: -
 - spec: ADR-006
 - created: 2026-11-18
-- updated: 2026-11-19
-- blocked-by: acceptance criteria need clarification
+- updated: 2026-11-20
 - source: session on 2026-11-18, after the first recorded run (`run_id 1e39853cf621489c9885921566b5af31`, 250/250, all three metrics `1.0`) left no way to say which tests produced it
 
 **Problem**
@@ -75,12 +74,12 @@ explainable, not a database.
 
 **Acceptance**
 
-- [ ] `uv run python scripts/run_evals.py -k test_dlp_evals` runs only that module's tests and exits 0; the same invocation works for `-v`, `-x` and `--tb=short`, and `scripts/run_evals.py --help` still renders
-- [ ] A deliberately broken gate row makes the run write evidence that names the failing node id and the module it belongs to, and the summary still reports one failure with the metric at `0.0` (never-green rule intact)
-- [ ] The per-test evidence file is written atomically to the configured report directory, is world-readable (`0o644`, like `latest.json`), and carries every node id with `passed`/`failed`/`skipped` plus the skip reason
-- [ ] `artifacts/evals/latest.json` still validates against `gateway/evals.py`'s `EvalRunSummary` unchanged, and `GET /api/evals/latest` returns the same keys for a fresh run
-- [ ] `uv run pytest -m "not integration"` passes, and `uv run python scripts/run_evals.py` on the models-bearing checkout still reports 250/250 with all three metrics at `1.0`
-- [ ] `uv run mypy scripts`, `uv run pylint scripts`, `uv run ruff check .` and `scripts/gate.sh` stay green
+- [x] `uv run python scripts/run_evals.py -k test_dlp_evals` runs only that module's tests and exits 0; the same invocation works for `-v`, `-x` and `--tb=short`, and `scripts/run_evals.py --help` still renders
+- [x] A deliberately broken gate row makes the run write evidence that names the failing node id and the module it belongs to, and the summary still reports one failure with the metric at `0.0` (never-green rule intact)
+- [x] The per-test evidence file is written atomically to the configured report directory, is world-readable (`0o644`, like `latest.json`), and carries every node id with `passed`/`failed`/`skipped` plus the skip reason
+- [x] `artifacts/evals/latest.json` still validates against `gateway/evals.py`'s `EvalRunSummary` unchanged, and `GET /api/evals/latest` returns the same keys for a fresh run
+- [x] `uv run pytest -m "not integration"` passes, and `uv run python scripts/run_evals.py` on the models-bearing checkout still reports 250/250 with all three metrics at `1.0`
+- [x] `uv run mypy scripts`, `uv run pylint scripts`, `uv run ruff check .` and `scripts/gate.sh` stay green
 
 **Notes**
 
@@ -90,3 +89,4 @@ explainable, not a database.
 - `P2`/`v0.5`: nothing ships wrongly today — the gates themselves are correct and green — but the artefact of a security gate that nobody can explain is exactly the evidence gap ADR-006 exists to close, and this is a small, self-contained change to one script.
 - Capture only: no test, script or document change is part of this item.
 - Blocked (2026-11-19): acceptance 1 (`-k test_dlp_evals` exits 0) cannot hold together with the Outcome's "never-green rule untouched" (ADR-006 decision 3). pytest's `-k` matches the module keyword, so that invocation selects 48 of 250 tests and deselects every test in `tests/test_egress_evals.py` and `tests/test_classifier_evals.py` (verified with `pytest ... -k test_dlp_evals --collect-only -q`: 48 collected, 202 deselected). Two gates then have no executed test, and `summarise()` must add one synthetic failure each, so the script exits 1. Needed: decide whether a narrowed run scopes the summary to the gate(s) its arguments select (a change to the report contract and ADR-006 decision 3), or whether acceptance 1 should expect exit 1 with two unverified gates. No code was changed.
+- Resolution (2026-11-20): triage chose the narrowing branch — a run narrowed with forwarded pytest arguments scores only the gates it touched, while an argument-free run still scores all three and a narrowing that touches none stays red. ADR-006 decision 5 now records that scope and the `latest-junit.xml` sibling. Verified: `-k test_dlp_evals` exits 0 with `DLPRedactionMetric 1.0` (and `-v`, `-x`, `--tb=short`, `--help`); a temporary failing row produced `1 failed`, the metric at `0.0`, exit 1 and a JUnit `failure` naming `tests.test_dlp_evals::test_idea_084_deliberate_failure`; the evidence is `0o644`, replaced atomically with no `.latest-*` leftovers, and the no-models run showed 14 `<skipped message="Skipped: ONNX ...">` entries; `latest.json` still validates against `EvalRunSummary` with the same keys; the models-bearing run reports 250/250 and all three metrics at `1.0`. The manifest stays a fixed sibling, so the JSON contract (and the ADR's field list) is unchanged.

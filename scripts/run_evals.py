@@ -4,10 +4,19 @@
     uv run python scripts/run_evals.py
     uv run python scripts/run_evals.py --json
     uv run python scripts/run_evals.py --report /tmp/latest.json
+    uv run python scripts/run_evals.py -k test_dlp_evals
 
 The script runs the three ADR-006 gates in-process, maps each module to its
 metric, and writes ``artifacts/evals/latest.json`` atomically. The gateway reads
-that file through ``GET /api/evals/latest``; nothing else may write it.
+that file through ``GET /api/evals/latest``; nothing else may write it. Every run
+also writes ``latest-junit.xml`` beside the summary, atomically and world
+readable, with one testcase per node id — outcome and skip reason — so the
+``run_id`` plus that file explains which tests produced the summary.
+
+Arguments the script does not know (``-k``, ``-v``, ``-x``, ``--tb=short`` and the
+like) are forwarded to pytest unchanged. A run the caller narrows scores only the
+gates it touched; a narrowing that touches none is red, and an argument-free run
+still scores all three.
 
 Semantics, deliberately strict:
 
@@ -52,6 +61,7 @@ GATES: Final[dict[str, str]] = {
 
 Outcome = Literal["passed", "failed", "skipped"]
 DEFAULT_REPORT: Final[Path] = Path("artifacts/evals/latest.json")
+JUNIT_NAME: Final[str] = "latest-junit.xml"
 
 
 @dataclass(eq=False)
@@ -107,6 +117,20 @@ class RunSummary:
 
 def _module_of(node_id: str) -> str:
     return node_id.split("::", 1)[0]
+
+
+def scoped_gates(outcomes: Mapping[str, Outcome], *, narrowed: bool) -> dict[str, str]:
+    """Gates this run must score.
+
+    An argument-free run scores every gate, so one that produced no evidence
+    stays a synthetic failure. A caller-narrowed run scores only the gates that
+    produced an outcome; a narrowing that touches no gate leaves the mapping
+    empty, which :func:`summarise` still reports as a red run.
+    """
+    if not narrowed:
+        return dict(GATES)
+    ran = {_module_of(node_id) for node_id in outcomes}
+    return {module: metric for module, metric in GATES.items() if module in ran}
 
 
 def summarise(
@@ -196,6 +220,14 @@ def write_report(path: Path, summary: RunSummary) -> Path:
     return path
 
 
+def write_evidence(source: Path, destination: Path) -> Path:
+    """Move pytest's JUnit file next to the summary, world-readable and atomic."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(source, 0o644)
+    os.replace(source, destination)
+    return destination
+
+
 def git_sha() -> str | None:
     """Return the current commit, or ``None`` outside a repository."""
     try:
@@ -212,8 +244,8 @@ def git_sha() -> str | None:
     return sha if result.returncode == 0 and len(sha) == 40 else None
 
 
-def _pytest_args(extra: Iterable[str]) -> list[str]:
-    return ["-q", "-p", "no:cacheprovider", *GATES, *extra]
+def _pytest_args(extra: Iterable[str], junit: Path) -> list[str]:
+    return ["-q", "-p", "no:cacheprovider", *GATES, f"--junitxml={junit}", *extra]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -233,38 +265,55 @@ def main(argv: list[str] | None = None) -> int:
         help="host verdict from scripts/check_classifier_dispatch.py",
     )
     parser.add_argument("--json", action="store_true", help="print the summary as JSON")
-    parser.add_argument(
-        "pytest_args",
-        nargs="*",
-        help="extra pytest arguments, e.g. -k dlp",
-    )
-    args = parser.parse_args(argv)
+    # Unknown arguments are the pytest passthrough: a positional ``nargs="*"``
+    # would steal the value of ``-k`` before the option was recognised.
+    options, forwarded = parser.parse_known_args(argv)
 
     exempt: dict[str, str] = {}
-    if args.dispatch_verdict == "dispatch_anomaly":
+    if options.dispatch_verdict == "dispatch_anomaly":
         # The gate tests read this to skip their assertions; the summary then
         # records the exemption instead of the skipped-only synthetic failure.
         os.environ["CLASSIFIER_DISPATCH_VERDICT"] = "dispatch_anomaly"
         exempt = {"ClassifierGoldenGate": "dispatch_anomaly"}
 
+    report_path = Path(options.report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    # pytest writes its JUnit file in one pass; a sibling temp path lets the
+    # finished evidence replace the published one atomically.
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=report_path.parent,
+        prefix=".latest-",
+        suffix=".xml",
+        delete=False,
+    ) as handle:
+        junit_temporary = Path(handle.name)
+
     collector = _Collector()
     started = datetime.now(UTC)
-    exit_code = int(pytest.main(_pytest_args(args.pytest_args), plugins=[collector]))
+    exit_code = int(pytest.main(_pytest_args(forwarded, junit_temporary), plugins=[collector]))
     finished = datetime.now(UTC)
+
+    if junit_temporary.stat().st_size == 0:
+        raise SystemExit("run-evals: pytest wrote no JUnit evidence")
 
     summary = summarise(
         collector.outcomes,
         started_at=started,
         finished_at=finished,
         git_sha=git_sha(),
+        gates=scoped_gates(collector.outcomes, narrowed=bool(forwarded)),
         exempt_gates=exempt,
     )
-    path = write_report(Path(args.report), summary)
+    evidence = write_evidence(junit_temporary, report_path.with_name(JUNIT_NAME))
+    path = write_report(report_path, summary)
 
-    if args.json:
+    if options.json:
         print(json.dumps(summary.as_report(), indent=2, sort_keys=True))
     else:
         print(f"evals: {summary.passed}/{summary.total} passed, {summary.failed} failed -> {path}")
+        print(f"  evidence: {evidence}")
         for metric, score in sorted(summary.metrics.items()):
             print(f"  {metric:<24} {score:.3f}")
         for metric, verdict in sorted(summary.exempt_gates.items()):
