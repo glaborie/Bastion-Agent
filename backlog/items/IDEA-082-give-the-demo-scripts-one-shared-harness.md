@@ -1,6 +1,6 @@
 ### IDEA-082: Give the demo scripts one shared harness
 
-- status: ready
+- status: active
 - priority: P3
 - phase: v0.5
 - area: tooling
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-18
-- updated: 2026-11-19
+- updated: 2026-11-20
 - source: refactoring scan of `scripts/demo_*.py`, 2026-11-18
 
 **Problem**
