@@ -1,6 +1,6 @@
 ### IDEA-089: Watch container health for known failure signatures and forward them to Uptime Kuma and ntfy
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: IDEA-039
 - spec: ADR-025
 - created: 2026-11-19
-- updated: 2026-11-19
+- updated: 2026-11-20
 - source: operator report in session on 2026-11-19, after the MinIO drive went offline while its container healthcheck stayed green
 
 **Problem**
