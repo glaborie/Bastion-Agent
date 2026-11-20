@@ -21,34 +21,36 @@ canary is printed because it is a throwaway marker for this run.
 
 from __future__ import annotations
 
-import asyncio
-import logging
 import sys
 import uuid
-from typing import Final
+from pathlib import Path
 
-from agent.dlp.vault import TokenVault, get_vault
+from agent.dlp.vault import TokenVault
 from agent.egress.sanitizer import (
     EgressCircuitOpenError,
     EgressSanitizer,
     EgressUnavailableError,
 )
-from db.redis import close_redis, get_redis
 from settings import get_settings
 
-DEMO_TENANT: Final[str] = "demo"
-DEMO_CANARY_TTL: Final[int] = 120
-DEMO_TRIP_TTL: Final[int] = 30
+# `python scripts/demo_egress.py` puts only `scripts/` on sys.path, so the repo
+# root must be added for `scripts._demo` to resolve as it does under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts._demo import (  # pylint: disable=wrong-import-position
+    DEMO_TENANT,
+    DemoFailure,
+    await_main,
+    check,
+    egress_stack,
+    main_guard,
+    parser,
+    redis_unavailable,
+    run_scenario,
+    verdict,
+)
 
-class DemoFailure(RuntimeError):
-    """A demo invariant did not hold."""
-
-
-def check(condition: bool, message: str) -> None:
-    """Fail the demo loudly instead of printing a misleading success."""
-    if not condition:
-        raise DemoFailure(message)
+FALLBACK_DESCRIPTION = "Demonstrate the ADR-012 egress canary without calling a model."
 
 
 async def _leak_stage(sanitizer: EgressSanitizer, tenant: str, session: str, canary: str) -> None:
@@ -117,7 +119,7 @@ async def run_demo(sanitizer: EgressSanitizer, vault: TokenVault) -> None:
         await _leak_stage(sanitizer, DEMO_TENANT, session, canary)
         await _clean_stage(sanitizer, vault, DEMO_TENANT, clean)
         _fence_stage(sanitizer)
-        print("\nPASS: leak blocked and quarantined, clean answer restored.")
+        verdict("leak blocked and quarantined, clean answer restored.")
     finally:
         try:
             for target in (session, peer, clean):
@@ -129,33 +131,18 @@ async def run_demo(sanitizer: EgressSanitizer, vault: TokenVault) -> None:
             print("cleanup          demo keys deleted")
 
 
-async def main() -> int:
-    settings = get_settings()
-    redis = get_redis(settings.redis_url)
-    vault = get_vault()
-    sanitizer = EgressSanitizer(
-        vault,
-        redis,
-        canary_prefix=settings.canary_prefix,
-        canary_ttl_seconds=DEMO_CANARY_TTL,
-        trip_ttl_seconds=DEMO_TRIP_TTL,
-    )
-    # The sanitizer logs the trip as a WARNING; the demo narrates each stage
-    # itself, so keep the raw log lines out of the transcript.
-    logging.getLogger("agent.egress.sanitizer").setLevel(logging.ERROR)
-    try:
-        await run_demo(sanitizer, vault)
-    except EgressUnavailableError as exc:
-        print(f"Redis unavailable: {exc}", file=sys.stderr)
-        print("Start the stack with: docker compose up -d redis", file=sys.stderr)
-        return 2
-    except DemoFailure as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
-        return 1
-    finally:
-        await close_redis()
-    return 0
+async def _scenario() -> None:
+    async with egress_stack(get_settings()) as stack:
+        await run_demo(stack.sanitizer, stack.vault)
 
 
-if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+async def _main(argv: list[str] | None) -> int:
+    parser(__doc__, FALLBACK_DESCRIPTION).parse_args(argv)
+    return await run_scenario(_scenario, unavailable={EgressUnavailableError: redis_unavailable})
+
+
+def main(argv: list[str] | None = None) -> int:
+    return await_main(_main(argv))
+
+
+main_guard(main, __name__)

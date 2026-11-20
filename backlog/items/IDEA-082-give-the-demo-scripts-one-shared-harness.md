@@ -1,6 +1,6 @@
 ### IDEA-082: Give the demo scripts one shared harness
 
-- status: ready
+- status: done
 - priority: P3
 - phase: v0.5
 - area: tooling
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: -
 - created: 2026-11-18
-- updated: 2026-11-19
+- updated: 2026-11-20
 - source: refactoring scan of `scripts/demo_*.py`, 2026-11-18
 
 **Problem**
@@ -21,14 +21,21 @@ The five walkthrough scripts carry 1,001 lines — `demo_classifier.py` (162), `
 
 **Acceptance**
 
-- [ ] `for s in demo_classifier demo_egress demo_model_canary demo_tool_request demo_traffic; do uv run python scripts/$s.py --help; done` exits 0 for all five, and `uv run python -OO scripts/demo_traffic.py --help` plus `uv run python -OO scripts/demo_tool_request.py --help` still print a usage line instead of raising on `__doc__`
-- [ ] `docker compose up -d redis` then `uv run python scripts/demo_egress.py` prints the same five stage lines and exits 0, and `uv run python scripts/demo_tool_request.py --tool execute_file_write --actor-sub "$ALICE_SUB" --role operator --arg path=reports/q1.txt` against redis and a running worker prints the same `ticket`/`expires at`/`session` lines and exits 0; both end with the same verdict footer
-- [ ] `grep -rn "class DemoFailure\|def check(\|if __name__" scripts/demo_*.py` returns nothing, and `grep -rn "class DemoFailure" scripts/` matches only `scripts/_demo.py`
-- [ ] `uv run pytest tests/test_demo_traffic.py tests/test_script_entry_points.py -q` passes unchanged
-- [ ] `uv run --no-sync ruff check .` and `uv run --no-sync pylint scripts` are clean, and `scripts/gate.sh` stays green
+- [x] `for s in demo_classifier demo_egress demo_model_canary demo_tool_request demo_traffic; do uv run python scripts/$s.py --help; done` exits 0 for all five, and `uv run python -OO scripts/demo_traffic.py --help` plus `uv run python -OO scripts/demo_tool_request.py --help` still print a usage line instead of raising on `__doc__`
+- [x] `docker compose up -d redis` then `uv run python scripts/demo_egress.py` prints the same five stage lines and exits 0, and `uv run python scripts/demo_tool_request.py --tool execute_file_write --actor-sub "$ALICE_SUB" --role operator --arg path=reports/q1.txt` against redis and a running worker prints the same `ticket`/`expires at`/`session` lines and exits 0; both end with the same verdict footer
+- [x] `grep -rn "class DemoFailure\|def check(\|if __name__" scripts/demo_*.py` returns nothing, and `grep -rn "class DemoFailure" scripts/` matches only `scripts/_demo.py`
+- [x] `uv run pytest tests/test_demo_traffic.py tests/test_script_entry_points.py -q` passes unchanged
+- [x] `uv run --no-sync ruff check .` and `uv run --no-sync pylint scripts` are clean, and `scripts/gate.sh` stays green
 
 **Notes**
 
+- 2026-11-20, verified against pre-refactor runs rather than by reading the diff: `demo_egress.py` and `demo_tool_request.py` outputs were captured before the refactor and diffed after (session ids, canary, ticket id and expiry normalised) — identical stage lines, identical verdict footer, exit 0. `demo_model_canary.py` also ran end to end against the running `llama.cpp` (raw leak True, blocked, quarantined, `PASS` + `cleanup`), which is the stronger footer check the Notes above name.
+- 2026-11-20, `scripts/_demo.py` owns `DemoFailure`/`check`, the parser skeleton with its literal `-OO` fallback, `egress_stack` (Redis + vault + sanitizer, one `finally` close), `run_scenario` with the `FAIL`/exit-1 and registered-unavailable/exit-2 mapping, `verdict`, `await_main` and `main_guard`. Each demo keeps its stages, sample data, arguments and `main(argv)`. `demo_tool_request.py` keeps its own `return 1` paths for a queue timeout and a refused call: those are its documented exits, not the harness's invariant failure.
+- 2026-11-20, the guard moved rather than disappeared: DEMO.md runs `python scripts/demo_x.py`, so the `if __name__ == "__main__"` block could not leave the files without changing every invocation. `main_guard(main, __name__)` reads the caller's module name, which is why the acceptance grep is clean and direct execution still works.
+- 2026-11-20, no span setup moved: none of the five scripts created a span at the base commit (`git grep span|tracer|telemetry` over `scripts/demo_*.py` is empty), so the harness has none to own. Adding one would be new behaviour that no acceptance box or test covers.
+- 2026-11-20, host-side runs need `.env.vault` sourced since IDEA-076 moved the secrets out of `.env`; the worktree links only `.env`, and `bastion-redis` had lost its host port binding (recreated with the compose file, same volume). Environment, not this change, but it is the second session to hit the `.env.vault` gap.
+- Import plumbing: a script run as a file puts only `scripts/` on `sys.path`, so each demo keeps the two-line repo-root insert that `scripts/check_env_vault.py` already uses. `from scripts import _demo` then resolves under both `python scripts/x.py` and pytest.
+- Size honest note: the five scripts went 1,001 → 1,008 lines and the harness adds 130, so the change does not shrink the tree — it removes the duplicated lifecycle and failure mapping (the 70-line egress/model pair) at the cost of the import/fallback preamble each script now carries. The transcripts DEMO.md quotes are unchanged.
 - `spec` is `-`: no ADR governs the structure of these scripts. `DEMO.md` is the document that quotes their output and is the thing the refactor must leave unchanged; forcing an ADR reference here would invent a decision nobody has taken.
 - Deduplication: IDEA-012 (done, dashboard demo console) lists the same five scripts but owns the browser runner, and its notes explicitly defer a host-side `scripts/run_demo.py` — this item is not that script, it is the harness the five existing ones share. IDEA-034 (done) unified demo ticket construction in `agent/demo/scenarios.py` and `seed_demo_approval.py`, not the demo CLIs. IDEA-006 built `demo_egress.py`; IDEA-043 fixed the `__doc__` fallbacks in all eight scripts, whose behaviour must survive, not be re-opened.
 - Blast radius, checked: only `tests/test_demo_traffic.py` imports a demo script, and it monkeypatches `scripts.demo_traffic.run`, so that module's public names stay. `agent/demo/scenarios.py` and `tests/test_dashboard_demo.py` refer to the scripts by path string only, and `agent/demo/scenarios.py` reuses the `demo_model_canary.py` compose defaults, so the constants move together or not at all.

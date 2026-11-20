@@ -20,9 +20,10 @@ never a username: four-eyes compares it with the approver's subject.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
+import sys
 import uuid
+from pathlib import Path
 from typing import Any
 
 from arq import create_pool
@@ -31,10 +32,17 @@ from arq.connections import RedisSettings
 from agent.job_auth import TOOL_JOB, sign_job, tool_job_fields
 from settings import get_settings
 
+# `python scripts/demo_tool_request.py` puts only `scripts/` on sys.path, so the
+# repo root must be added for `scripts._demo` to resolve as it does under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-def parse_args() -> argparse.Namespace:
-    description = __doc__ or ("Originate a guarded tool call for a live demo.")
-    parser = argparse.ArgumentParser(description=description.splitlines()[0])
+from scripts import _demo  # pylint: disable=wrong-import-position
+
+FALLBACK_DESCRIPTION = "Originate a guarded tool call for a live demo."
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = _demo.parser(__doc__, FALLBACK_DESCRIPTION)
     parser.add_argument("--tool", required=True, help="registered tool name")
     parser.add_argument("--actor-sub", required=True, help="initiator OIDC subject (JWT sub)")
     parser.add_argument(
@@ -71,7 +79,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="print only the JSON result (no hints)",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _coerce(raw: str) -> Any:
@@ -150,9 +158,8 @@ async def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
-    return asyncio.run(run(parse_args()))
+def main(argv: list[str] | None = None) -> int:
+    return _demo.await_main(run(parse_args(argv)))
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+_demo.main_guard(main, __name__)
