@@ -1,6 +1,6 @@
 ### IDEA-061: Expose the tool catalog over stateless MCP with downstream upstreams behind the same gates
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: agent
