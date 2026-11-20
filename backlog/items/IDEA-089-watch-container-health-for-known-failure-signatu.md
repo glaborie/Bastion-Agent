@@ -1,6 +1,6 @@
 ### IDEA-089: Watch container health for known failure signatures and forward them to Uptime Kuma and ntfy
 
-- status: ready
+- status: blocked
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -8,7 +8,8 @@
 - depends-on: IDEA-039
 - spec: ADR-025
 - created: 2026-11-19
-- updated: 2026-11-19
+- updated: 2026-11-20
+- blocked-by: acceptance criteria need clarification
 - source: operator report in session on 2026-11-19, after the MinIO drive went offline while its container healthcheck stayed green
 
 **Problem**
@@ -33,3 +34,4 @@ A recurring health check for the essential containers probes a known failure sig
 - Observed evidence: `docker inspect bastion-minio` showed `Status: healthy` throughout; `curl http://127.0.0.1:9000/minio/health/live` returned 56/000; the container log carried `Error: node(127.0.0.1:9000): taking drive /data offline: unable to write+read for 31.489s` and `Failure in periodic refresh for IAM … no online disks found`; a restart of `bastion-minio` restored HTTP 200 in 6 s. Disk was not full (43 GB free, 21% inodes).
 - Design questions for triage: whether the pusher is a host-side script under `scripts/` on a timer, a Compose service in the `infra` profile, or a Kuma-native monitor per endpoint (Kuma has no MinIO monitor, so a HTTP keyword monitor on `/minio/health/live` would catch this one); and whether ntfy is a new profile-gated service or an external endpoint in `.env`. The item does not preselect either.
 - The MinIO restart was outside this idea: no code was changed while it was captured, and no monitoring was added in this turn.
+- Blocked (2026-11-20): acceptance 3 and 4 depend on the two choices the Notes defer to triage, and the choice changes the deliverable, not just the code. A pusher that is an `infra`-profile Compose service adds an image to the stack (ADR-016 inventory, `trivy.yaml`, `COMPLIANCE.md`, `image_inventory.py`) and needs ADR-025 to record the notification path; a host-side script keeps the stack and inventory untouched but its "recurring" run needs an operator-installed timer that the repo does not manage. Likewise ntfy as a profile-gated service is an ADR-016/compose change, while ntfy as an external endpoint means acceptance 3 is proven against whatever `NTFY_URL`/`NTFY_TOPIC` the operator supplies (a throwaway local ntfy can serve for the recording, but the repo names none). Also needed: whether ADR-025 decision 3 ("Notifications are optional and configured in the dashboard or from `.env`") is amended to require the ntfy route. Finally, acceptance 2 asks for a recorded run of the MinIO drive-offline failure; inducing that on the running dev stack would touch real audit data, and the item gives no safe reproduction recipe. No code, compose, ADR or document was changed.
