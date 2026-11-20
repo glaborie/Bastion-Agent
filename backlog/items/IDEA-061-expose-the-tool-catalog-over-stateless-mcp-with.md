@@ -2,13 +2,13 @@
 
 - status: ready
 - priority: P2
-- phase: v0.6
+- phase: v0.5
 - area: agent
 - tags: mcp, tools, egress, rbac, audit
 - depends-on: IDEA-059
 - spec: ADR-009
 - created: 2026-11-14
-- updated: 2026-11-19
+- updated: 2026-11-20
 - source: session, design note on an MCP proxy against agent/tools/execution.py and docs/tools/v1.json, 2026-11-14
 
 **Problem**
