@@ -1,6 +1,6 @@
 ### IDEA-086: Self-host CI runners and evaluate Gitea
 
-- status: active
+- status: blocked
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -9,6 +9,7 @@
 - spec: -
 - created: 2026-11-19
 - updated: 2026-11-20
+- blocked-by: acceptance criteria need clarification
 - source: session 2026-11-19, prompted by IDEA-025's record of the 2026-11-11 GitHub runner incident and ADR-016 decision 5's ~6.5 min billed runner cost per scan
 
 **Problem**
@@ -64,3 +65,4 @@ flow and the pushed-branch claim protocol in `scripts/dev/worktree.sh`.
   reliability or data residency — each points at a different answer; and should
   a runner be a profile-gated, digest-pinned compose service per ADR-016 or an
   operator-installed daemon outside the stack.
+- Blocked (2026-11-20): the record's content is the triage decision this item lists as open (lines 61-66), and writing it would be guessing. Gathered facts: `glaborie/Bastion-Agent` is **public** (`gh repo view`: visibility PUBLIC), `gh api .../actions/runners` returns zero registered runners, and all seven jobs still declare `runs-on: ubuntu-latest` (`ci.yml` lines 33/65/138/281/357/434, `wiki-sync.yml` line 25) — so self-hosted runners would execute untrusted fork pull-request code on operator infrastructure unless every fork PR is approval-gated. Needed before the ADR can be written: (1) the goal — cost, reliability or data residency; (2) whether a controlled host exists and, if so, whether the runner is a profile-gated digest-pinned compose service or an operator-installed daemon; (3) on a public repository, whether to stay hosted or self-host with fork PRs gated off. No workflow, ADR or document was changed.
