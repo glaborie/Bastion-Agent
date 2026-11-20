@@ -1,6 +1,6 @@
 ### IDEA-085: Add a backup and restore path for the dev volumes before destructive resets
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: infra
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-008
 - created: 2026-11-19
-- updated: 2026-11-19
+- updated: 2026-11-20
 - source: session 2026-11-19 ("shouldn't we have data backups we could restore?" before IDEA-076's clean-volume reset)
 
 **Problem**
