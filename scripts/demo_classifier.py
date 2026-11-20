@@ -22,8 +22,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 
 from agent.routing.classifier import (
     ClassifierConfig,
@@ -32,6 +32,14 @@ from agent.routing.classifier import (
     get_classifier,
 )
 from settings import Settings, get_settings
+
+# `python scripts/demo_classifier.py` puts only `scripts/` on sys.path, so the
+# repo root must be added for `scripts._demo` to resolve as it does under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts import _demo  # pylint: disable=wrong-import-position
+
+FALLBACK_DESCRIPTION = "Classify prompts with the live classifier and show the routing decision."
 
 #: Prompts chosen to show each branch of the decision table. The first item is
 #: a short label for the demo, not part of the classification.
@@ -64,10 +72,7 @@ class _Row:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    description = __doc__ or (
-        "Classify prompts with the live classifier and show the routing decision."
-    )
-    parser = argparse.ArgumentParser(description=description.splitlines()[0])
+    parser = _demo.parser(__doc__, FALLBACK_DESCRIPTION)
     parser.add_argument(
         "prompts",
         nargs="*",
@@ -94,7 +99,7 @@ def build_classifier(no_rules_floor: bool) -> SensitivityClassifier:
 
 def _classify_all(
     classifier: SensitivityClassifier,
-    prompts: Sequence[tuple[str, str]],
+    prompts: list[tuple[str, str]],
     settings: Settings,
 ) -> list[_Row]:
     rows: list[_Row] = []
@@ -158,5 +163,4 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+_demo.main_guard(main, __name__)

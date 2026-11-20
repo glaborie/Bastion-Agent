@@ -26,11 +26,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections.abc import Mapping, Sequence
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final
 
 import httpx
+
+# `python scripts/demo_traffic.py` puts only `scripts/` on sys.path, so the
+# repo root must be added for `scripts._demo` to resolve as it does under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts import _demo  # pylint: disable=wrong-import-position
+
+FALLBACK_DESCRIPTION = "Drive realistic traffic through the guarded chat endpoint."
 
 #: Documented dev-only credential (DEMO.md §5.1). A demo is not a deployment.
 DEV_PASSWORD: Final[str] = "Bastion-dev-2026!"  # noqa: S105 - published in DEMO.md
@@ -119,9 +129,8 @@ class Demo:
     timeout: float = 180.0
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    description = __doc__ or ("Drive realistic traffic through the guarded chat endpoint.")
-    parser = argparse.ArgumentParser(description=description.splitlines()[0])
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = _demo.parser(__doc__, FALLBACK_DESCRIPTION)
     parser.add_argument(
         "--base-url",
         default=os.getenv("BASTION_BASE_URL", "http://localhost:8000"),
@@ -253,7 +262,7 @@ def run(
     return 1 if failures else 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     demo = Demo(
         base_url=args.base_url,
@@ -266,5 +275,4 @@ def main(argv: Sequence[str] | None = None) -> int:
     return run(demo, as_json=args.json)
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+_demo.main_guard(main, __name__)
