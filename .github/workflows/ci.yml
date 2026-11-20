@@ -49,7 +49,12 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            printf 'docs_only=false\nevals=true\nosv=true\nscan=true\ntests=true\n' >> "$GITHUB_OUTPUT"
+            # The image scan no longer runs on a push to master: it is the most
+            # expensive job and development recomputes the same verdict. It stays
+            # on the weekly schedule and on workflow_dispatch (ADR-016).
+            scan=false
+            if [ "${{ github.event_name }}" != "push" ]; then scan=true; fi
+            printf 'docs_only=false\nevals=true\nosv=true\nscan=%s\ntests=true\n' "$scan" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -387,8 +392,8 @@ jobs:
 
       # The image scan answers "do the shipped images still contain a
       # CRITICAL?". Its inputs are the pins, the lockfile and the scanner itself,
-      # so the `changes` job decides whether a pull request runs it; master, the
-      # schedule and manual runs always do (ADR-016).
+      # so the `changes` job decides whether a pull request runs it; the weekly
+      # schedule and manual runs always do, a push to master does not (ADR-016).
       - name: Restore the Trivy database cache
         if: needs.changes.outputs.scan == 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5

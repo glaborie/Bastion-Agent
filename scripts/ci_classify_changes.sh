@@ -27,8 +27,8 @@ TESTS='(\.md$|^wiki/|\.(png|jpe?g|gif|svg)$|^[^/]+\.sh$)'
 # are the only things the eval gates assert on.
 EVALS='^(agent/(routing|dlp|egress)/|tests/data/|tests/test_(classifier|dlp|egress|eval)[^/]*\.py|scripts/(run_evals|check_classifier_dispatch)\.py|settings\.py|pyproject\.toml|models/)'
 
-# Only when the scanner itself moves. Master and the weekly run always scan, so
-# a pin bump is verified within a day (ADR-016).
+# Only when the scanner itself moves. The weekly run always scans, so a pin bump
+# is verified within a week (ADR-016).
 SCAN='^(trivy\.yaml|scripts/(scan_images\.sh|trivy-scan\.sh|image_inventory\.py|aggregate_trivy_reports\.py|check_trivy_report\.py|ci_classify_changes\.sh)|\.github/workflows/ci\.yml)$'
 
 # A PR changing the audited inputs or the gate must receive a fresh OSV verdict.
