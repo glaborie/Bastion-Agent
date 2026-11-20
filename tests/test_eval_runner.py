@@ -7,7 +7,14 @@ from pathlib import Path
 from stat import S_IMODE
 
 from gateway.evals import EvalRunSummary
-from scripts.run_evals import GATES, summarise, write_report
+from scripts.run_evals import (
+    GATES,
+    Outcome,
+    scoped_gates,
+    summarise,
+    write_evidence,
+    write_report,
+)
 
 STARTED = datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
 FINISHED = STARTED + timedelta(seconds=42)
@@ -165,3 +172,37 @@ def test_report_is_valid_and_replaced_atomically(tmp_path: Path) -> None:
     assert not list(path.parent.glob(".latest-*"))
     # The gateway reads this file as a different uid from a read-only mount.
     assert S_IMODE(path.stat().st_mode) == 0o644
+
+
+def test_scoped_gates_scores_every_gate_unless_narrowed() -> None:
+    outcomes: dict[str, Outcome] = {"tests/test_dlp_evals.py::test_a": "passed"}
+    assert scoped_gates(outcomes, narrowed=False) == GATES
+    assert scoped_gates(outcomes, narrowed=True) == {
+        "tests/test_dlp_evals.py": "DLPRedactionMetric"
+    }
+    assert scoped_gates({}, narrowed=True) == {}
+
+
+def test_a_narrowed_run_scores_only_the_gates_it_touched() -> None:
+    """The decision of 2026-11-20: `-k test_dlp_evals` must not count the others."""
+    outcomes: dict[str, Outcome] = {"tests/test_dlp_evals.py::test_a": "passed"}
+    summary = summarise(
+        outcomes,
+        started_at=STARTED,
+        finished_at=FINISHED,
+        git_sha="a" * 40,
+        run_id="run-narrowed",
+        gates=scoped_gates(outcomes, narrowed=True),
+    )
+    assert summary.failed == 0
+    assert summary.metrics == {"DLPRedactionMetric": 1.0}
+
+
+def test_evidence_is_moved_into_place_atomically(tmp_path: Path) -> None:
+    source = tmp_path / ".latest-evidence.xml"
+    source.write_text("<testsuite/>", encoding="utf-8")
+    destination = write_evidence(source, tmp_path / "nested" / "latest-junit.xml")
+
+    assert destination.read_text(encoding="utf-8") == "<testsuite/>"
+    assert S_IMODE(destination.stat().st_mode) == 0o644
+    assert not source.exists()
