@@ -161,6 +161,16 @@ down: ## Stop the full stack
 logs: ## Tail logs for all services
 	$(COMPOSE) logs -f
 
+# ---- Dev data (snapshots before a destructive reset) ------------------------
+.PHONY: backup
+backup: ## Snapshot Postgres, the MinIO audit witness and the Keycloak realm
+	uv run python scripts/dev/backup_dev.py backup
+
+.PHONY: restore
+restore: ## Load a snapshot: make restore BACKUP=.artifacts/backups/<UTC> [FORCE=1]
+	@test -n "$(BACKUP)" || { echo "restore: BACKUP=<dir> is required" >&2; exit 2; }
+	uv run python scripts/dev/backup_dev.py restore "$(BACKUP)" $(if $(FORCE),--force,)
+
 # ---- Models -----------------------------------------------------------------
 .PHONY: models
 models: ## Fetch and verify the pinned ONNX guard graphs into ./models
