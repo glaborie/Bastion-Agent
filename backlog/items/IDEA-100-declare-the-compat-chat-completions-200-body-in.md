@@ -1,6 +1,6 @@
 ### IDEA-100: Declare the compat chat-completions 200 body in the OpenAPI document
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -38,10 +38,10 @@ envelopes and tests stay as they are, and the schema is the one the handler alre
 
 **Acceptance**
 
-- [ ] A test reads `app.openapi()["paths"]["/v1/chat/completions"]["post"]["responses"]["200"]` and asserts the schema names `choices` and `bastion` rather than an empty object
-- [ ] The `finish_reason` declaration is an enum containing `stop` and `content_filter`, and the response description says the `content_filter` case carries an empty `content` and `bastion.blocked: true` (`tests/test_openai_compat.py:214` remains the behavioural pin)
-- [ ] The described fields match `_completion_body` exactly — a test round-trips one emitted completion through the schema, so a field added to the handler without the document fails
-- [ ] `uv run pytest tests/test_openai_compat.py tests/test_chat_contract.py -q` and `scripts/gate.sh` pass
+- [x] A test reads `app.openapi()["paths"]["/v1/chat/completions"]["post"]["responses"]["200"]` and asserts the schema names `choices` and `bastion` rather than an empty object
+- [x] The `finish_reason` declaration is an enum containing `stop` and `content_filter`, and the response description says the `content_filter` case carries an empty `content` and `bastion.blocked: true` (`tests/test_openai_compat.py:214` remains the behavioural pin)
+- [x] The described fields match `_completion_body` exactly — a test round-trips one emitted completion through the schema, so a field added to the handler without the document fails
+- [x] `uv run pytest tests/test_openai_compat.py tests/test_chat_contract.py -q` and `scripts/gate.sh` pass
 
 **Notes**
 

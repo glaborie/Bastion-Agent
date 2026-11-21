@@ -296,6 +296,74 @@ _CHUNK_SCHEMA: Final[dict[str, Any]] = {
     },
 }
 
+#: The non-streaming answer, field for field what ``_completion_body`` emits.
+_COMPLETION_SCHEMA: Final[dict[str, Any]] = {
+    "type": "object",
+    "description": (
+        "A `chat.completion` with the `bastion` extension. A policy block is still "
+        "`200`: `finish_reason` is `content_filter`, `message.content` is empty and "
+        "`bastion.blocked` is true — the values are the refusal signal, not model text."
+    ),
+    "required": ["id", "object", "created", "model", "choices", "bastion"],
+    "properties": {
+        "id": {"type": "string"},
+        "object": {"type": "string", "enum": ["chat.completion"]},
+        "created": {"type": "integer"},
+        "model": {"type": "string", "description": "The model that actually answered."},
+        "choices": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["index", "message", "finish_reason"],
+                "properties": {
+                    "index": {"type": "integer"},
+                    "message": {
+                        "type": "object",
+                        "required": ["role", "content"],
+                        "properties": {
+                            "role": {"type": "string", "enum": ["assistant"]},
+                            "content": {
+                                "type": "string",
+                                "description": "Empty when the turn is blocked.",
+                            },
+                        },
+                    },
+                    "finish_reason": {
+                        "type": "string",
+                        "enum": ["stop", "content_filter"],
+                        "description": (
+                            "`content_filter` means a policy block; the answer is not model text."
+                        ),
+                    },
+                },
+            },
+        },
+        "bastion": {
+            "type": "object",
+            "required": [
+                "conversation_id",
+                "route",
+                "classification",
+                "reason",
+                "confidence",
+                "restored_tokens",
+                "blocked",
+                "block_reason",
+            ],
+            "properties": {
+                "conversation_id": {"type": "string"},
+                "route": {"type": "string"},
+                "classification": {"type": "string"},
+                "reason": {"type": "string"},
+                "confidence": {"type": "number"},
+                "restored_tokens": {"type": "integer"},
+                "blocked": {"type": "boolean"},
+                "block_reason": {"type": ["string", "null"]},
+            },
+        },
+    },
+}
+
 #: The route's two answers: a JSON completion, or the buffered SSE replay.
 _COMPLETION_RESPONSE: Final[dict[str, Any]] = {
     "description": (
@@ -306,12 +374,7 @@ _COMPLETION_RESPONSE: Final[dict[str, Any]] = {
         "sees no token before the whole answer is sanitized."
     ),
     "content": {
-        "application/json": {
-            "schema": {
-                "type": "object",
-                "description": "`chat.completion` with the `bastion` extension object.",
-            }
-        },
+        "application/json": {"schema": _COMPLETION_SCHEMA},
         "text/event-stream": {"schema": _CHUNK_SCHEMA},
     },
 }

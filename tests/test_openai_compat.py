@@ -38,8 +38,14 @@ from gateway.auth.oidc import Principal
 from gateway.auth.rbac import AuthContext, get_auth_context
 from gateway.main import create_app
 from gateway.rate_limit import RateLimitDecision, get_rate_limiter
-from gateway.routers.chat import get_chat_dlp, get_chat_router, get_chat_sanitizer
-from gateway.routers.openai_compat import ALIAS_AUTO, ALIAS_LOCAL
+from gateway.routers.chat import (
+    AssistantTurn,
+    ChatResponse,
+    get_chat_dlp,
+    get_chat_router,
+    get_chat_sanitizer,
+)
+from gateway.routers.openai_compat import ALIAS_AUTO, ALIAS_LOCAL, _completion_body
 from settings import reset_settings_cache
 from tests.conftest import requires_database
 
@@ -254,6 +260,34 @@ def test_the_document_declares_the_streaming_answer(compat: Harness) -> None:
     assert "delta" in chunk["properties"]["choices"]["items"]["properties"]
     assert "[DONE]" in chunk["description"]
     assert "buffered" in response["description"]
+
+
+def test_the_document_describes_the_completion_body(compat: Harness) -> None:
+    """Every field the handler emits is named in the document, so a client sees the shape."""
+    operation = compat.app.openapi()["paths"]["/v1/chat/completions"]["post"]
+    schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    body = _completion_body(
+        ChatResponse(
+            conversation_id="abc",
+            message=AssistantTurn(content="A normal answer."),
+            model="local-llama",
+            route="local",
+            classification="public_content",
+            reason="public_content",
+            confidence=0.99,
+            restored_tokens=2,
+            blocked=False,
+        )
+    )
+
+    assert set(schema["properties"]) == set(body)
+    choice = schema["properties"]["choices"]["items"]
+    assert set(choice["properties"]) == set(body["choices"][0])
+    assert set(choice["properties"]["message"]["properties"]) == set(body["choices"][0]["message"])
+    assert set(schema["properties"]["bastion"]["properties"]) == set(body["bastion"])
+    assert choice["properties"]["finish_reason"]["enum"] == ["stop", "content_filter"]
+    assert "content_filter" in schema["description"]
+    assert "blocked" in schema["description"]
 
 
 async def test_unknown_model_is_a_not_found_envelope(compat: Harness) -> None:
