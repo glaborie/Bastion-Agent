@@ -1,14 +1,14 @@
 ### IDEA-100: Declare the compat chat-completions 200 body in the OpenAPI document
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: gateway
 - tags: openai, openapi, chat, client-compat
-- depends-on: IDEA-095, IDEA-096, IDEA-097
+- depends-on: -
 - spec: ADR-026
 - created: 2026-11-20
-- updated: 2026-11-20
+- updated: 2026-11-21
 - source: OpenAPI review of the compat surface, 2026-11-20 ("the primary endpoint is the least specified one")
 
 **Problem**
@@ -54,6 +54,9 @@ envelopes and tests stay as they are, and the schema is the one the handler alre
   undocumented — ADR-026 decision 4, `README.md:212` and `tests/test_openai_compat.py:214` all
   record it. What is missing is its presence in the machine-readable document; this item covers
   that, so no separate item was captured for it.
-- The `depends-on` is deliberate rather than a phase gate: 095 and 096 change the payload the
+- The `depends-on` was deliberate rather than a phase gate: 095 and 096 change the payload the
   schema must describe, and 097 edits the same `responses` declaration, so landing this first would
-  be rebased into a contradiction.
+  be rebased into a contradiction. Superseded on 2026-11-21: 097 has landed and left
+  `application/json` as a bare `type: object` — which tells a generated client nothing — while 095
+  and 096 are additive and still untriaged. Documenting the body as it is emitted today is useful on
+  its own and extends cleanly when those land, so the dependency is dropped rather than gating this.
