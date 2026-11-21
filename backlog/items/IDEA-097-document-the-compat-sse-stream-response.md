@@ -1,6 +1,6 @@
 ### IDEA-097: Document the compat SSE stream response
 
-- status: inbox
+- status: ready
 - priority: P3
 - phase: v0.5
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-026
 - created: 2026-11-20
-- updated: 2026-11-20
+- updated: 2026-11-21
 - source: six-finding OpenAPI review of the compat surface, 2026-11-20
 
 **Problem**
