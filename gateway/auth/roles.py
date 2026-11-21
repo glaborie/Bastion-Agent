@@ -24,7 +24,7 @@ class Role(StrEnum):
 ROLE_NAMES: frozenset[str] = frozenset(member.value for member in Role)
 
 #: Read surfaces of the control plane: the dashboard and its pages, the audit
-#: ledger and its chain check, the session inspector, the incident panel and the
+#: ledger and its chain check, the session inspector, the incident panel and the 
 #: approval queue as a list. Every known role may look (ADR-007 decision 9).
 READ_ROLES: Final[tuple[str, ...]] = (
     Role.ADMIN.value,
