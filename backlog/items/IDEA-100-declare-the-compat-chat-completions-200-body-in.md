@@ -1,6 +1,6 @@
 ### IDEA-100: Declare the compat chat-completions 200 body in the OpenAPI document
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: gateway
