@@ -1,6 +1,6 @@
 ### IDEA-061: Expose the tool catalog over stateless MCP with downstream upstreams behind the same gates
 
-- status: active
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: agent
@@ -8,7 +8,7 @@
 - depends-on: IDEA-059
 - spec: ADR-009
 - created: 2026-11-14
-- updated: 2026-11-20
+- updated: 2026-11-21
 - source: session, design note on an MCP proxy against agent/tools/execution.py and docs/tools/v1.json, 2026-11-14
 
 **Problem**
