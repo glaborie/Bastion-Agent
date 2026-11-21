@@ -243,6 +243,19 @@ async def test_streamed_deltas_equal_the_non_streaming_answer(compat: Harness) -
     assert pieces[-1].choices[0].finish_reason == "stop"
 
 
+def test_the_document_declares_the_streaming_answer(compat: Harness) -> None:
+    """A generated client must learn that ``stream: true`` answers with SSE."""
+    operation = compat.app.openapi()["paths"]["/v1/chat/completions"]["post"]
+    response = operation["responses"]["200"]
+
+    assert set(response["content"]) == {"application/json", "text/event-stream"}
+    chunk = response["content"]["text/event-stream"]["schema"]
+    assert chunk["properties"]["object"]["enum"] == ["chat.completion.chunk"]
+    assert "delta" in chunk["properties"]["choices"]["items"]["properties"]
+    assert "[DONE]" in chunk["description"]
+    assert "buffered" in response["description"]
+
+
 async def test_unknown_model_is_a_not_found_envelope(compat: Harness) -> None:
     with pytest.raises(Exception) as caught:
         await compat.sdk.chat.completions.create(

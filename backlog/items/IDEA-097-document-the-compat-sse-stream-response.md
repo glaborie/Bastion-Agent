@@ -1,6 +1,6 @@
 ### IDEA-097: Document the compat SSE stream response
 
-- status: active
+- status: done
 - priority: P3
 - phase: v0.5
 - area: gateway
@@ -33,10 +33,10 @@ them before the scan — which is a property worth documenting, not hiding.
 
 **Acceptance**
 
-- [ ] `app.openapi()["paths"]["/v1/chat/completions"]["post"]["responses"]["200"]["content"]` lists both media types, asserted by a test rather than by reading the YAML
-- [ ] The `text/event-stream` schema describes the chunk object and names `[DONE]`; the buffered-replay property is stated in the document text
-- [ ] `README.md` or `docs/` describes what a compat client receives with `stream: true`
-- [ ] `uv run pytest tests/test_openai_compat.py tests/test_chat_contract.py -q` and `scripts/gate.sh` pass
+- [x] `app.openapi()["paths"]["/v1/chat/completions"]["post"]["responses"]["200"]["content"]` lists both media types, asserted by a test rather than by reading the YAML
+- [x] The `text/event-stream` schema describes the chunk object and names `[DONE]`; the buffered-replay property is stated in the document text
+- [x] `README.md` or `docs/` describes what a compat client receives with `stream: true`
+- [x] `uv run pytest tests/test_openai_compat.py tests/test_chat_contract.py -q` and `scripts/gate.sh` pass
 
 **Notes**
 
@@ -46,5 +46,12 @@ them before the scan — which is a property worth documenting, not hiding.
   the two can land independently.
 - `P3`: documentation only, nothing about the wire format changes, and a client that already passes
   `stream: true` works today.
+- The terminal SSE chunk carries no `bastion` object: `_synthetic_sse` emits `id`/`object`/`created`/
+  `model`/`choices` only, so the schema documents the frames as sent and a streaming caller learns the
+  route and classification nowhere. The Outcome's parenthetical assumes that object exists; adding it
+  changes the wire, which this item rules out, so it is left for a follow-up rather than smuggled in.
+- A fresh worktree gets `.env` but not `.env.vault` from `scripts/dev/worktree.sh`, so `gate.sh`'s
+  `infra` step and `tests/test_audit_witness.py` fail until it is symlinked by hand. Symlinked locally;
+  not changed here.
 - Open question for triage: whether a streaming entry also belongs on the native `/v1/chat` (which does
   not stream at all today) or whether the document should say so explicitly to stop a client guessing.
