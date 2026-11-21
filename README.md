@@ -204,6 +204,16 @@ curl -sS http://localhost:8000/v1/chat/completions \
   -d '{"model": "bastion-auto", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
+With `stream: true` the answer is `text/event-stream`: the turn still runs to
+completion and passes egress inspection first, so the stream is a replay, not an
+increment, and time-to-first-token equals the whole turn's latency. Each frame
+is `data: ` plus a `chat.completion.chunk` — a `role` delta, the whole answer as
+one `content` delta, then an empty delta carrying `finish_reason: "stop"`, or
+`"content_filter"` with no content for a blocked turn — and the stream ends with
+the literal `data: [DONE]`. Chunks carry no `bastion` object: the conversation
+id is on the `X-Bastion-Conversation-Id` response header, while `route` and
+`classification` are only on the non-streaming body.
+
 Aliases: `bastion-auto` lets the classifier route (the default), `bastion-local`
 narrows the turn to the local model, and `local-llama`/`cloud-primary` are
 accepted as hints. The response reports the model that actually answered.

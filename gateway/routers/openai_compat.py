@@ -259,6 +259,64 @@ def _completion_body(response: ChatResponse) -> dict[str, Any]:
     }
 
 
+#: The chunk object ``_synthetic_sse`` emits, declared here so the document and
+#: the replay describe one stream rather than two.
+_CHUNK_SCHEMA: Final[dict[str, Any]] = {
+    "type": "object",
+    "description": (
+        "One `data: ` frame of the replay: a `role` delta, the whole scanned answer "
+        "as one `content` delta, then an empty delta carrying `finish_reason`. The "
+        "stream ends with `data: [DONE]`, which is a literal, not a JSON object."
+    ),
+    "properties": {
+        "id": {"type": "string", "description": "One id shared by every chunk."},
+        "object": {"type": "string", "enum": ["chat.completion.chunk"]},
+        "created": {"type": "integer"},
+        "model": {"type": "string", "description": "The model that actually answered."},
+        "choices": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "delta": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "enum": ["assistant"]},
+                            "content": {"type": "string"},
+                        },
+                    },
+                    "finish_reason": {
+                        "type": ["string", "null"],
+                        "enum": ["stop", "content_filter"],
+                    },
+                },
+            },
+        },
+    },
+}
+
+#: The route's two answers: a JSON completion, or the buffered SSE replay.
+_COMPLETION_RESPONSE: Final[dict[str, Any]] = {
+    "description": (
+        "A `chat.completion` object with the `bastion` extension (conversation id, "
+        "route, classification, blocked), or, when the body sets `stream: true`, a "
+        "`text/event-stream` replay of that turn. The stream is buffered, not "
+        "incremental: the egress scan finishes before the first byte, so a client "
+        "sees no token before the whole answer is sanitized."
+    ),
+    "content": {
+        "application/json": {
+            "schema": {
+                "type": "object",
+                "description": "`chat.completion` with the `bastion` extension object.",
+            }
+        },
+        "text/event-stream": {"schema": _CHUNK_SCHEMA},
+    },
+}
+
+
 def _chunk(
     *, chunk_id: str, created: int, model: str, delta: dict[str, Any], finish_reason: str | None
 ) -> bytes:
@@ -345,7 +403,7 @@ async def list_models(
     }
 
 
-@router.post("/v1/chat/completions")
+@router.post("/v1/chat/completions", responses={200: _COMPLETION_RESPONSE})
 async def chat_completions(
     payload: CompatRequest,
     x_bastion_conversation_id: str | None = Header(default=None, alias="X-Bastion-Conversation-Id"),
