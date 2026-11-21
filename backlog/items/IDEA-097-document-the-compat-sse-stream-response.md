@@ -1,6 +1,6 @@
 ### IDEA-097: Document the compat SSE stream response
 
-- status: ready
+- status: active
 - priority: P3
 - phase: v0.5
 - area: gateway
