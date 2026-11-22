@@ -23,8 +23,10 @@ size; :func:`reset_tool_catalog_cache` clears it for tests.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -32,9 +34,6 @@ from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final, Protocol
-
-import hashlib
-import re
 
 from agent.tools.errors import (
     ToolCatalogDriftError,
