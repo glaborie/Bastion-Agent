@@ -17,9 +17,7 @@ from agent.tools import (
     ToolCatalogUnavailableError,
     ToolNotInCatalogError,
     available_tools,
-    description_digest,
     get_tool_catalog,
-    input_schema_digest,
     list_tools,
     load_catalog,
     override_tool_catalog,
@@ -28,6 +26,7 @@ from agent.tools import (
     unregister_tool,
     verify_registry,
 )
+from agent.tools.catalog import description_digest, input_schema_digest
 from settings import reset_settings_cache
 
 
