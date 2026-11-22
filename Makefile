@@ -153,6 +153,13 @@ up: preflight ## Start the full stack, rebuilding app images (requires Vault)
 	# last build never reached the container.
 	$(COMPOSE) up -d --build
 
+.PHONY: rebuild
+rebuild: preflight ## Rebuild the app tier and recreate it (gateway + worker only)
+	# `up` rebuilds everything and needs Vault; a code change only needs the app
+	# image, so this is the fast loop after a merge or a branch checkout.
+	$(COMPOSE) build gateway worker
+	$(COMPOSE) up -d --no-deps gateway worker
+
 .PHONY: down
 down: ## Stop the full stack
 	$(COMPOSE) down
