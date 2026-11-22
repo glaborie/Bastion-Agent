@@ -80,9 +80,10 @@ _COMPAT_PATHS: Final[tuple[str, ...]] = ("/v1/chat/completions", "/v1/models")
 #: Every failure a compat path can answer as an OpenAI envelope: status ->
 #: (documented description, ``error.type``, default ``error.code``). This table is
 #: both what ``_envelope_for`` renders and what the document declares, so a
-#: status one learns without the other cannot drift silently.
+#: status one learns without the other cannot drift silently. A status belongs
+#: here only if something on a compat path raises it: ``405`` comes from the
+#: router for a wrong method, and no handler raises ``400``.
 COMPAT_ERRORS: Final[dict[int, tuple[str, str, str]]] = {
-    400: ("Malformed request", "invalid_request_error", "invalid_request"),
     401: (
         "Missing, malformed or invalid Bearer token",
         "authentication_error",
@@ -98,6 +99,7 @@ COMPAT_ERRORS: Final[dict[int, tuple[str, str, str]]] = {
         "invalid_request_error",
         "model_not_found",
     ),
+    405: ("Method not allowed by this endpoint", "invalid_request_error", "method_not_allowed"),
     413: (
         "Request exceeds the chat size limits",
         "invalid_request_error",
@@ -436,6 +438,12 @@ COMPAT_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     },
 }
 
+#: ``/v1/models`` reads no body and runs no pipeline stage, so only auth and the
+#: method it was called with can fail it.
+MODEL_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+    status: COMPAT_RESPONSES[status] for status in (401, 403, 405)
+}
+
 
 def _chunk(
     *, chunk_id: str, created: int, model: str, delta: dict[str, Any], finish_reason: str | None
@@ -501,7 +509,7 @@ def _ephemeral_egress_session(context: AuthContext) -> str:
     return f"ephemeral:{context.tenant_id}\x00{context.actor_id}"
 
 
-@router.get("/v1/models")
+@router.get("/v1/models", responses=MODEL_RESPONSES)
 async def list_models(
     context: AuthContext = Depends(require_roles(MODEL_ROLES)),
     _csrf: AuthContext = Depends(require_csrf),
