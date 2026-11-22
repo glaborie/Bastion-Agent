@@ -290,6 +290,29 @@ def test_the_document_describes_the_completion_body(compat: Harness) -> None:
     assert "blocked" in schema["description"]
 
 
+def test_the_document_declares_bearer_auth_on_every_guarded_operation(compat: Harness) -> None:
+    """The document must not tell a generated client the API is public."""
+    spec = compat.app.openapi()
+    scheme = spec["components"]["securitySchemes"]["bearerAuth"]
+    assert (scheme["type"], scheme["scheme"]) == ("http", "bearer")
+
+    for path, operations in spec["paths"].items():
+        for method, operation in operations.items():
+            if method not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            if path in {"/health", "/health/ready"}:
+                assert "security" not in operation
+            else:
+                assert operation["security"] == [{"bearerAuth": []}]
+
+
+def test_the_chat_route_declares_the_failures_a_client_must_model(compat: Harness) -> None:
+    responses = compat.app.openapi()["paths"]["/v1/chat"]["post"]["responses"]
+    for status in ("401", "404", "429", "504"):
+        schema = responses[status]["content"]["application/json"]["schema"]
+        assert schema["properties"]["detail"]["type"] == "string"
+
+
 async def test_unknown_model_is_a_not_found_envelope(compat: Harness) -> None:
     with pytest.raises(Exception) as caught:
         await compat.sdk.chat.completions.create(

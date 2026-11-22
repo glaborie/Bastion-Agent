@@ -77,6 +77,7 @@ from gateway.rate_limit import (
     refusal_headers,
     settled_tokens,
 )
+from gateway.routers.chat_responses import CHAT_RESPONSES
 from gateway.routers.chat_tracing import completion_attributes, split_model
 from settings import Settings, get_settings
 from telemetry import annotate_span, span_attributes
@@ -967,13 +968,7 @@ async def run_turn(
     "/v1/chat",
     response_model=ChatResponse,
     summary="Guarded chat completion",
-    responses={
-        403: {"description": "Session quarantined by the egress circuit breaker"},
-        413: {"description": "Request exceeds the chat size limits"},
-        422: {"description": "Unknown model alias or unsupported field"},
-        502: {"description": "Upstream failure or egress filter block"},
-        503: {"description": "DLP, canary registry or quarantine store unavailable"},
-    },
+    responses=CHAT_RESPONSES,
 )
 async def chat(
     request: ChatRequest,
