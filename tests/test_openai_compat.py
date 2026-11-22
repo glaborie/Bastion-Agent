@@ -328,6 +328,23 @@ def test_the_document_declares_every_compat_failure_as_the_envelope(compat: Harn
         assert set(schema["properties"]["error"]["properties"]) == {"message", "type", "code"}
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "supported"),
+    [("GET", "/v1/chat/completions", "post"), ("POST", "/v1/models", "get")],
+)
+async def test_a_wrong_method_is_a_declared_envelope(
+    compat: Harness, method: str, path: str, supported: str
+) -> None:
+    """The router answers 405 before auth, so it must be part of the contract."""
+    response = await compat.http.request(method, path)
+
+    assert response.status_code == 405
+    assert response.headers["allow"] == supported.upper()
+    body = response.json()["error"]
+    assert (body["type"], body["code"]) == ("invalid_request_error", "method_not_allowed")
+    assert "405" in compat.app.openapi()["paths"][path][supported]["responses"]
+
+
 async def test_unknown_model_is_a_not_found_envelope(compat: Harness) -> None:
     with pytest.raises(Exception) as caught:
         await compat.sdk.chat.completions.create(

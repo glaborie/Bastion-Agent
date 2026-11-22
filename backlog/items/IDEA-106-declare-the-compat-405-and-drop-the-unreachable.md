@@ -1,6 +1,6 @@
 ### IDEA-106: Declare the compat 405 and drop the unreachable 400 from the OpenAPI document
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -46,13 +46,13 @@ holding, and no runtime behaviour changes beyond the envelope `code`/`type` a wr
 
 **Acceptance**
 
-- [ ] `400` is gone from `COMPAT_ERRORS`, from the generated document, and from `_envelope_for`'s fallback
+- [x] `400` is gone from `COMPAT_ERRORS`, from the generated document, and from `_envelope_for`'s fallback
       path if it is only reachable through the default branch
-- [ ] A wrong method on `/v1/chat/completions` (and `/v1/models`) answers `405` with the envelope, `type:
+- [x] A wrong method on `/v1/chat/completions` (and `/v1/models`) answers `405` with the envelope, `type:
       invalid_request_error`, `code: method_not_allowed`, and the document declares that status
-- [ ] The existing drift test (`tests/test_openai_compat.py`) covers the new set, so a status in the table
+- [x] The existing drift test (`tests/test_openai_compat.py`) covers the new set, so a status in the table
       without a reachable handler — or the reverse — fails CI
-- [ ] `uv run pytest tests/test_openai_compat.py tests/test_chat_contract.py -q` and `scripts/gate.sh
+- [x] `uv run pytest tests/test_openai_compat.py tests/test_chat_contract.py -q` and `scripts/gate.sh
       --integration` pass
 
 **Notes**
@@ -67,3 +67,18 @@ holding, and no runtime behaviour changes beyond the envelope `code`/`type` a wr
 - Open question for triage: whether the Forge families should grow cases that exercise `413`, `429` and
   `503` (which need oversized bodies, an exhausted budget and a broken dependency), or whether the pytest
   coverage is the right home and the harness stays happy-path plus auth.
+- Implementation: `400` left `COMPAT_ERRORS`; `405` joined it as
+  `("Method not allowed by this endpoint", "invalid_request_error", "method_not_allowed")`, so
+  `_envelope_for` labels a wrong method as the caller mistake it is instead of `api_error/internal_error`.
+  The default branch of `_envelope_for` still answers `api_error/internal_error` for a status outside the
+  table, which is now only a backstop, not a declaration.
+- `/v1/models` declared no failures at all, so declaring `405` there would have been the same
+  over/under-declaration split in miniature. It now carries `MODEL_RESPONSES` — the `401`, `403` and `405`
+  entries of the same table — because that route reads no body and runs no pipeline stage, so nothing else
+  can fail it. The chat route keeps the full set.
+- The drift test already derived the expected statuses from `COMPAT_ERRORS`, so dropping `400` and adding
+  `405` moved the assertion without an edit. A parametrised test (`test_a_wrong_method_is_a_declared_
+  envelope`) drives `GET /v1/chat/completions` and `POST /v1/models` through the router, asserting the
+  `Allow` header, the envelope `type`/`code`, and the declared status on the supported operation.
+- Verified: `pytest tests/test_openai_compat.py -q` is 20 passed, 1 skipped against a throwaway
+  PostgreSQL 16; `scripts/gate.sh --integration` is 14/14, the witness tests included.
