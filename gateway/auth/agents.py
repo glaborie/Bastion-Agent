@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 #: The only paths an agent token may call. Everything else in this application
 #: is session-authenticated (dashboard, approval queue, audit reads).
-AGENT_API_PREFIXES: Final[tuple[str, ...]] = ("/v1/",)
+AGENT_API_PREFIXES: Final[tuple[str, ...]] = ("/v1/", "/mcp")
 
 
 @dataclass(frozen=True, slots=True)

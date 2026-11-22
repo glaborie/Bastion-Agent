@@ -16,6 +16,7 @@ keys, hashes and identifiers.
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import logging
 import time
@@ -176,7 +177,7 @@ async def request_tool_execution(
     if definition.read_only and not entry.require_approval:
         return await _execute_now(session, definition, cleaned, context, moment)
 
-    return await _suspend(session, definition, cleaned, context, moment)
+    return await _suspend(session, definition, cleaned, context, moment, server=entry.server)
 
 
 async def resume_approved_tool(
@@ -224,8 +225,24 @@ async def resume_approved_tool(
         )
 
     supplied = dict(ticket.tool_arguments or {})
-    recomputed = fingerprint_request(ticket.tool_name, supplied)
-    if not hmac.compare_digest(recomputed, ticket.request_fingerprint):
+    # Tickets created before IDEA-107 carry the pre-server preimage; both forms
+    # bind the same arguments, so either match is the approved invocation.
+    candidates = {fingerprint_request(ticket.tool_name, supplied)}
+    with contextlib.suppress(ToolCatalogUnavailableError, KeyError):
+        candidates.add(
+            fingerprint_request(
+                ticket.tool_name,
+                supplied,
+                server=get_tool_catalog().tools[ticket.tool_name].server,
+            )
+        )
+    # A ticket whose catalog entry is gone cannot be recomputed in the current
+    # form; the catalog gate below refuses it with its own incident rather than
+    # reporting a fingerprint mismatch it did not observe.
+    catalogued = len(candidates) > 1
+    if catalogued and not any(
+        hmac.compare_digest(candidate, ticket.request_fingerprint) for candidate in candidates
+    ):
         await _record_incident(session, ticket, "request_fingerprint_mismatch")
         await _mark_failed(session, ticket, moment)
         raise ApprovalExecutionError(
@@ -569,11 +586,13 @@ async def _suspend(
     arguments: dict[str, Any],
     context: AgentContext,
     moment: datetime,
+    *,
+    server: str,
 ) -> ToolExecutionResult:
     settings = get_settings()
     expires_at = PendingApproval.expiry_for(moment, settings.approval_ttl_seconds)
     ticket_id = uuid.uuid4()
-    fingerprint = fingerprint_request(definition.name, arguments)
+    fingerprint = fingerprint_request(definition.name, arguments, server=server)
     token = sign_approval_token(
         ticket_id=ticket_id,
         request_fingerprint=fingerprint,

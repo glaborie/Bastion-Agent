@@ -21,9 +21,20 @@ from db.hashing import canonical_timestamp, hash_payload
 _APPROVAL_TOKEN_VERSION: Final[str] = "v1"  # noqa: S105 - format tag, not a secret
 
 
-def fingerprint_request(tool_name: str, arguments: Mapping[str, Any]) -> str:
-    """Bind an approval to the *exact* tool invocation (prevents TOCTOU swaps)."""
-    return hash_payload({"tool": tool_name, "arguments": dict(arguments)})
+def fingerprint_request(
+    tool_name: str, arguments: Mapping[str, Any], *, server: str | None = None
+) -> str:
+    """Bind an approval to the *exact* tool invocation (prevents TOCTOU swaps).
+
+    ``server`` scopes the binding to the catalog entry's owner (IDEA-107), so a
+    same-named tool on another server cannot satisfy the ticket. ``None`` keeps
+    the pre-server preimage, which ``resume_approved_tool`` still accepts for
+    tickets created before the upgrade.
+    """
+    payload: dict[str, Any] = {"tool": tool_name, "arguments": dict(arguments)}
+    if server is not None:
+        payload["server"] = server
+    return hash_payload(payload)
 
 
 def _approval_token_message(

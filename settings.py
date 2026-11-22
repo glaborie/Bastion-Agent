@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     # -- Keycloak / OIDC ---------------------------------------------------
     keycloak_issuer: str = "http://localhost:8080/realms/bastion"
     keycloak_audience: str = "bastion-gateway"
+    #: Audience of the stateless MCP surface (ADR-028). A gateway token is not
+    #: accepted at /mcp and vice versa, so a client cannot cross surfaces.
+    mcp_audience: str = "bastion-mcp"
     keycloak_client_id: str = "bastion-gateway"
     keycloak_client_secret: SecretStr = SecretStr(DEV_KEYCLOAK_CLIENT_SECRET)
     #: Browser-facing callback registered on the Keycloak client.

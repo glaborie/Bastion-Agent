@@ -219,7 +219,9 @@ async def test_write_tool_suspends_and_binds_the_request(session: AsyncSession, 
     assert ticket.status is ApprovalStatus.PENDING
     assert ticket.initiator_id == "alice"
     assert ticket.required_role == "operator"
-    assert ticket.request_fingerprint == fingerprint_request("execute_file_write", ARGUMENTS)
+    assert ticket.request_fingerprint == fingerprint_request(
+        "execute_file_write", ARGUMENTS, server="builtin"
+    )
     assert ticket.approval_token_hash == hash_approval_token(result.approval_token)
     assert verify_ticket_token(ticket, result.approval_token)
     assert not verify_ticket_token(ticket, "v1.not-the-token")

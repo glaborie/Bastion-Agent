@@ -1,6 +1,6 @@
 ### IDEA-107: Serve POST /mcp as a stateless MCP resource server over the guarded catalog
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -42,12 +42,12 @@ unavailable by construction.
 
 **Acceptance**
 
-- [ ] A stateless `POST /mcp` serves `tools/list` and `tools/call` with no `Mcp-Session-Id` and no `initialize` handshake, answers the exact path without a redirect, and a request whose `Mcp-Method` or `Mcp-Name` header disagrees with its body is rejected before dispatch
-- [ ] A request without the modern `params._meta` envelope is refused, so the legacy leg cannot skip the header check
-- [ ] `tools/list` returns the catalog's descriptions and `description_hash`/`input_schema_hash` for the built-in tools, a tool registered in code but absent from `docs/tools/v1.json` never appears, and a name the catalog does not hold returns `-32003` with no tool execution
-- [ ] A mutating built-in tool suspends for four-eyes and runs only on approval, role and schema refusals write the same ledger rows as the native path, and the ticket fingerprint includes the server identifier
-- [ ] A token minted for `bastion-gateway` (`settings.py:92`) is refused at `/mcp` with `401`, and `/mcp` accepts only the MCP audience issued to the agent client, both asserted without a model or tool call
-- [ ] `uv run pytest tests/test_mcp.py -q` and `scripts/gate.sh` pass, and ADR-028 names the wiring this item chose
+- [x] A stateless `POST /mcp` serves `tools/list` and `tools/call` with no `Mcp-Session-Id` and no `initialize` handshake, answers the exact path without a redirect, and a request whose `Mcp-Method` or `Mcp-Name` header disagrees with its body is rejected before dispatch
+- [x] A request without the modern `params._meta` envelope is refused, so the legacy leg cannot skip the header check
+- [x] `tools/list` returns the catalog's descriptions and `description_hash`/`input_schema_hash` for the built-in tools, a tool registered in code but absent from `docs/tools/v1.json` never appears, and a name the catalog does not hold returns `-32003` with no tool execution
+- [x] A mutating built-in tool suspends for four-eyes and runs only on approval, role and schema refusals write the same ledger rows as the native path, and the ticket fingerprint includes the server identifier
+- [x] A token minted for `bastion-gateway` (`settings.py:92`) is refused at `/mcp` with `401`, and `/mcp` accepts only the MCP audience issued to the agent client, both asserted without a model or tool call
+- [x] `uv run pytest tests/test_mcp.py -q` and `scripts/gate.sh` pass, and ADR-028 names the wiring this item chose
 
 **Notes**
 
@@ -75,3 +75,30 @@ unavailable by construction.
 
 `pytest tests/test_mcp.py` plus the SDK-level assertions from ADR-028's spike (no handshake, no session
 header, `-32020` before dispatch, `-32601` for resources); then `scripts/gate.sh`.
+
+**Implementation**
+
+- Wiring chosen and recorded in ADR-028 decision 2: the low-level `Server` with
+  `on_list_tools`/`on_call_tool` constructor handlers behind
+  `StreamableHTTPSessionManager(stateless=True, json_response=True)`. `MCPServer` was rejected because its
+  tool decorators register from the live code registry, and `tools/list` must serve the catalog's pinned
+  text instead. The surface is an ASGI middleware matching exactly `/mcp`, so no `Mount` redirect exists.
+- `agent/tools/mcp_server.py` holds the catalog view and the handlers. `tools/list` projects each entry's
+  `server`, `description_hash` and `input_schema_hash` into the tool's `_meta`; a catalog that cannot be
+  read serves no tools. `tools/call` reuses `request_tool_execution`, so Gate 1 (`-32003`), the agent
+  allowlist, role and schema checks, the ledger rows and four-eyes are the native path's, not a copy.
+- `gateway/routers/mcp.py` is the wall: MCP-audience token (`MCP_AUDIENCE`, default `bastion-mcp`) via
+  `get_mcp_token_validator`, agent-registry authorisation for agent principals, one request-scoped
+  session, and the caller on a context variable. A `tools/*` body without `params._meta` is refused with
+  `-32600` before the SDK sees it, so the legacy leg cannot skip the `Mcp-Method`/`Mcp-Name` check.
+- `AGENT_API_PREFIXES` gains `/mcp`, `fingerprint_request` gains an optional `server`, and a ticket
+  created before the change still verifies: `resume_approved_tool` accepts the pre-server preimage, and
+  skips the comparison entirely when the catalog no longer names the tool (the catalog gate refuses that
+  ticket with its own incident).
+- Keycloak: `bastion-agent-analyst` carries a `bastion-mcp-audience` mapper alongside the existing
+  gateway one. `/mcp` is raw ASGI, so it does not appear in the OpenAPI document; the MCP protocol has
+  its own discovery (`server/discover`).
+- Verified: `pytest tests/test_mcp.py -q` is 13 passed (catalog text and hashes, no session header, legacy
+  refusal, header mismatch `-32020`, 405 on GET, resources `-32601`, gateway token 401, missing token,
+  audience separation, unapproved-name `-32003`, read-only execution, four-eyes suspension, uncatalogued
+  tool invisible); `scripts/gate.sh --integration` is 14/14.
