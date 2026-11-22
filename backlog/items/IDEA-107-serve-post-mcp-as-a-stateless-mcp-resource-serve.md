@@ -1,6 +1,6 @@
 ### IDEA-107: Serve POST /mcp as a stateless MCP resource server over the guarded catalog
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: gateway
