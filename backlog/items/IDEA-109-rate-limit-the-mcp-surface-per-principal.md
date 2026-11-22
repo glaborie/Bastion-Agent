@@ -62,6 +62,10 @@ unavailable limiter is a `503` rather than an unmetered pass. The budget is a se
   body is read, so a suspended caller drains no budget and a refused one makes the gateway buffer
   nothing; `429` carries `RateLimit-*` and `Retry-After`, an unavailable limiter is `503`.
 - `rate_limit_enabled: false` short-circuits the charge, matching the other scopes.
+- Strix (PR #169) found that the reorder put the caller-paced body read inside the request's database
+  transaction, so an agent could pin the pool with slow uploads. The registry lookup's transaction is
+  committed (connection released) before the charge and the body read, so the pool is held only while a
+  handler actually works; `scripts/gate.sh --integration` covers the behaviour.
 - Verified: `pytest tests/test_mcp.py -q` is 20 passed (charge identity and limit, 429 headers with no
   ticket, 503, agent budget key, disabled short-circuit); `scripts/gate.sh --integration` is 14/14.
 - This branch also carries the Strix fix from #166 (`ddb3c60`): PR #166 was merged before that commit was

@@ -240,6 +240,12 @@ class McpSurface:
                 )
                 return
 
+            # The registry lookup opened a transaction and checked out one pooled
+            # connection. Release it before the caller-paced reads below, so a
+            # slow upload cannot pin the pool every database-backed surface
+            # shares; the next statement re-acquires one when it needs it.
+            await session.commit()
+
             # Charge the bucket before the body is read (IDEA-109): a refused
             # caller cannot make the gateway buffer anything.
             refusal = await _charge(caller)
