@@ -1,6 +1,6 @@
 ### IDEA-109: Rate-limit the /mcp surface per principal
 
-- status: ready
+- status: done
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -34,13 +34,13 @@ unavailable limiter is a `503` rather than an unmetered pass. The budget is a se
 
 **Acceptance**
 
-- [ ] A request over the MCP budget answers `429` with `RateLimit-Limit`, `RateLimit-Remaining` and
+- [x] A request over the MCP budget answers `429` with `RateLimit-Limit`, `RateLimit-Remaining` and
       `Retry-After`, and no tool executes and no ticket is created
-- [ ] An unavailable limiter answers `503` (fail closed), not an unmetered request
-- [ ] Agents charge their `budget_key` and two agents of one owner do not share a bucket, asserted with
+- [x] An unavailable limiter answers `503` (fail closed), not an unmetered request
+- [x] Agents charge their `budget_key` and two agents of one owner do not share a bucket, asserted with
       a recording limiter
-- [ ] `rate_limit_enabled: false` makes the surface unmetered again, matching the other scopes
-- [ ] `uv run pytest tests/test_mcp.py -q` and `scripts/gate.sh` pass
+- [x] `rate_limit_enabled: false` makes the surface unmetered again, matching the other scopes
+- [x] `uv run pytest tests/test_mcp.py -q` and `scripts/gate.sh` pass
 
 **Notes**
 
@@ -51,3 +51,19 @@ unavailable limiter is a `503` rather than an unmetered pass. The budget is a se
 - Ordering matters: the registry refusal (`403`) runs before the bucket is charged, so a suspended agent
   cannot drain its budget while being refused, and the body is read only after the charge, so a
   refused caller cannot make the gateway buffer anything.
+
+**Implementation**
+
+- `mcp` joined `RateLimitScope` and `_SCOPES`, with `_limit_for` reading the new
+  `rate_limit_mcp_per_window` (default 120, same window as the other scopes), so the bucket script,
+  headers and refusal shape are the ones already tested for `dashboard` and `chat`.
+- `McpCaller` carries `rate_limit_subject`: the registry `budget_key` for an agent (so two agents of one
+  owner do not share), the subject for a human. `_charge` runs after the registry check and before the
+  body is read, so a suspended caller drains no budget and a refused one makes the gateway buffer
+  nothing; `429` carries `RateLimit-*` and `Retry-After`, an unavailable limiter is `503`.
+- `rate_limit_enabled: false` short-circuits the charge, matching the other scopes.
+- Verified: `pytest tests/test_mcp.py -q` is 20 passed (charge identity and limit, 429 headers with no
+  ticket, 503, agent budget key, disabled short-circuit); `scripts/gate.sh --integration` is 14/14.
+- This branch also carries the Strix fix from #166 (`ddb3c60`): PR #166 was merged before that commit was
+  pushed, so the body/argument ceilings never reached master. It is re-applied here rather than left
+  behind.

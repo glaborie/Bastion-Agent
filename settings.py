@@ -165,6 +165,9 @@ class Settings(BaseSettings):
     #: is deliberate operator work rather than a background poll.
     rate_limit_dashboard_per_window: int = 60
     rate_limit_chat_per_window: int = 120
+    #: The MCP surface charges one per request (list and call), against the
+    #: caller's existing bucket (IDEA-109).
+    rate_limit_mcp_per_window: int = 120
     #: Inference budget for one principal per window (ADR-020). A turn reserves
     #: estimated prompt tokens plus ``max_tokens`` before the model is called
     #: and settles the reported usage afterwards, so 120 cheap requests can no
@@ -520,6 +523,7 @@ class Settings(BaseSettings):
         "rate_limit_window_seconds",
         "rate_limit_dashboard_per_window",
         "rate_limit_chat_per_window",
+        "rate_limit_mcp_per_window",
         "rate_limit_chat_tokens_per_window",
         "payload_escrow_ttl_seconds",
         "response_store_max_chars",

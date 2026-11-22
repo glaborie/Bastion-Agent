@@ -41,6 +41,13 @@ from db.session import session_scope
 from gateway.auth.agents import authorize_agent, effective_tools
 from gateway.auth.oidc import Principal, TokenValidationError, parse_bearer_token
 from gateway.auth.rbac import get_mcp_token_validator
+from gateway.rate_limit import (
+    RateLimitDecision,
+    RateLimitUnavailable,
+    get_rate_limiter,
+    refusal_headers,
+)
+from settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +189,7 @@ async def _caller_for(principal: Principal, session: Any) -> McpCaller:
         agent_id=principal.agent_id,
         owner_sub=agent.owner_sub if agent is not None else None,
         allowed_tools=effective_tools(agent) if agent is not None else None,
+        rate_limit_subject=agent.budget_key if agent is not None else principal.subject,
         session=session,
     )
 
@@ -223,33 +231,6 @@ class McpSurface:
             )(scope, receive, send)
             return
 
-        declared = _content_length(scope)
-        try:
-            messages, body = await _read_body(receive, declared)
-        except McpBodyTooLarge:
-            await JSONResponse(
-                {"error": "request body too large"}, status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE
-            )(scope, receive, send)
-            return
-
-        legacy = _legacy_request(body)
-        if legacy is not None:
-            await JSONResponse(
-                {
-                    "jsonrpc": "2.0",
-                    "id": legacy.get("id"),
-                    "error": {
-                        "code": -32600,
-                        "message": (
-                            "the 2026-07-28 envelope is required: params._meta must carry "
-                            "the protocol version"
-                        ),
-                    },
-                },
-                status_code=HTTPStatus.OK,
-            )(scope, receive, send)
-            return
-
         async with session_scope() as session:
             try:
                 caller = await _caller_for(principal, session)
@@ -258,6 +239,41 @@ class McpSurface:
                     scope, receive, send
                 )
                 return
+
+            # Charge the bucket before the body is read (IDEA-109): a refused
+            # caller cannot make the gateway buffer anything.
+            refusal = await _charge(caller)
+            if refusal is not None:
+                await refusal(scope, receive, send)
+                return
+
+            try:
+                messages, body = await _read_body(receive, _content_length(scope))
+            except McpBodyTooLarge:
+                await JSONResponse(
+                    {"error": "request body too large"},
+                    status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                )(scope, receive, send)
+                return
+
+            legacy = _legacy_request(body)
+            if legacy is not None:
+                await JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": legacy.get("id"),
+                        "error": {
+                            "code": -32600,
+                            "message": (
+                                "the 2026-07-28 envelope is required: params._meta must carry "
+                                "the protocol version"
+                            ),
+                        },
+                    },
+                    status_code=HTTPStatus.OK,
+                )(scope, receive, send)
+                return
+
             set_caller(caller)
             try:
                 inner = dict(scope)
@@ -266,6 +282,42 @@ class McpSurface:
                 await self._manager.handle_request(inner, _replay(messages), send)
             finally:
                 reset_caller()
+
+
+async def _charge(caller: McpCaller) -> JSONResponse | None:
+    """Take one request from the caller's bucket, or say why not (IDEA-109).
+
+    Runs after the registry check and before the body is read, so a suspended
+    caller drains no budget and a refused one makes the gateway buffer nothing.
+    """
+    settings = get_settings()
+    if not settings.rate_limit_enabled:
+        return None
+    try:
+        decision: RateLimitDecision = await get_rate_limiter().consume(
+            caller.rate_limit_subject,
+            "mcp",
+            limit=settings.rate_limit_mcp_per_window,
+            window_seconds=settings.rate_limit_window_seconds,
+        )
+    except RateLimitUnavailable:
+        return JSONResponse({"error": "rate limiter unavailable"}, status_code=503)
+    if decision.allowed:
+        return None
+    logger.warning(
+        "MCP rate limit exceeded",
+        extra={
+            "subject": caller.actor_id,
+            "scope": "mcp",
+            "limit": decision.limit,
+            "retry_after_seconds": decision.retry_after_seconds,
+        },
+    )
+    return JSONResponse(
+        {"error": "rate limit exceeded"},
+        status_code=429,
+        headers=refusal_headers(decision),
+    )
 
 
 class McpMiddleware:
