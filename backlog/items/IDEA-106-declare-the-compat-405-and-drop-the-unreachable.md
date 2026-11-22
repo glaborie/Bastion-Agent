@@ -1,6 +1,6 @@
 ### IDEA-106: Declare the compat 405 and drop the unreachable 400 from the OpenAPI document
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: gateway
