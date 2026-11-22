@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any, Final
 
+from fastapi import HTTPException
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
@@ -37,7 +38,7 @@ from agent.tools.mcp_server import (
     set_caller,
 )
 from db.session import session_scope
-from gateway.auth.agents import AgentDenial, authorize_agent, effective_tools
+from gateway.auth.agents import authorize_agent, effective_tools
 from gateway.auth.oidc import Principal, TokenValidationError, parse_bearer_token
 from gateway.auth.rbac import get_mcp_token_validator
 
@@ -51,6 +52,17 @@ _SERVED_METHODS: Final[tuple[str, ...]] = ("tools/list", "tools/call", "server/d
 
 _WWW_AUTHENTICATE: Final[dict[str, str]] = {"WWW-Authenticate": 'Bearer realm="bastion-mcp"'}
 
+#: Buffering ceiling for one POST, matched to the SDK manager's default. The
+#: argument ceiling (``tool_max_argument_bytes``) is enforced in the execution
+#: state machine; this one bounds what the transport will hold at all, and it
+#: is applied after the credential is checked so an anonymous caller cannot
+#: make the gateway buffer anything.
+_MAX_BODY_BYTES: Final[int] = 4 * 1024 * 1024
+
+
+class McpBodyTooLarge(Exception):
+    """The request declared or produced a body over the transport ceiling."""
+
 
 class McpRefused(Exception):
     """An authentication or registry refusal, rendered before dispatch."""
@@ -61,16 +73,20 @@ class McpRefused(Exception):
         self.message = message
 
 
-async def _read_body(receive: Receive) -> tuple[list[Message], bytes]:
-    """Buffer one HTTP request body so it can be inspected and replayed."""
+async def _read_body(receive: Receive, declared: int | None) -> tuple[list[Message], bytes]:
+    """Buffer one bounded HTTP request body so it can be inspected and replayed."""
+    if declared is not None and declared > _MAX_BODY_BYTES:
+        raise McpBodyTooLarge
     messages: list[Message] = []
-    body = b""
+    body = bytearray()
     while True:
         message = await receive()
         messages.append(message)
         body += message.get("body", b"")
+        if len(body) > _MAX_BODY_BYTES:
+            raise McpBodyTooLarge
         if not message.get("more_body", False):
-            return messages, body
+            return messages, bytes(body)
 
 
 def _replay(messages: list[Message]) -> Receive:
@@ -83,6 +99,17 @@ def _replay(messages: list[Message]) -> Receive:
         return {"type": "http.disconnect"}
 
     return receive
+
+
+def _content_length(scope: Scope) -> int | None:
+    """The declared body size, so an oversized POST is refused before reading."""
+    raw = Headers(scope=scope).get("content-length")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def _legacy_request(body: bytes) -> dict[str, Any] | None:
@@ -142,8 +169,10 @@ async def _caller_for(principal: Principal, session: Any) -> McpCaller:
     if principal.actor_type == "agent":
         try:
             agent = await authorize_agent(session, principal, MCP_PATH)
-        except AgentDenial as exc:
-            raise McpRefused(HTTPStatus.FORBIDDEN, f"agent refused: {exc}") from exc
+        except HTTPException as exc:
+            # A registry refusal is a 403 with its ledger row already written;
+            # translate it here, because the wall runs outside FastAPI's handler.
+            raise McpRefused(exc.status_code, str(exc.detail)) from exc
     return McpCaller(
         actor_id=principal.subject,
         tenant_id=principal.tenant_id,
@@ -184,7 +213,25 @@ class McpSurface:
             )(scope, receive, send)
             return
 
-        messages, body = await _read_body(receive)
+        try:
+            principal = await _authenticate(scope)
+        except McpRefused as exc:
+            await JSONResponse(
+                {"error": exc.message},
+                status_code=exc.status_code,
+                headers=_WWW_AUTHENTICATE if exc.status_code == HTTPStatus.UNAUTHORIZED else None,
+            )(scope, receive, send)
+            return
+
+        declared = _content_length(scope)
+        try:
+            messages, body = await _read_body(receive, declared)
+        except McpBodyTooLarge:
+            await JSONResponse(
+                {"error": "request body too large"}, status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+            )(scope, receive, send)
+            return
+
         legacy = _legacy_request(body)
         if legacy is not None:
             await JSONResponse(
@@ -200,16 +247,6 @@ class McpSurface:
                     },
                 },
                 status_code=HTTPStatus.OK,
-            )(scope, receive, send)
-            return
-
-        try:
-            principal = await _authenticate(scope)
-        except McpRefused as exc:
-            await JSONResponse(
-                {"error": exc.message},
-                status_code=exc.status_code,
-                headers=_WWW_AUTHENTICATE if exc.status_code == HTTPStatus.UNAUTHORIZED else None,
             )(scope, receive, send)
             return
 

@@ -98,7 +98,16 @@ header, `-32020` before dispatch, `-32601` for resources); then `scripts/gate.sh
 - Keycloak: `bastion-agent-analyst` carries a `bastion-mcp-audience` mapper alongside the existing
   gateway one. `/mcp` is raw ASGI, so it does not appear in the OpenAPI document; the MCP protocol has
   its own discovery (`server/discover`).
-- Verified: `pytest tests/test_mcp.py -q` is 13 passed (catalog text and hashes, no session header, legacy
+- Strix review (PR #166) found the transport buffered the whole body before authenticating and a direct
+  caller inherited no argument ceiling. Both are fixed at the shared layer: `/mcp` authenticates before
+  it reads, refuses a declared or accumulated body over 4 MiB with `413`, and `request_tool_execution`
+  now enforces `tool_max_argument_bytes` itself, so the worker, the native routes and MCP all refuse an
+  oversized payload before a ticket exists. `_caller_for` translates the registry's `403` instead of
+  catching a type `authorize_agent` never raises.
+- Ledger parity, precisely: Gate 1, allowlist and role refusals write their rows through
+  `request_tool_execution`; a schema refusal raises before `_record_accepted`, so it writes no row —
+  the same as the native path.
+- Verified: `pytest tests/test_mcp.py -q` is 15 passed (catalog text and hashes, no session header, legacy
   refusal, header mismatch `-32020`, 405 on GET, resources `-32601`, gateway token 401, missing token,
   audience separation, unapproved-name `-32003`, read-only execution, four-eyes suspension, uncatalogued
   tool invisible); `scripts/gate.sh --integration` is 14/14.
