@@ -26,11 +26,13 @@ from agent.tools import (
     unregister_tool,
     verify_registry,
 )
+from agent.tools.catalog import description_digest, input_schema_digest
 from settings import reset_settings_cache
 
 
 def entry(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
+        "server": "builtin",
         "description": "fixture",
         "read_only": True,
         "required_role": None,
@@ -38,6 +40,8 @@ def entry(**overrides: Any) -> dict[str, Any]:
         "arguments": {},
     }
     base.update(overrides)
+    base.setdefault("description_hash", description_digest(base["description"]))
+    base.setdefault("input_schema_hash", input_schema_digest(base["arguments"]))
     return base
 
 
@@ -158,6 +162,25 @@ def test_duplicate_json_keys_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ToolCatalogUnavailableError, match="duplicate key"):
         load_catalog(path)
+
+
+def test_an_entry_pins_the_text_it_was_approved_with(tmp_path: Path) -> None:
+    catalog = load_catalog(write_catalog(tmp_path / "v1.json", {"read_it": entry()}))
+    approved = catalog.tools["read_it"]
+
+    assert approved.server == "builtin"
+    assert approved.description_hash == description_digest("fixture")
+    assert approved.input_schema_hash == input_schema_digest({})
+
+    tampered = entry()
+    tampered["description"] = "edited after approval"
+    with pytest.raises(ToolCatalogUnavailableError, match="description_hash"):
+        load_catalog(write_catalog(tmp_path / "v2.json", {"read_it": tampered}))
+
+    widened = entry(arguments={"path": {"type": "string", "required": True}})
+    widened["arguments"]["extra"] = {"type": "string", "required": False}
+    with pytest.raises(ToolCatalogUnavailableError, match="input_schema_hash"):
+        load_catalog(write_catalog(tmp_path / "v3.json", {"read_it": widened}))
 
 
 def test_missing_catalog_file_fails_closed(tmp_path: Path) -> None:

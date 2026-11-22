@@ -30,7 +30,17 @@ from gateway.dashboard.demo import router as demo_router
 from gateway.dashboard.routes import router as dashboard_router
 from gateway.dashboard.templating import render_error
 from gateway.queue import close_arq_pool
-from gateway.routers import approval_ws, approvals, audit, auth, chat, evals, health, openai_compat
+from gateway.routers import (
+    approval_ws,
+    approvals,
+    audit,
+    auth,
+    chat,
+    evals,
+    health,
+    mcp,
+    openai_compat,
+)
 from gateway.web import is_htmx
 from logging_setup import configure_logging
 from settings import get_settings
@@ -89,6 +99,17 @@ def _declare_openapi_security(app: FastAPI) -> None:
 
 
 @asynccontextmanager
+async def _mcp_lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Run the MCP session manager when the app has a surface (IDEA-107)."""
+    surface = getattr(getattr(app, "state", None), "mcp_surface", None)
+    if surface is None:
+        yield
+        return
+    async with surface.lifespan():
+        yield
+
+
+@asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Boot the persistence layer and tear everything down cleanly."""
     configure_logging(get_settings().log_level)
@@ -107,17 +128,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # the first request. A guard that cannot be built is a startup failure; the
     # server does not accept traffic until this returns, so readiness is honest.
     await to_thread.run_sync(warm_guards)
-    # Schema and the runtime role are provisioned by the one-shot `migrate`
-    # service (IDEA-062); the gateway never holds the owner credential.
-    try:
-        yield
-    finally:
-        shutdown_tracing()
-        await close_arq_pool()
-        await close_model_router()
-        await shutdown_auth()
-        await dispose_engine()
-        logger.info("Bastion-Agent gateway stopped")
+    # IDEA-107: the MCP transport's session manager must run for the app's
+    # lifetime; a mount would disable the SDK app's own lifespan.
+    async with _mcp_lifespan(_app):
+        # Schema and the runtime role are provisioned by the one-shot `migrate`
+        # service (IDEA-062); the gateway never holds the owner credential.
+        try:
+            yield
+        finally:
+            shutdown_tracing()
+            await close_arq_pool()
+            await close_model_router()
+            await shutdown_auth()
+            await dispose_engine()
+            logger.info("Bastion-Agent gateway stopped")
 
 
 def create_app() -> FastAPI:
@@ -157,6 +181,10 @@ def create_app() -> FastAPI:
     app.include_router(demo_router)
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    # The stateless MCP surface (IDEA-107) is raw ASGI, so it is not a router:
+    # the middleware claims exactly /mcp and everything else goes to the app.
+    app.state.mcp_surface = mcp.install(app)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]

@@ -23,8 +23,10 @@ size; :func:`reset_tool_catalog_cache` clears it for tests.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -38,16 +40,43 @@ from agent.tools.errors import (
     ToolCatalogUnavailableError,
     ToolNotInCatalogError,
 )
+from db.hashing import canonical_payload_bytes
 from gateway.auth.roles import ROLE_NAMES
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+#: The server that owns a catalog entry. Phase 1 admits only the built-in tools;
+#: an upstream name here would need the egress allowlist (IDEA-061 phase 2).
+BUILTIN_SERVER: Final[str] = "builtin"
+
+_HEX_DIGEST: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
+
+
+def description_digest(description: str) -> str:
+    """SHA-256 of the approved description text, which is what ``tools/list`` serves."""
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()
+
+
+def input_schema_digest(arguments: Mapping[str, Mapping[str, Any]]) -> str:
+    """SHA-256 of the canonical input schema, so a schema edit is visible."""
+    return hashlib.sha256(canonical_payload_bytes(dict(arguments))).hexdigest()
+
+
 #: Top-level fields the catalog writer emits. Anything else is a typo or an
 #: unapproved schema change, so it is rejected instead of ignored.
 _CATALOG_FIELDS: Final[frozenset[str]] = frozenset({"version", "generated_by", "tools"})
 _ENTRY_FIELDS: Final[frozenset[str]] = frozenset(
-    {"description", "read_only", "required_role", "require_approval", "arguments"}
+    {
+        "server",
+        "description",
+        "description_hash",
+        "input_schema_hash",
+        "read_only",
+        "required_role",
+        "require_approval",
+        "arguments",
+    }
 )
 _JSON_TYPES: Final[frozenset[str]] = frozenset({"string", "integer", "number", "boolean"})
 
@@ -85,6 +114,19 @@ class CatalogTool:
     required_role: str | None
     require_approval: bool
     arguments: Mapping[str, Mapping[str, Any]]
+    server: str = BUILTIN_SERVER
+    #: Digests of the approved text. Empty means "pin what this entry carries",
+    #: which is what a programmatic entry (test or plugin) gets; the file always
+    #: declares both, and ``_parse_entry`` refuses one that disagrees with its
+    #: own description or schema.
+    description_hash: str = ""
+    input_schema_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.description_hash:
+            object.__setattr__(self, "description_hash", description_digest(self.description))
+        if not self.input_schema_hash:
+            object.__setattr__(self, "input_schema_hash", input_schema_digest(self.arguments))
 
     def drift(self, definition: _DefinitionLike) -> list[str]:
         """Differences between this entry and the registered definition."""
@@ -100,8 +142,12 @@ class CatalogTool:
             )
         if self.description != definition.description:
             problems.append("description differs from the registry")
+        if self.description_hash != description_digest(definition.description):
+            problems.append("description_hash does not pin the registered description")
         if dict(self.arguments) != definition.arguments_schema:
             problems.append("arguments differ from the registry")
+        if self.input_schema_hash != input_schema_digest(definition.arguments_schema):
+            problems.append("input_schema_hash does not pin the registered schema")
         return problems
 
 
@@ -222,13 +268,42 @@ def _parse_entry(name: object, raw: object) -> CatalogTool:
             f"tool {name!r} requires approval but declares no required_role"
         )
 
+    server = raw["server"]
+    if not isinstance(server, str) or not server.strip():
+        raise ToolCatalogUnavailableError(f"tool {name!r}: server must be a non-empty string")
+    description_hash = raw["description_hash"]
+    input_schema_hash = raw["input_schema_hash"]
+    for field_name, value in (
+        ("description_hash", description_hash),
+        ("input_schema_hash", input_schema_hash),
+    ):
+        if not isinstance(value, str) or not _HEX_DIGEST.match(value):
+            raise ToolCatalogUnavailableError(
+                f"tool {name!r}: {field_name} must be a SHA-256 hex digest"
+            )
+
+    arguments = _parse_arguments(name, raw["arguments"])
+    # The digests pin the approved text, so an edited description or schema
+    # without a re-approval is a corrupt record, not a silent change.
+    if description_hash != description_digest(description.strip()):
+        raise ToolCatalogUnavailableError(
+            f"tool {name!r}: description_hash does not match the entry's description"
+        )
+    if input_schema_hash != input_schema_digest(arguments):
+        raise ToolCatalogUnavailableError(
+            f"tool {name!r}: input_schema_hash does not match the entry's arguments"
+        )
+
     return CatalogTool(
         name=name,
         description=description.strip(),
         read_only=read_only,
         required_role=required_role,
         require_approval=require_approval,
-        arguments=_parse_arguments(name, raw["arguments"]),
+        arguments=arguments,
+        server=server.strip(),
+        description_hash=description_hash,
+        input_schema_hash=input_schema_hash,
     )
 
 

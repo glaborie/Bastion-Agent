@@ -129,6 +129,20 @@ def get_token_validator() -> TokenValidator:
 
 
 @functools.lru_cache(maxsize=1)
+def get_mcp_token_validator() -> TokenValidator:
+    """Validator for the MCP surface: a gateway token is not accepted here."""
+    settings = get_settings()
+    return TokenValidator(
+        issuer=settings.keycloak_issuer,
+        audience=settings.mcp_audience,
+        client_id=settings.keycloak_client_id,
+        jwks=get_jwks_client(),
+        leeway_seconds=settings.keycloak_leeway_seconds,
+        tenant_claim=settings.tenant_claim,
+    )
+
+
+@functools.lru_cache(maxsize=1)
 def get_token_client() -> OIDCTokenClient:
     settings = get_settings()
     return OIDCTokenClient(
@@ -188,6 +202,7 @@ async def shutdown_auth() -> None:
         get_session_manager,
         get_token_client,
         get_token_validator,
+        get_mcp_token_validator,
         get_jwks_client,
     ):
         cache.cache_clear()

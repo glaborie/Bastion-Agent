@@ -321,6 +321,11 @@ class TokenValidator:
         self._leeway = timedelta(seconds=max(0, leeway_seconds))
         self._tenant_claim = tenant_claim.strip() or "tenant_id"
 
+    @property
+    def audience(self) -> str:
+        """The single audience this validator accepts (per-surface, ADR-028)."""
+        return self._audience
+
     async def validate_access_token(self, token: str) -> Principal:
         """Validate an RS256 access token and derive the caller's identity."""
         claims = await self._decode(

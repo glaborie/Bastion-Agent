@@ -188,6 +188,18 @@
           }
         },
         {
+          "name": "bastion-mcp-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "bastion-mcp",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
           "name": "bastion-tenant",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-hardcoded-claim-mapper",
