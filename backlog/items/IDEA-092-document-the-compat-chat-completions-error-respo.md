@@ -1,6 +1,6 @@
 ### IDEA-092: Document the compat chat-completions error responses
 
-- status: ready
+- status: active
 - priority: P2
 - phase: v0.5
 - area: gateway
