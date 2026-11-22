@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import hmac
+import json
 import logging
 import time
 import uuid
@@ -41,7 +42,7 @@ from agent.tools.decorator import (
     ToolStatus,
     get_tool,
 )
-from agent.tools.errors import ToolNotAllowedError
+from agent.tools.errors import ToolArgumentError, ToolNotAllowedError
 from db.audit import append_audit_event
 from db.models import (
     ApprovalStatus,
@@ -56,6 +57,20 @@ from db.models import (
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _arguments_too_large(arguments: dict[str, Any] | None) -> bool:
+    """Whether the serialised arguments exceed ``tool_max_argument_bytes``.
+
+    Enforced here rather than only in the worker wrapper, so a new entry point
+    cannot store an oversized payload in ``pending_approvals`` (IDEA-107).
+    """
+    try:
+        encoded = json.dumps(arguments or {}, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return False  # not JSON; argument validation refuses it next
+    return len(encoded) > get_settings().tool_max_argument_bytes
+
 
 #: Actor recorded for events the runtime generates on its own behalf.
 SYSTEM_ACTOR: Final[str] = "system:tool-runtime"
@@ -164,6 +179,10 @@ async def request_tool_execution(
     # Gate 1: the tool must be in the approved catalog before its arguments are
     # parsed, before RBAC is consulted and before a ticket could be created.
     entry = await _authorize_catalog(session, definition, context, moment)
+    if _arguments_too_large(arguments):
+        raise ToolArgumentError(
+            f"arguments exceed the {get_settings().tool_max_argument_bytes}-byte limit"
+        )
     cleaned = definition.validate_arguments(arguments)
 
     if context.allowed_tools is not None and definition.name not in context.allowed_tools:

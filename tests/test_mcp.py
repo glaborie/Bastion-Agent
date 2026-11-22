@@ -275,6 +275,27 @@ async def test_an_unapproved_name_is_32003_without_a_ticket(mcp: Harness) -> Non
     assert await _ticket_count(mcp) == 0
 
 
+async def test_an_oversized_body_is_refused_before_reading_it(mcp: Harness) -> None:
+    oversized = b'{"jsonrpc": "2.0", "id": 20, "method": "tools/list", "params": '
+    oversized += b'"' + b"x" * (5 * 1024 * 1024) + b'"}'
+
+    response = await mcp.client.post("/mcp", headers=mcp.headers("tools/list"), content=oversized)
+
+    assert response.status_code == 413
+    assert await _ticket_count(mcp) == 0
+
+
+async def test_oversized_arguments_are_refused_without_a_ticket(mcp: Harness) -> None:
+    response = await mcp.call(
+        "execute_file_write", {"path": "big.txt", "content": "x" * 1_200_000}, ident=21
+    )
+
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert "exceed" in result["content"][0]["text"]
+    assert await _ticket_count(mcp) == 0
+
+
 async def test_a_read_only_tool_executes(mcp: Harness) -> None:
     response = await mcp.call("read_system_status", {})
 
