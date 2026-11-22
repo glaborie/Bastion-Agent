@@ -11,6 +11,7 @@ import urllib.parse
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, Final
 
 from anyio import to_thread
 from fastapi import FastAPI, Request
@@ -55,6 +56,36 @@ _CONTENT_SECURITY_POLICY = (
 )
 
 _NO_STORE_PREFIXES = ("/dashboard", "/api", "/auth")
+
+#: The probes answer without a credential; every other operation goes through
+#: ``get_auth_context``, which accepts a Bearer token or the session cookie.
+_UNAUTHENTICATED_PATHS: Final[frozenset[str]] = frozenset({"/health", "/health/ready"})
+
+_BEARER_SCHEME: Final[dict[str, Any]] = {
+    "type": "http",
+    "scheme": "bearer",
+    "bearerFormat": "JWT",
+    "description": (
+        "Keycloak access token. Browser pages also accept the HttpOnly session "
+        "cookie that /auth/login sets; API clients send this Bearer token."
+    ),
+}
+
+
+def _declare_openapi_security(app: FastAPI) -> None:
+    """Publish the auth contract the dependencies already enforce.
+
+    Without this the document declared every route public, so a generated client
+    had no auth parameter and no way to model the 401.
+    """
+    schema = app.openapi()
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {})["bearerAuth"] = _BEARER_SCHEME
+    for path, operations in schema["paths"].items():
+        if path in _UNAUTHENTICATED_PATHS:
+            continue
+        for operation in operations.values():
+            operation.setdefault("security", [{"bearerAuth": []}])
 
 
 @asynccontextmanager
@@ -205,6 +236,7 @@ def create_app() -> FastAPI:
 
     configure_tracing(settings)
     instrument_app(app)
+    _declare_openapi_security(app)
     return app
 
 

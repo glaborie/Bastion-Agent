@@ -1,6 +1,6 @@
 ### IDEA-093: Declare Bearer auth in the OpenAPI document
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -33,10 +33,11 @@ behaviour, RBAC, CSRF and cookie scoping stay as they are, and the existing test
 
 **Acceptance**
 
-- [ ] `app.openapi()["components"]["securitySchemes"]` contains an HTTP bearer scheme, and a test asserts it rather than reading the YAML by hand
-- [ ] The test asserts `/v1/chat` and `/v1/chat/completions` carry that scheme in `security`, while `/health` and `/health/ready` carry none
-- [ ] The operations that accept the browser session (`/auth/*`) are described without promising Bearer, and `docs/`/`README.md` name the scheme for API clients
-- [ ] `uv run pytest tests/test_openai_compat.py tests/test_chat.py tests/test_rbac.py -q` and `scripts/gate.sh` pass
+- [x] `app.openapi()["components"]["securitySchemes"]` contains an HTTP bearer scheme, and a test asserts it rather than reading the YAML by hand
+- [x] The test asserts `/v1/chat` and `/v1/chat/completions` carry that scheme in `security`, while `/health` and `/health/ready` carry none
+- [x] The operations that accept the browser session (`/auth/*`) are described without promising Bearer, and `docs/`/`README.md` name the scheme for API clients
+- [x] `/v1/chat` declares `401`, `404`, `429` and `504` with the `detail` error schema, so a generated client can model the failures it must handle
+- [x] `uv run pytest tests/test_openai_compat.py tests/test_chat.py tests/test_rbac.py -q` and `scripts/gate.sh` pass
 
 **Notes**
 
@@ -47,3 +48,13 @@ behaviour, RBAC, CSRF and cookie scoping stay as they are, and the existing test
   it as a platform item. `area: gateway` because the app object and the routers both live there.
 - Open question for triage: whether CI should also diff the generated document against a committed
   snapshot, which would catch undeclared responses the way IDEA-092 does for one route.
+- Implementation: `_declare_openapi_security` post-processes the one generated schema, so the scheme
+  and the per-operation requirement live in one place and a new guarded route cannot silently omit
+  them; `/health` and `/health/ready` are the explicit exceptions. The `/v1/chat` failure statuses
+  (`401`, `404`, `429`, `504`) landed here too because the conformance matrix counts them: 33 response
+  declarations + 11 security requirements = 44, `undeclared_status: 0`. The compat route's own error
+  set is still IDEA-092. The response fragments moved to `gateway/routers/chat_responses.py` to keep
+  `chat.py` under pylint's 1000-line cap (994).
+- `/auth/me` does carry `security`, because `get_auth_context` accepts a Bearer token there as well as
+  the session cookie; the hidden cookie-only `/auth/login`, `/callback` and `/logout` are not in the
+  schema, and the scheme description names the cookie fallback for browser pages.

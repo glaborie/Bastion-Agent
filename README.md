@@ -229,7 +229,10 @@ Responses API is out of scope.
 
 ### API access with a Bearer token
 
-The gateway accepts the same RS256 token on `/api/*` and `/auth/me`:
+The gateway accepts the same RS256 token on `/api/*`, `/v1/*` and `/auth/me`. The
+generated document (`/docs` or `/openapi.json`) declares it as the `bearerAuth`
+HTTP scheme on every guarded operation; `/health` and `/health/ready` are the
+only unauthenticated paths.
 
 ```bash
 TOKEN=$(curl -s -X POST \
