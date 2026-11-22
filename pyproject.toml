@@ -55,6 +55,7 @@ dependencies = [
     # Local, in-process PDF -> Markdown for the ingestion command (ADR-023).
     # The [pdf] extra is deliberate: no OCR, no Document Intelligence, no plugins.
     "markitdown[pdf]>=0.1.9,<0.2.0",
+    "mcp==2.3.0",
 ]
 
 [dependency-groups]

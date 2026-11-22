@@ -3,7 +3,10 @@
   "generated_by": "scripts/validate_tool_catalog.py --write",
   "tools": {
     "execute_file_write": {
+      "server": "builtin",
       "description": "Write UTF-8 text to a file in the calling tenant's workspace, creating parent directories as needed. Paths are namespaced per tenant. Mutating: suspends until a second operator approves.",
+      "description_hash": "47333abe630cd3edc8bbee626147377aa9b6292602a0cd1535ebedd8db833f3b",
+      "input_schema_hash": "004600041874bc7ad868e57d24e8e1a157b8291d5e13fb612ca122bdd5866676",
       "read_only": false,
       "required_role": "operator",
       "require_approval": true,
@@ -19,7 +22,10 @@
       }
     },
     "read_file": {
+      "server": "builtin",
       "description": "Read a UTF-8 text file from the calling tenant's workspace. Paths are relative to that tenant's workspace root; traversal outside it is rejected, so one tenant cannot read another's files. Read-only.",
+      "description_hash": "8ec0e3c631b686ffa3dce958d2c84a8f3e8bcea21a99092395a470ef35fbc5a9",
+      "input_schema_hash": "e86059a752e2ef257106fbf4c3bb16010ebe399066b5eb36205bd89bf1d61dce",
       "read_only": true,
       "required_role": null,
       "require_approval": false,
@@ -31,7 +37,10 @@
       }
     },
     "read_system_status": {
+      "server": "builtin",
       "description": "Read-only host and runtime status: platform, Python version, UTC time, workspace root and process id. Safe to call without approval.",
+      "description_hash": "f41e2d2830a1cd00e3159e6b53e19c1f7b6492d6fe8847564211e931106dcfb1",
+      "input_schema_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
       "read_only": true,
       "required_role": null,
       "require_approval": false,
