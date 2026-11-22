@@ -1,6 +1,6 @@
 ### IDEA-093: Declare Bearer auth in the OpenAPI document
 
-- status: inbox
+- status: active
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-001
 - created: 2026-11-20
-- updated: 2026-11-20
+- updated: 2026-11-22
 - source: six-finding OpenAPI review of the compat surface, 2026-11-20
 
 **Problem**
