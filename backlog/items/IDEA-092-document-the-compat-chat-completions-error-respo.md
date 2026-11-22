@@ -1,6 +1,6 @@
 ### IDEA-092: Document the compat chat-completions error responses
 
-- status: inbox
+- status: ready
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -8,7 +8,7 @@
 - depends-on: -
 - spec: ADR-026
 - created: 2026-11-20
-- updated: 2026-11-20
+- updated: 2026-11-22
 - source: six-finding OpenAPI review of the compat surface, 2026-11-20
 
 **Problem**
