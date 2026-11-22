@@ -1,14 +1,15 @@
 ### IDEA-061: Expose the tool catalog over stateless MCP with downstream upstreams behind the same gates
 
-- status: ready
+- status: blocked
 - priority: P2
 - phase: v0.5
 - area: agent
 - tags: mcp, tools, egress, rbac, audit
-- depends-on: IDEA-059
+- depends-on: IDEA-059, IDEA-107
+- blocked-by: the northbound /mcp surface is IDEA-107; an upstream hangs off it
 - spec: ADR-009
 - created: 2026-11-14
-- updated: 2026-11-21
+- updated: 2026-11-22
 - source: session, design note on an MCP proxy against agent/tools/execution.py and docs/tools/v1.json, 2026-11-14
 
 **Problem**
@@ -22,10 +23,6 @@ Northbound, Bastion is a stateless MCP resource server at `/mcp` authenticating 
 **Acceptance**
 
 - [x] Spike result recorded before any code: either the Python MCP SDK supports the 2026-07-28 revision, or the thin stateless layer built in-tree is chosen, with the pinned revision and the reason named in the ADR (phase 0)
-- [ ] A stateless `POST /mcp` serves `tools/list` and `tools/call` with no `Mcp-Session-Id` and no `initialize` handshake, and a request whose `Mcp-Method` or `Mcp-Name` header disagrees with its body is rejected before dispatch (phase 1)
-- [ ] `tools/list` returns the catalog's descriptions and hashes for the built-in tools, a tool registered in code but absent from `docs/tools/v1.json` never appears, and a name the catalog does not hold returns `-32003` with no tool execution (phase 1)
-- [ ] A mutating built-in tool suspends for four-eyes and runs only on approval, role and schema refusals write the same ledger rows as the native path, and the ticket fingerprint includes the server identifier (phase 1)
-- [ ] A token minted for `bastion-gateway` (`settings.py:88`) is refused at `/mcp` with 401, and `/mcp` accepts only the MCP audience issued to the agent client, both asserted without a model or tool call (phase 1)
 - [ ] An upstream that changes a tool description or input schema has that tool disabled on the next discovery, with a `SECURITY_INCIDENT` naming the server and tool and no upstream-issued text ever reached through `tools/list` (phase 2)
 - [ ] The upstream allowlist refuses a link-local or metadata address and a redirect to one, the upstream sees Bastion's own credential rather than the caller's token, and `traceparent` from the caller is forwarded (phase 2)
 - [ ] `uv run python scripts/validate_tool_catalog.py --discover <server>` lists added, removed and changed upstream tools and exits non-zero on drift (phase 3)
@@ -45,3 +42,10 @@ Northbound, Bastion is a stateless MCP resource server at `/mcp` authenticating 
 - 2026-11-20, trap found by the spike and recorded in ADR-028 decision 4: the SDK accepts a body without `params._meta` on the pre-2026 leg, where the `Mcp-Method`/`Mcp-Name` comparison is skipped — my legacy-shaped request with `Mcp-Method: tools/list` on a `tools/call` body executed the tool. Phase 1 must refuse the legacy leg, and its test must drive the modern envelope or it asserts nothing.
 - 2026-11-20, second spike finding: with `streamable_http_path="/"` an exact `Mount("/mcp", …)` answers `307` to `/mcp/`. Phase 1 owns the exact-path arrangement and a test that `POST /mcp` is answered without a redirect.
 - Stopped after phase 0 on purpose: no dependency added, no route, no catalog or audience change. Phase 1 is the next unit and is the first acceptance target; the triage questions in the block above (catalog `server` field shape, hash canonicalisation, DCR/EMA stance, per-surface audience mapper) are still open and untouched.
+- 2026-11-22, phase 1 split out at the owner's direction: the northbound route is now IDEA-107
+  (`depends-on: IDEA-107`), and its four acceptance boxes moved there. What stays here is the
+  upstream side — phase 2 (client, allowlist, poisoning), phase 3 (`--discover`), phase 4
+  (sampling/resources stance) — plus the closing ADR/threat-model/golden row, which now also depends on
+  IDEA-107's surface existing. The catalog `server`/`description_hash`/`input_schema_hash` prerequisite
+  and the SDK-v2 API facts are recorded in IDEA-107 and its ADR-028 amendment; the `depends-on: IDEA-059`
+  entry stays because the audience half still needs the agent principal.
