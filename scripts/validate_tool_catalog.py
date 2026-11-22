@@ -25,7 +25,13 @@ from pathlib import Path
 from typing import Any
 
 from agent.tools import list_tools
-from agent.tools.catalog import compare_catalog, load_catalog
+from agent.tools.catalog import (
+    BUILTIN_SERVER,
+    compare_catalog,
+    description_digest,
+    input_schema_digest,
+    load_catalog,
+)
 from agent.tools.decorator import ToolCatalogError
 
 DEFAULT_CATALOG = Path("docs/tools/v1.json")
@@ -70,7 +76,10 @@ def registered_tools(path: Path) -> dict[str, dict[str, Any]]:
     forced = preserved_approvals(path)
     return {
         definition.name: {
+            "server": BUILTIN_SERVER,
             "description": definition.description,
+            "description_hash": description_digest(definition.description),
+            "input_schema_hash": input_schema_digest(definition.arguments_schema),
             "read_only": definition.read_only,
             "required_role": definition.required_role,
             "require_approval": (
