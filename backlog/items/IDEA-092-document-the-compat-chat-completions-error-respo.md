@@ -1,6 +1,6 @@
 ### IDEA-092: Document the compat chat-completions error responses
 
-- status: active
+- status: done
 - priority: P2
 - phase: v0.5
 - area: gateway
@@ -35,9 +35,9 @@ honest, not a different one.
 
 **Acceptance**
 
-- [ ] A test reads `app.openapi()` and asserts the documented status set of `/v1/chat/completions` equals the keys of the `_envelope_for` mapping, so a new handler status without a documented response fails
-- [ ] The same test asserts `/v1/chat` documents `401` and every other status its handler can raise, and that both endpoints describe the shared envelope rather than an empty object
-- [ ] `uv run pytest tests/test_openai_compat.py tests/test_chat.py tests/test_chat_contract.py -q` and `scripts/gate.sh` pass, and the committed `README.md` wording for the compat error shape matches the document
+- [x] A test reads `app.openapi()` and asserts the documented status set of `/v1/chat/completions` equals the keys of the `_envelope_for` mapping, so a new handler status without a documented response fails
+- [x] The same test asserts `/v1/chat` documents `401` and every other status its handler can raise, and that both endpoints describe the shared envelope rather than an empty object
+- [x] `uv run pytest tests/test_openai_compat.py tests/test_chat.py tests/test_chat_contract.py -q` and `scripts/gate.sh` pass, and the committed `README.md` wording for the compat error shape matches the document
 
 **Notes**
 
@@ -49,3 +49,16 @@ honest, not a different one.
 - Open questions for triage: whether the `429` token-budget variant (`code: token_budget_exhausted`) and
   the quarantined `403` (`code: session_quarantined`) get their own documented entries or one entry with
   examples; whether a test may import the private mapping or the handler should export it.
+- Implementation: the status map moved out of `_envelope_for` into `COMPAT_ERRORS` — status ->
+  (description, `error.type`, default `error.code`) — so the envelope renderer and the document are the
+  same table, and `COMPAT_RESPONSES` (200 + every key) is what the decorator declares. The token-budget
+  and quarantine code overrides stay after the lookup, so the two variants keep their documented status
+  and get their specific `code` at runtime; they need no separate entry. The table is public and the test
+  imports it rather than the private function, answering the open question above.
+- The recheck of issue #161 found the declared `422` was FastAPI's `HTTPValidationError`
+  (`detail: [...]`), which the compat path never returns: declaring `422` in `responses` now yields the
+  OpenAI envelope, so the document is honest for that status too. `/v1/chat` had the mirror gap
+  (`403/413/422/502/503` declared with no body); each now carries the `detail` schema its handler emits.
+- Verified: `pytest tests/test_openai_compat.py tests/test_chat_contract.py tests/test_rbac.py -q` is
+  42 passed, 1 skipped against a throwaway PostgreSQL 16, and `scripts/gate.sh --integration` is 14/14.
+  The document now declares 10 statuses on `/v1/chat/completions` (`200` plus the 9 envelope failures).

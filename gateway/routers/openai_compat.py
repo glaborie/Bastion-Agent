@@ -77,6 +77,42 @@ MODEL_ROLES: Final[tuple[str, ...]] = CHAT_ROLES
 _REFUSED_MESSAGE_ROLES: Final[frozenset[str]] = frozenset({"system", "assistant"})
 _COMPAT_PATHS: Final[tuple[str, ...]] = ("/v1/chat/completions", "/v1/models")
 
+#: Every failure a compat path can answer as an OpenAI envelope: status ->
+#: (documented description, ``error.type``, default ``error.code``). This table is
+#: both what ``_envelope_for`` renders and what the document declares, so a
+#: status one learns without the other cannot drift silently.
+COMPAT_ERRORS: Final[dict[int, tuple[str, str, str]]] = {
+    400: ("Malformed request", "invalid_request_error", "invalid_request"),
+    401: (
+        "Missing, malformed or invalid Bearer token",
+        "authentication_error",
+        "invalid_api_key",
+    ),
+    403: (
+        "Authenticated, but the role may not use this endpoint",
+        "permission_error",
+        "forbidden",
+    ),
+    404: (
+        "The requested model is not served by this gateway",
+        "invalid_request_error",
+        "model_not_found",
+    ),
+    413: (
+        "Request exceeds the chat size limits",
+        "invalid_request_error",
+        "request_too_large",
+    ),
+    422: ("Invalid request body", "invalid_request_error", "invalid_request"),
+    429: ("Request or token budget exhausted", "rate_limit_error", "rate_limit_exceeded"),
+    502: ("Upstream model unavailable", "api_error", "upstream_error"),
+    503: (
+        "DLP, canary registry or quarantine store unavailable",
+        "api_error",
+        "service_unavailable",
+    ),
+}
+
 
 class CompatMessage(BaseModel):
     """One inbound message; unknown fields are ignored, as OpenAI clients send many."""
@@ -120,18 +156,9 @@ def openai_error(
 def _envelope_for(exc: HTTPException) -> JSONResponse | None:
     """Translate one ``HTTPException`` raised by the pipeline into the envelope."""
     detail = exc.detail if isinstance(exc.detail, str) else "request failed"
-    mapping = {
-        400: ("invalid_request_error", "invalid_request"),
-        401: ("authentication_error", "invalid_api_key"),
-        403: ("permission_error", "forbidden"),
-        404: ("invalid_request_error", "model_not_found"),
-        413: ("invalid_request_error", "request_too_large"),
-        422: ("invalid_request_error", "invalid_request"),
-        429: ("rate_limit_error", "rate_limit_exceeded"),
-        502: ("api_error", "upstream_error"),
-        503: ("api_error", "service_unavailable"),
-    }
-    error_type, code = mapping.get(exc.status_code, ("api_error", "internal_error"))
+    _description, error_type, code = COMPAT_ERRORS.get(
+        exc.status_code, ("", "api_error", "internal_error")
+    )
     if exc.status_code == 429 and "token budget" in detail:
         code = "token_budget_exhausted"
     if exc.status_code == 403 and "quarantin" in detail:
@@ -380,6 +407,36 @@ _COMPLETION_RESPONSE: Final[dict[str, Any]] = {
 }
 
 
+#: The body ``openai_error`` emits, so a generated client can model a failure.
+_ERROR_ENVELOPE: Final[dict[str, Any]] = {
+    "type": "object",
+    "required": ["error"],
+    "properties": {
+        "error": {
+            "type": "object",
+            "required": ["message", "type", "code"],
+            "properties": {
+                "message": {"type": "string"},
+                "type": {"type": "string"},
+                "code": {"type": "string"},
+            },
+        }
+    },
+}
+
+#: The route's answers: ``200`` and every status ``COMPAT_ERRORS`` can render.
+COMPAT_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+    200: _COMPLETION_RESPONSE,
+    **{
+        status: {
+            "description": description,
+            "content": {"application/json": {"schema": _ERROR_ENVELOPE}},
+        }
+        for status, (description, _type, _code) in COMPAT_ERRORS.items()
+    },
+}
+
+
 def _chunk(
     *, chunk_id: str, created: int, model: str, delta: dict[str, Any], finish_reason: str | None
 ) -> bytes:
@@ -466,7 +523,7 @@ async def list_models(
     }
 
 
-@router.post("/v1/chat/completions", responses={200: _COMPLETION_RESPONSE})
+@router.post("/v1/chat/completions", responses=COMPAT_RESPONSES)
 async def chat_completions(
     payload: CompatRequest,
     x_bastion_conversation_id: str | None = Header(default=None, alias="X-Bastion-Conversation-Id"),

@@ -45,7 +45,13 @@ from gateway.routers.chat import (
     get_chat_router,
     get_chat_sanitizer,
 )
-from gateway.routers.openai_compat import ALIAS_AUTO, ALIAS_LOCAL, _completion_body
+from gateway.routers.chat_responses import CHAT_RESPONSES
+from gateway.routers.openai_compat import (
+    ALIAS_AUTO,
+    ALIAS_LOCAL,
+    COMPAT_ERRORS,
+    _completion_body,
+)
 from settings import reset_settings_cache
 from tests.conftest import requires_database
 
@@ -308,9 +314,18 @@ def test_the_document_declares_bearer_auth_on_every_guarded_operation(compat: Ha
 
 def test_the_chat_route_declares_the_failures_a_client_must_model(compat: Harness) -> None:
     responses = compat.app.openapi()["paths"]["/v1/chat"]["post"]["responses"]
-    for status in ("401", "404", "429", "504"):
-        schema = responses[status]["content"]["application/json"]["schema"]
+    for status in CHAT_RESPONSES:
+        schema = responses[str(status)]["content"]["application/json"]["schema"]
         assert schema["properties"]["detail"]["type"] == "string"
+
+
+def test_the_document_declares_every_compat_failure_as_the_envelope(compat: Harness) -> None:
+    """A generated client must be able to model each failure, not guess at it."""
+    responses = compat.app.openapi()["paths"]["/v1/chat/completions"]["post"]["responses"]
+    assert set(responses) == {"200", *(str(status) for status in COMPAT_ERRORS)}
+    for status in COMPAT_ERRORS:
+        schema = responses[str(status)]["content"]["application/json"]["schema"]
+        assert set(schema["properties"]["error"]["properties"]) == {"message", "type", "code"}
 
 
 async def test_unknown_model_is_a_not_found_envelope(compat: Harness) -> None:
