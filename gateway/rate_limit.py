@@ -54,11 +54,11 @@ class ChatMessageLike(Protocol):
     def content(self) -> str: ...
 
 
-RateLimitScope = Literal["dashboard", "chat", "chat_tokens"]
+RateLimitScope = Literal["dashboard", "chat", "chat_tokens", "mcp"]
 
 #: Scopes the request-count dependency may enforce. ``chat_tokens`` is reserved
 #: for the reservation/settlement calls the chat handler makes itself.
-_SCOPES: Final[frozenset[str]] = frozenset({"dashboard", "chat"})
+_SCOPES: Final[frozenset[str]] = frozenset({"dashboard", "chat", "mcp"})
 
 #: How many tokens the estimator charges per message on top of its text.
 _MESSAGE_OVERHEAD_TOKENS: Final[int] = 4
@@ -305,6 +305,8 @@ def get_rate_limiter() -> RateLimiter:
 def _limit_for(scope: RateLimitScope, settings: Settings) -> int:
     if scope == "chat":
         return settings.rate_limit_chat_per_window
+    if scope == "mcp":
+        return settings.rate_limit_mcp_per_window
     return settings.rate_limit_dashboard_per_window
 
 

@@ -55,6 +55,9 @@ class McpCaller:
     owner_sub: str | None = None
     #: ``None`` for a human; the registry allowlist for an agent.
     allowed_tools: frozenset[str] | None = None
+    #: Bucket identity for the rate limiter: the registry ``budget_key`` for an
+    #: agent, the subject for a human (IDEA-109).
+    rate_limit_subject: str = ""
     #: The request-scoped session, so a tool call joins the auth transaction.
     session: AsyncSession | None = None
 

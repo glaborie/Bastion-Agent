@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,11 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 import gateway.routers.mcp as mcp_router
 from agent.tools import AgentContext, tool, unregister_tool
-from db.models import PendingApproval
+from db.models import AgentRegistry, PendingApproval
 from gateway.auth.oidc import Principal, TokenValidationError
 from gateway.auth.rbac import get_mcp_token_validator
 from gateway.main import create_app
-from settings import get_settings
+from gateway.rate_limit import RateLimitDecision, RateLimitUnavailable
+from settings import get_settings, reset_settings_cache
 from tests.conftest import requires_database
 
 pytestmark = [pytest.mark.integration, requires_database]
@@ -41,6 +42,29 @@ META: dict[str, Any] = {
 ALICE = Principal(
     subject="alice-sub", tenant_id="acme", username="alice", roles=frozenset({"operator"})
 )
+
+
+class StubLimiter:
+    """Records bucket charges; ``allowed``/``unavailable`` are the test's knob."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+        self.allowed = True
+        self.unavailable = False
+
+    async def consume(
+        self, principal_id: str, scope: str, *, limit: int, window_seconds: int, cost: int = 1
+    ) -> RateLimitDecision:
+        self.calls.append((principal_id, scope, limit))
+        if self.unavailable:
+            raise RateLimitUnavailable("redis down")
+        return RateLimitDecision(
+            allowed=self.allowed,
+            limit=limit,
+            remaining=0 if not self.allowed else limit - len(self.calls),
+            retry_after_seconds=7,
+            reset_after_seconds=60,
+        )
 
 
 class StubValidator:
@@ -58,6 +82,7 @@ class StubValidator:
 class Harness:
     client: httpx.AsyncClient
     engine: AsyncEngine
+    limiter: StubLimiter = field(default_factory=StubLimiter)
     requests: list[dict[str, Any]] = field(default_factory=list)
 
     def headers(self, method: str, name: str | None = None) -> dict[str, str]:
@@ -107,8 +132,10 @@ async def mcp(db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch) -> AsyncI
                 raise
             await session.commit()
 
+    limiter = StubLimiter()
     monkeypatch.setattr(mcp_router, "get_mcp_token_validator", StubValidator)
     monkeypatch.setattr(mcp_router, "session_scope", scope)
+    monkeypatch.setattr(mcp_router, "get_rate_limiter", lambda: limiter)
 
     # The manager's task group must be entered and exited by one task, so the
     # lifespan runs in its own task and the fixture only signals it.
@@ -125,7 +152,7 @@ async def mcp(db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch) -> AsyncI
     try:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            yield Harness(client=client, engine=db_engine)
+            yield Harness(client=client, engine=db_engine, limiter=limiter)
     finally:
         stop.set()
         await lifespan
@@ -312,3 +339,83 @@ async def test_a_mutating_tool_suspends_for_four_eyes(mcp: Harness) -> None:
     assert result["ticket_id"]
     assert result["approval_token"]
     assert await _ticket_count(mcp) == 1
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting (IDEA-109)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def metered(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Turn the limiter on for this test; the suite disables it by default."""
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    reset_settings_cache()
+    yield
+    reset_settings_cache()
+
+
+async def test_every_mcp_request_charges_the_callers_bucket(mcp: Harness, metered: None) -> None:
+    await mcp.list_tools()
+
+    assert mcp.limiter.calls == [("alice-sub", "mcp", get_settings().rate_limit_mcp_per_window)]
+
+
+async def test_an_exhausted_bucket_is_429_with_retry_after(mcp: Harness, metered: None) -> None:
+    mcp.limiter.allowed = False
+
+    response = await mcp.call("execute_file_write", {"path": "n.txt", "content": "x"})
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "7"
+    assert response.headers["ratelimit-limit"] == str(get_settings().rate_limit_mcp_per_window)
+    # Charged before the body is read, so nothing executed and no ticket exists.
+    assert await _ticket_count(mcp) == 0
+
+
+async def test_an_unavailable_limiter_is_a_503(mcp: Harness, metered: None) -> None:
+    mcp.limiter.unavailable = True
+
+    response = await mcp.list_tools()
+
+    assert response.status_code == 503
+
+
+async def test_agents_charge_their_budget_key_not_the_owner(
+    mcp: Harness, metered: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class AgentValidator:
+        audience = "bastion-mcp"
+
+        async def validate_access_token(self, token: str) -> Principal:
+            return Principal(
+                subject="agent-sub",
+                tenant_id="acme",
+                roles=frozenset({"analyst"}),
+                actor_type="agent",
+                agent_id="bastion-agent-analyst",
+            )
+
+    async def admit(_session: object, _principal: Principal, _path: str) -> AgentRegistry:
+        return AgentRegistry(
+            agent_id="bastion-agent-analyst", budget_key="agent:bastion-agent-analyst"
+        )
+
+    monkeypatch.setattr(mcp_router, "get_mcp_token_validator", AgentValidator)
+    monkeypatch.setattr(mcp_router, "authorize_agent", admit)
+
+    await mcp.list_tools()
+
+    assert mcp.limiter.calls[0][0] == "agent:bastion-agent-analyst"
+
+
+async def test_disabling_the_limiter_leaves_the_surface_unmetered(
+    mcp: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unmetered = get_settings().model_copy(update={"rate_limit_enabled": False})
+    monkeypatch.setattr(mcp_router, "get_settings", lambda: unmetered)
+
+    response = await mcp.list_tools()
+
+    assert response.status_code == 200
+    assert mcp.limiter.calls == []
