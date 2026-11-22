@@ -6,11 +6,11 @@
 #   scripts/dev/worktree.sh start IDEA-030 --base origin/master
 #
 # The worktree is created from the base with a fresh branch, the repository
-# .env is symlinked in (so compose and the test suite work without --env-file),
-# locked dependencies are installed, and the item is marked `active` in a commit
-# that is pushed before any work starts. That push is the claim: it is atomic on
-# the remote and visible to every other agent, and this script refuses an id
-# that is already claimed or not yet on the base.
+# .env and .env.vault symlinked in (so compose and the test suite work without
+# --env-file), locked dependencies are installed, and the item is marked
+# `active` in a commit that is pushed before any work starts. That push is the
+# claim: it is atomic on the remote and visible to every other agent, and this
+# script refuses an id that is already claimed or not yet on the base.
 #
 # Prints the worktree path as the last line: move the session there next.
 set -euo pipefail
@@ -111,10 +111,14 @@ echo "worktree: $DIR ($BRANCH from $BASE)"
 
 # Compose and the test suite read .env from the working directory; a symlink
 # keeps one source of truth and removes the --env-file tax in every worktree.
-if [[ -f "$ROOT/.env" && ! -e "$DIR/.env" ]]; then
-    ln -s "$ROOT/.env" "$DIR/.env"
-    echo "worktree: linked .env"
-fi
+# .env.vault holds the secret literals `.env` no longer does, and scripts/gate.sh
+# only adds `--env-file .env.vault` when it exists, so link it when present.
+for envfile in .env .env.vault; do
+    if [[ -f "$ROOT/$envfile" && ! -e "$DIR/$envfile" ]]; then
+        ln -s "$ROOT/$envfile" "$DIR/$envfile"
+        echo "worktree: linked $envfile"
+    fi
+done
 
 if [[ -f "$DIR/pyproject.toml" ]]; then
     (cd "$DIR" && uv sync --quiet --frozen --group dev)
